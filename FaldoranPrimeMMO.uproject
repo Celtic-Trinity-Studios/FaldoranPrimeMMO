@@ -1,0 +1,22 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "{CB4A6C0A-4908-AB87-6CC9-E29C7B5E0A95}",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "FaldoranPrimeMMO",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ModelingToolsEditorMode",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		}
+	]
+}

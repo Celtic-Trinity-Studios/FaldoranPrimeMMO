@@ -1,0 +1,41 @@
+# Unreal Engine 5 .gitignore
+
+# Compiled binaries and intermediates
+Binaries/
+Intermediate/
+DerivedDataCache/
+
+# Saved state (local only)
+Saved/
+
+# IDE files
+.vs/
+.vscode/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# Visual Studio user files
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# macOS
+.DS_Store
+
+# Thumbnails
+__pycache__/
+*.pyc
+
+# Build artifacts
+Build/
+
+# Packaged builds
+PackagedServer/
+PackagedClient/
+
+# PostgreSQL installer (temp)
+postgresql-*.exe
