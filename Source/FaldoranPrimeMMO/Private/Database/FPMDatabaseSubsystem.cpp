@@ -2,7 +2,10 @@
 
 #include "Database/FPMDatabaseSubsystem.h"
 #include "Database/FPMDatabaseTestCommands.h"
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
 #include "Misc/ConfigCacheIni.h"
+#include "TimerManager.h"
 
 THIRD_PARTY_INCLUDES_START
 #include "libpq-fe.h"
@@ -17,13 +20,20 @@ DEFINE_LOG_CATEGORY_STATIC(LogFPMDatabase, Log, All);
 void UFPMDatabaseSubsystem::Initialize(FSubsystemCollectionBase &Collection) {
   Super::Initialize(Collection);
 
-  if (!IsDedicatedServerContext()) {
+#if WITH_EDITOR
+  // In PIE, the world isn't assigned yet at Initialize time, so we can't
+  // check net mode here. Always proceed — operations are guarded at call time.
+  UE_LOG(LogFPMDatabase, Log,
+         TEXT("FPM Database: Subsystem initializing (Editor/PIE mode)."));
+#else
+  if (!IsRunningDedicatedServer()) {
     UE_LOG(
         LogFPMDatabase, Log,
         TEXT(
             "FPM Database: Skipping initialization (not a dedicated server)."));
     return;
   }
+#endif
 
   LoadConfigFromIni();
   UE_LOG(LogFPMDatabase, Log,
@@ -32,6 +42,27 @@ void UFPMDatabaseSubsystem::Initialize(FSubsystemCollectionBase &Collection) {
          *ConfigHost, *ConfigPort, *ConfigDatabaseName, *ConfigUsername);
 
   UFPMDatabaseTestCommands::RegisterCommands();
+
+  // Auto-connect to the database
+#if WITH_EDITOR
+  // In PIE, the world net mode isn't set yet during Initialize().
+  // Defer the connection attempt so IsDedicatedServerContext() works.
+  if (UGameInstance *GI = GetGameInstance()) {
+    if (UWorld *World = GI->GetWorld()) {
+      World->GetTimerManager().SetTimerForNextTick(
+          FTimerDelegate::CreateWeakLambda(this, [this]() {
+            if (IsDedicatedServerContext()) {
+              UE_LOG(LogFPMDatabase, Log,
+                     TEXT("FPM Database: Deferred PIE connect attempt..."));
+              Connect();
+            }
+          }));
+    }
+  }
+#else
+  // In packaged builds, connect immediately on the dedicated server
+  Connect();
+#endif
 }
 
 void UFPMDatabaseSubsystem::Deinitialize() {
@@ -47,10 +78,8 @@ void UFPMDatabaseSubsystem::Deinitialize() {
 
 bool UFPMDatabaseSubsystem::Connect() {
   if (!IsDedicatedServerContext()) {
-    UE_LOG(
-        LogFPMDatabase, Warning,
-        TEXT(
-            "FPM Database: Connect() called on non-server context. Ignoring."));
+    UE_LOG(LogFPMDatabase, Log,
+           TEXT("FPM Database: Connect() skipped (not a server context)."));
     return false;
   }
 
@@ -224,5 +253,21 @@ void UFPMDatabaseSubsystem::LoadConfigFromIni() {
 }
 
 bool UFPMDatabaseSubsystem::IsDedicatedServerContext() const {
-  return IsRunningDedicatedServer();
+  // In packaged builds, check the binary type
+  if (IsRunningDedicatedServer()) {
+    return true;
+  }
+
+#if WITH_EDITOR
+  // In PIE, the binary is the Editor so IsRunningDedicatedServer() is always
+  // false. Instead, check if this GameInstance's world is acting as a server.
+  if (const UGameInstance *GI = GetGameInstance()) {
+    if (const UWorld *World = GI->GetWorld()) {
+      const ENetMode NetMode = World->GetNetMode();
+      return NetMode == NM_DedicatedServer || NetMode == NM_ListenServer;
+    }
+  }
+#endif
+
+  return false;
 }

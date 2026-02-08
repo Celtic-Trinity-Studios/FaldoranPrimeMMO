@@ -2,17 +2,18 @@
 
 Implementing an Earth-Sized world requires a hybrid generation and networking architecture.
 
-## 1. Generation: Deterministic Seeded Procedure
+## 1. Generation: Chunk-Based Deterministic Seeded Procedure
 - **Shared Mathematical Seed:** Both client and server generate the same terrain from a shared seed to ensure consistency without storing millions of km² of static data.
+- **Chunk-Based Rendering:** The client only generates and renders the immediate 10-20km radius of "Active Chunks" surrounding the player.
 - **POI-Overlay System:** 
-    1. **Base Layer:** Procedural biomes, terrain, and climate simulation.
-    2. **Handcrafted Layer:** Fixed POIs (Ruins, Starter Cities) stamped at specific coordinates.
+    1. **Base Layer:** Procedural biomes, terrain, and climate simulation within each chunk.
+    2. **Handcrafted Layer:** Fixed POIs (Ruins, Starter Cities) stamped at specific coordinates, overriding chunk data.
     3. **Player Layer:** Guild towns and portals overload the procedural data with persistent database entries.
 
-## 2. Networking: Tiled Sharding
-- **Hexagonal Tiles:** The map is divided into hexagonal server segments.
-- **Dynamic Sharding:** If player density exceeds a threshold (e.g., in a massive siege), the system spins up a dedicated instance for that specific tile.
-- **Seamless Handoff:** Players moving between tiles should experience a seamless transition between server nodes.
+## 2. Networking: Chunked Tiled Sharding
+- **Hexagonal Chunks:** The map is divided into hexagonal server segments (Chunks).
+- **Dynamic Sharding:** If player density exceeds a threshold (e.g., in a massive siege), the system spins up a dedicated instance for that specific chunk.
+- **Seamless Handoff:** Players moving between chunks experience a seamless transition between server nodes.
 
 ## 3. Persistent State
 - All player-built structures, guild currencies, and bank balances are stored in a centralized persistence layer that overrides the procedural base.

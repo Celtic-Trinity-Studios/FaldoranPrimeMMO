@@ -1,11 +1,12 @@
 # 02 World and Scale
 
-Faldoran Prime features a **Planetary Scale (Earth-Sized) World** (~510 million km²), presenting a true frontier for exploration and civilization building.
+Faldoran Prime features a **Chunk-Based Planetary Scale (Earth-Sized) World** (~510 million km²), providing a true frontier for exploration and civilization building.
 
 ## The Reality of Scale
 - **Earth Scale Land Area:** ~148 million km².
 - **Traversal:** Circumnavigation on foot could take 10+ years; on a fast mount, 1-2 years.
-- **Development Strategy:** Handcrafting is impossible. The world uses a **Deterministic Seeded Procedure** (Procedural Layer) overlaid with handcrafted POIs and player-built Guild Towns.
+- **Chunk-Based Architecture:** The world is designed using a **system of seamless, hexagonal chunks (tiles)**. This allows the server to manage massive scale by only loading and simulating active regions.
+- **Development Strategy:** Handcrafting is impossible at this scale. The world uses a **Deterministic Seeded Procedure** (Procedural Layer) overlaid with handcrafted POIs and player-built Guild Towns.
 
 ## Traversal & Connectivity
 In a world this large, **Fast Travel is a high-cost infrastructure project and a geopolitical resource.**

@@ -2,6 +2,7 @@
 
 #include "Database/FPMDatabaseTestCommands.h"
 #include "Database/FPMDatabaseSubsystem.h"
+#include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
@@ -11,15 +12,38 @@ DEFINE_LOG_CATEGORY_STATIC(LogFPMDBTest, Log, All);
 TArray<IConsoleObject *> UFPMDatabaseTestCommands::RegisteredCommands;
 
 // -------------------------------------------------------------------
+// Helper: Find the server world in PIE
+// -------------------------------------------------------------------
+// In PIE the Output Log's console runs commands in the CLIENT world.
+// We need the SERVER world to access server-only subsystems.
+static UWorld *FindServerWorld(UWorld *FallbackWorld) {
+#if WITH_EDITOR
+  if (GEngine) {
+    for (const FWorldContext &Context : GEngine->GetWorldContexts()) {
+      UWorld *W = Context.World();
+      if (W) {
+        const ENetMode NetMode = W->GetNetMode();
+        if (NetMode == NM_DedicatedServer || NetMode == NM_ListenServer) {
+          return W;
+        }
+      }
+    }
+  }
+#endif
+  return FallbackWorld;
+}
+
+// -------------------------------------------------------------------
 // Helper: Get the database subsystem from a World pointer
 // -------------------------------------------------------------------
 static UFPMDatabaseSubsystem *GetDBSubsystem(UWorld *World) {
-  if (!World) {
+  UWorld *ServerWorld = FindServerWorld(World);
+  if (!ServerWorld) {
     UE_LOG(LogFPMDBTest, Error, TEXT("FPM DBTest: No world available."));
     return nullptr;
   }
 
-  UGameInstance *GI = World->GetGameInstance();
+  UGameInstance *GI = ServerWorld->GetGameInstance();
   if (!GI) {
     UE_LOG(LogFPMDBTest, Error, TEXT("FPM DBTest: No GameInstance found."));
     return nullptr;

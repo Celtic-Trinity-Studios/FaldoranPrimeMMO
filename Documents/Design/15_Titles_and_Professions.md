@@ -145,9 +145,9 @@ Titles for those who thrive in the gray areas of law and society.
 
 ---
 
-## 🎭 Hybrid & Hidden Titles (The "Unusual" Paths)
-
-These titles require specific combinations of disparate skills, often involving hidden ones.
+## 🎭 Hybrid & Advanced Titles (The "Unusual" Paths)
+ 
+These titles require specific combinations of disparate skills, which are automatically recognized as soon as the prerequisite skill thresholds are met.
 
 | Title | Required Skills | Description |
 | :--- | :--- | :--- |

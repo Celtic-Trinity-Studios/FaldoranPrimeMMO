@@ -245,6 +245,7 @@ These are the **binding invariants** that must be respected by all systems.
 - These are a **separate system** from playstyle affinities.
 
 ### 4.4 Skill Progression — "Rusty Master" Rule
+- **Discovery Mechanic:** All skills are hidden from the player's UI until they are discovered through use, training, or observation.
 - **Rank Permanence:** You **NEVER** lose a Rank or the recipes/abilities it unlocked.
 - **XP Decay:** If you stop using a skill, your effective XP drops to a "Wisdom Floor."
 - **Rusty State:** Quality and efficiency drop until you grind back the XP debt.
@@ -313,6 +314,12 @@ These are the **binding invariants** that must be respected by all systems.
 - **Global vs. Regional** standing are tracked separately.
 - NPC Hirelings require standing thresholds, food, and wages.
 - If standing drops, hirelings may "Strike" or sabotage.
+
+### 4.15 Chunk-Based World Architecture
+- **Invariant:** The world is Earth-sized (~510 million km²) and partitioned into **Seamless Hexagonal Chunks**.
+- **No Global Load:** The server only simulates active chunks (those with players or active NPC tasks).
+- **Consistency:** Generation is deterministic; all clients and the server must arrive at the same terrain results for a given chunk coordinate.
+- **Persistence:** Any change to a chunk (player-built structure, resource depletion) MUST be persisted to the database and override the procedural base layer.
 
 ---
 

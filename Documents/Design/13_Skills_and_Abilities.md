@@ -1,6 +1,6 @@
 # 13 Skills and Abilities
 
-This document outlines the specialized skills available in Faldoran Prime. Skills are categorized by their application and influence in the world. Many skills remain hidden until discovered or trained to a minimum threshold.
+This document outlines the specialized skills available in Faldoran Prime. Skills are categorized by their application and influence in the world. All skills remain hidden from the player's UI until discovered through use, training, or observation.
 
 ## ✅ Attributes
 The core physical and mental foundations of a character.
@@ -13,12 +13,12 @@ The core physical and mental foundations of a character.
 
 ## ✅ Aesthetics
 Personal grooming, social etiquette, and the art of presentation.
-- **Aesthetic Sense (hidden):** Perception of beauty and form.
+- **Aesthetic Sense:** Perception of beauty and form.
 - **Attire Grooming:** Maintaining and presenting fine clothing.
 - **Barbering:** Cutting hair, shaving, and basic appearance modification.
 - **Carriage & Poise:** The art of movement and social grace.
 - **Embellishment:** Applying jewelry, inks, and decorative items.
-- **Quality Sense (hidden):** Discerning the craftsmanship of personal items.
+- **Quality Sense:** Discerning the craftsmanship of personal items.
 
 ## ✅ Combat
 The arts of war, both close-quarters and at range.
@@ -26,22 +26,22 @@ The arts of war, both close-quarters and at range.
 - **Crossbows:** Mastery of mechanical ranged weaponry.
 - **Blunt Force:** Use of maces, hammers, and clubs.
 - **Combat Reflexes:** Reaction speed in the heat of battle.
-- **Combat Sense (hidden):** Intuitive awareness of threats.
-- **Skirmishing (hidden):** Guerilla tactics and light-footed combat.
+- **Combat Sense:** Intuitive awareness of threats.
+- **Skirmishing:** Guerilla tactics and light-footed combat.
 - **Heavy Melee Weapons:** Mastery of polearms, greatswords, and battleaxes.
 - **Siege Weaponry:** Operating ballistae, catapults, and trebuchets.
 - **Melee Prowess:** General proficiency in close-quarters fighting.
 - **Ranged Prowess:** General proficiency in projectile combat.
-- **Death Blow (hidden):** Identifying and exploiting fatal openings.
+- **Death Blow:** Identifying and exploiting fatal openings.
 - **Light Melee Weapons:** Mastery of daggers, shortswords, and rapiers.
 - **Longblades:** Mastery of arming swords and broadswords.
-- **Marksmanship (hidden):** Exceptional precision with ranged weapons.
-- **Unarmed Combat (hidden):** Hand-to-hand fighting and grappling.
-- **Damage Assessment (hidden):** Identifying weaknesses in an opponent's defense.
+- **Marksmanship:** Exceptional precision with ranged weapons.
+- **Unarmed Combat:** Hand-to-hand fighting and grappling.
+- **Damage Assessment:** Identifying weaknesses in an opponent's defense.
 - **Gauntlet Fighting:** Combat involving armored fists and bucklers.
 - **Weapon Care:** Maintaining the sharpness and integrity of arms.
 - **Flails & Whips:** Mastery of flexible and chain-based weaponry.
-- **Bleeding (hidden):** The art of inflicting persistent wounds.
+- **Bleeding:** The art of inflicting persistent wounds.
 
 ## ✅ Tradecraft (Construction)
 The building of civilization, from humble tools to grand keeps.
@@ -62,7 +62,7 @@ The building of civilization, from humble tools to grand keeps.
 - **Clockwork Mechanics:** Crafting intricate gears and mechanical devices.
 - **Fletching:** The making of arrows, bolts, and bowstrings.
 - **Tier Refinement:** Improving the quality of existing items.
-- **Material Extraction (hidden):** Advanced techniques for material retrieval.
+- **Material Extraction:** Advanced techniques for material retrieval.
 - **Wood Carving:** Fine detail work in timber.
 - **Wood Processing:** Turning logs into usable lumber.
 
@@ -73,8 +73,8 @@ The aesthetic finishing of goods and the creation of beauty.
 - **Heraldry & Sigils:** Designing and recognizing coats of arms.
 - **Fine Weaving:** Creating high-quality textiles on a loom.
 - **Tapestry Patterning:** Designing complex woven imagery.
-- **Material Lore (hidden):** Deep understanding of fabric properties.
-- **Surface Finishing (hidden):** Polishing and protective coatings.
+- **Material Lore:** Deep understanding of fabric properties.
+- **Surface Finishing:** Polishing and protective coatings.
 
 ## ✅ Architecture
 The science and art of designing structures and settlements.
@@ -86,23 +86,23 @@ The science and art of designing structures and settlements.
 - **Urban Planning:** Efficient layout of streets and public spaces.
 - **Hydrological Design:** Planning of aqueducts, wells, and drainage.
 - **Masonry Proportions:** Aesthetic and functional stone layout.
-- **Acoustic Design (hidden):** Managing sound within large halls or cathedrals.
-- **Secret Passages (hidden):** Integrating hidden rooms and corridors.
-- **Siege Assessment (hidden):** Evaluating the defensive strengths and weaknesses of a structure.
-- **Ancient Architectonics (hidden):** Understanding the building methods of lost civilizations.
+- **Acoustic Design:** Managing sound within large halls or cathedrals.
+- **Secret Passages:** Integrating hidden rooms and corridors.
+- **Siege Assessment:** Evaluating the defensive strengths and weaknesses of a structure.
+- **Ancient Architectonics:** Understanding the building methods of lost civilizations.
 
 ## ✅ Survival (General)
 The base skills for staying alive in the wilds of Faldoran.
 - **Vigilance:** General alertness and awareness of surroundings.
 - **Athletics:** Running, climbing, and jumping.
 - **Bluster:** Intimidation and projected confidence.
-- **Composure (hidden):** Staying calm under extreme pressure.
+- **Composure:** Staying calm under extreme pressure.
 - **Courage:** Resistance to fear and morale breakage.
 - **Dexterity:** Fine motor skills and hand-eye coordination.
-- **Intuition (hidden):** Gut feelings and sixth senses.
+- **Intuition:** Gut feelings and sixth senses.
 - **Perception:** Noticing hidden details or traps.
-- **Swiftness (hidden):** Short bursts of speed.
-- **Fortune (hidden):** Luck and serendipity.
+- **Swiftness:** Short bursts of speed.
+- **Fortune:** Luck and serendipity.
 
 ## ✅ Fieldwork (Information)
 Collecting and understanding the world's resources.
@@ -112,10 +112,10 @@ Collecting and understanding the world's resources.
 - **Construct Lore:** Understanding magical and mechanical automatons.
 - **Artifact Lore:** Identifying ancient and magical items.
 - **Animal Tracking:** Following trails through various terrain.
-- **Butchering (hidden):** Efficiently harvesting meat and viscera.
+- **Butchering:** Efficiently harvesting meat and viscera.
 - **Skinning:** Harvesting hides and pelts.
-- **Foraging (hidden):** Finding wild edibles and rare herbs.
-- **Reaping (hidden):** Efficient harvesting of crops and plants.
+- **Foraging:** Finding wild edibles and rare herbs.
+- **Reaping:** Efficient harvesting of crops and plants.
 - **Scavenging:** Finding value in ruins and debris.
 - **Mentorship:** The ability to pass knowledge efficiently to others.
 
@@ -123,8 +123,8 @@ Collecting and understanding the world's resources.
 The art of healing the broken body.
 - **First Aid:** Basic field stabilization and bandaging.
 - **Apothecary:** Mixing curative salves and tinctures.
-- **Chirurgery (hidden):** Advanced surgical and bone-setting techniques.
-- **Sanative Arts (hidden):** Long-term recovery and therapeutic care.
+- **Chirurgery:** Advanced surgical and bone-setting techniques.
+- **Sanative Arts:** Long-term recovery and therapeutic care.
 
 ## ✅ Arcane Arts (Magic)
 The manipulation of essence and the elements via Mana Crystal resonance.
@@ -143,8 +143,8 @@ The manipulation of essence and the elements via Mana Crystal resonance.
 - **Transmutative Alchemy:** Changing the properties of matter.
 - **Vitality Mending:** Arcane healing of wounds.
 - **Arcane Focus:** Concentration required to maintain spells and stabilize crystal output.
-- **Arcane Tongue (hidden):** Reading and speaking the language of power.
-- **Soul Weaving (hidden):** Merging magical energies.
+- **Arcane Tongue:** Reading and speaking the language of power.
+- **Soul Weaving:** Merging magical energies.
 - **Spell Disruption:** Identifying and countering hostile magic.
 - **Crystal Resonance:** The efficiency of drawing power from Mana Crystals. High skill reduces charge cost and fracture risk.
 - **Thought-speak:** Mental communication and empathy.
@@ -156,8 +156,8 @@ Tearing wealth from the mountains and the earth.
 - **Prospecting:** Locating rich mineral deposits.
 - **Excavation:** Removing rock and earth efficiently.
 - **Deep Mining:** Mining in dangerous, low-oxygen environments.
-- **Geology (hidden):** Understanding rock formations and strata.
-- **Mineral Sense (hidden):** Intuitive feeling for nearby ores.
+- **Geology:** Understanding rock formations and strata.
+- **Mineral Sense:** Intuitive feeling for nearby ores.
 - **Relic Preservation:** Carefully extracting fragile historic items.
 - **Quarrying:** Extracting large blocks of stone.
 - **Treasure Sense:** Detecting buried metals and valuables.
@@ -171,8 +171,8 @@ The breeding, taming, and management of Faldoran's diverse fauna.
 - **Herding:** Coordinating the movement of large groups of livestock or mounts.
 - **Mount Training:** Teaching specialized maneuvers (Gallop, Combat Stance, Jump).
 - **Stabling & Grooming:** Maintaining the health and morale of stabled animals.
-- **Beast-mastery (hidden):** The rare ability to bond with sentient or elite predators.
-- **Genetics Sense (hidden):** Intuitively perceiving the hidden potential in a newborn beast.
+- **Beast-mastery:** The rare ability to bond with sentient or elite predators.
+- **Genetics Sense:** Intuitively perceiving the hidden potential in a newborn beast.
 
 ## ✅ Scholarship (Science)
 The pursuit of knowledge and understanding of the unseen laws.

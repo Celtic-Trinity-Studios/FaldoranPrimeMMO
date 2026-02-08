@@ -1,0 +1,63 @@
+<svg width="800" height="400" viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Gradients -->
+    <radialGradient id="planetGradient" cx="50%" cy="50%" r="50%" fx="30%" fy="30%">
+      <stop offset="0%" style="stop-color:#2a2f45;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0d0e15;stop-opacity:1" />
+    </radialGradient>
+    
+    <linearGradient id="crystalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00ffff;stop-opacity:0.9" />
+      <stop offset="50%" style="stop-color:#0088ff;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#001133;stop-opacity:0.9" />
+    </linearGradient>
+
+    <linearGradient id="metalTextGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#eeeeee;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#999999;stop-opacity:1" />
+      <stop offset="51%" style="stop-color:#666666;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#bbbbbb;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Filters -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <filter id="innerShadow">
+        <feOffset dx="0" dy="0"/>
+        <feGaussianBlur stdDeviation="5" result="offset-blur"/>
+        <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse"/>
+        <feFlood flood-color="black" flood-opacity="0.8" result="color"/>
+        <feComposite operator="in" in="color" in2="inverse" result="shadow"/>
+        <feComposite operator="over" in="shadow" in2="SourceGraphic"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="400" fill="#050505" />
+  
+  <!-- Planet Backdrop -->
+  <circle cx="400" cy="200" r="160" fill="url(#planetGradient)" stroke="#1a2030" stroke-width="2" opacity="0.8" />
+  
+  <!-- Orbital Rings/Lines -->
+  <ellipse cx="400" cy="200" rx="220" ry="60" fill="none" stroke="#223344" stroke-width="1" transform="rotate(-15 400 200)" opacity="0.6"/>
+  <ellipse cx="400" cy="200" rx="190" ry="140" fill="none" stroke="#223344" stroke-width="1" transform="rotate(30 400 200)" opacity="0.4"/>
+
+  <!-- Center Crystal Icon -->
+  <g transform="translate(400, 160) scale(1.5)">
+      <polygon points="0,-40 20,-10 0,50 -20,-10" fill="url(#crystalGradient)" filter="url(#glow)" stroke="#ffffff" stroke-width="0.5" transform="rotate(0)"/>
+      <polygon points="0,-30 15,-5 0,40 -15,-5" fill="rgba(255,255,255,0.2)" />
+  </g>
+
+  <!-- Main Text -->
+  <text x="400" y="240" font-family="Impact, Charcoal, sans-serif" font-size="80" fill="url(#metalTextGradient)" stroke="#000000" stroke-width="2" text-anchor="middle" letter-spacing="4" filter="url(#innerShadow)">FALDORAN</text>
+  <text x="400" y="310" font-family="Impact, Charcoal, sans-serif" font-size="60" fill="url(#metalTextGradient)" stroke="#000000" stroke-width="2" text-anchor="middle" letter-spacing="8" filter="url(#innerShadow)">PRIME</text>
+  
+  <!-- Subtitle -->
+  <text x="400" y="350" font-family="Arial, sans-serif" font-size="18" fill="#44aaff" text-anchor="middle" letter-spacing="6" font-weight="bold">MMO SURVIVAL HYBRID</text>
+</svg>
