@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Faldoran Prime - Login</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=Spectral:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-container">
+        <div class="background-overlay"></div>
+        <div class="particles" id="particles"></div>
+    </div>
+
+    <main class="login-wrapper">
+        <header class="game-logo">
+            <h1 class="logo-text">FALDORAN <span class="highlight">PRIME</span></h1>
+            <p class="tagline">The Civilization Evolution</p>
+        </header>
+
+        <section class="login-card">
+            <div class="card-content">
+                <div class="status-indicator">
+                    <span class="status-dot"></span>
+                    <span class="status-text">SERVER ONLINE</span>
+                </div>
+
+                <form id="loginForm" class="auth-form">
+                    <div class="input-group">
+                        <label for="username">ACCOUNT IDENTITY</label>
+                        <input type="text" id="username" placeholder="Username" required autocomplete="username">
+                    </div>
+
+                    <div class="input-group">
+                        <label for="password">ACCESS CIPHER</label>
+                        <input type="password" id="password" placeholder="••••••••" required autocomplete="current-password">
+                    </div>
+
+                    <div class="form-options">
+                        <label class="checkbox-container">
+                            <input type="checkbox" checked>
+                            <span class="checkmark"></span>
+                            REMEMBER ME
+                        </label>
+                        <a href="#" class="forgot-link">FORGOT CIPHER?</a>
+                    </div>
+
+                    <button type="submit" class="primary-btn">
+                        <span class="btn-text">CONNECT TO WORLD</span>
+                        <div class="btn-glow"></div>
+                    </button>
+                    
+                    <button type="button" class="secondary-btn" id="createAccountBtn">
+                        CREATE NEW IDENTITY
+                    </button>
+                </form>
+            </div>
+        </section>
+
+        <footer class="app-footer">
+            <div class="version">VERSION 0.1.0-ALPHA-PROTOTYPE</div>
+            <div class="legal">&copy; 2026 CELTIC TRINITY STUDIOS. ALL RIGHTS RESERVED.</div>
+        </footer>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>

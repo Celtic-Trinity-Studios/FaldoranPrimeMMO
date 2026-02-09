@@ -1,0 +1,290 @@
+{
+    "Physic Contraint": {
+        "spine_03": {
+            "Parent Bone": "pelvis",
+            "Swing 1 Limit": 10.0,
+            "Swing 2 Limit": 10.0,
+            "Twist Limit": 10.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 1000.0,
+                "Damping": 100.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 1000.0,
+                "Damping": 100.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        },
+        "neck_01": {
+            "Parent Bone": "spine_03",
+            "Swing 1 Limit": 10.0,
+            "Swing 2 Limit": 10.0,
+            "Twist Limit": 10.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 1000.0,
+                "Damping": 100.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 1000.0,
+                "Damping": 100.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        },
+        "head": {
+            "Parent Bone": "neck_01",
+            "Swing 1 Limit": 20.0,
+            "Swing 2 Limit": 15.0,
+            "Twist Limit": 30.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        },
+        "upperarm_l": {
+            "Parent Bone": "spine_03",
+            "Swing 1 Limit": 45.0,
+            "Swing 2 Limit": 45.0,
+            "Twist Limit": 30.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        },
+        "lowerarm_l": {
+            "Parent Bone": "upperarm_l",
+            "Swing 1 Limit": 5.0,
+            "Swing 2 Limit": 5.0,
+            "Twist Limit": 70.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 1000.0,
+                "Damping": 100.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        },
+        "calf_l": {
+            "Parent Bone": "thigh_l",
+            "Swing 1 Limit": 30.0,
+            "Swing 2 Limit": 30.0,
+            "Twist Limit": 10.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 1000.0,
+                "Damping": 100.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        },
+        "thigh_l": {
+            "Parent Bone": "pelvis",
+            "Swing 1 Limit": 10.0,
+            "Swing 2 Limit": 10.0,
+            "Twist Limit": 10.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        },
+        "calf_r": {
+            "Parent Bone": "thigh_r",
+            "Swing 1 Limit": 30.0,
+            "Swing 2 Limit": 30.0,
+            "Twist Limit": 10.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 1000.0,
+                "Damping": 100.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        },
+        "thigh_r": {
+            "Parent Bone": "pelvis",
+            "Swing 1 Limit": 10.0,
+            "Swing 2 Limit": 10.0,
+            "Twist Limit": 10.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        },
+        "upperarm_r": {
+            "Parent Bone": "spine_03",
+            "Swing 1 Limit": 45.0,
+            "Swing 2 Limit": 45.0,
+            "Twist Limit": 30.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        },
+        "lowerarm_r": {
+            "Parent Bone": "upperarm_r",
+            "Swing 1 Limit": 5.0,
+            "Swing 2 Limit": 5.0,
+            "Twist Limit": 70.0,
+            "Swing Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 1000.0,
+                "Damping": 100.0,
+                "Restitution": 0.0
+            },
+            "Twist Limit Parameter": {
+                "SoftConstraint": true,
+                "Stiffness": 500.0,
+                "Damping": 50.0,
+                "Restitution": 0.0
+            },
+            "Target Velocity": {
+                "Drives": {
+                    "SLERP": true,
+                    "Twist": false,
+                    "Swing": false
+                },
+                "Damping": 50.0
+            }
+        }
+    }
+}

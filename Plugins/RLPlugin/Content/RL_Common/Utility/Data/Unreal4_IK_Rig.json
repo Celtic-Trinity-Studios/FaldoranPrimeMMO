@@ -1,0 +1,80 @@
+{
+  "Bone Chain": {
+    "Root": { "Start Bone Name": "root", "End Bone Name": "root", "IK Goal": "None" },
+    "Spine": { "Start Bone Name": "spine_01", "End Bone Name": "spine_03", "IK Goal": "None" },
+    "Neck": { "Start Bone Name": "neck_01", "End Bone Name": "neck_01", "IK Goal": "None" },
+    "Head": { "Start Bone Name": "head", "End Bone Name": "head", "IK Goal": "None" },
+    "LeftLeg": { "Start Bone Name": "thigh_l", "End Bone Name": "foot_l", "IK Goal": "LeftFootIK" },
+    "LeftClavicle": { "Start Bone Name": "clavicle_l", "End Bone Name": "clavicle_l", "IK Goal": "None" },
+    "LeftArm": { "Start Bone Name": "upperarm_l", "End Bone Name": "hand_l", "IK Goal": "LeftHandIK" },
+    "LeftThumb": { "Start Bone Name": "thumb_01_l", "End Bone Name": "thumb_03_l", "IK Goal": "None" },
+    "LeftIndex": { "Start Bone Name": "index_01_l", "End Bone Name": "index_03_l", "IK Goal": "None" },
+    "LeftMiddle": { "Start Bone Name": "middle_01_l", "End Bone Name": "middle_03_l", "IK Goal": "None" },
+    "LeftRing": { "Start Bone Name": "ring_01_l", "End Bone Name": "ring_03_l", "IK Goal": "None" },
+    "LeftPinky": { "Start Bone Name": "pinky_01_l", "End Bone Name": "pinky_03_l", "IK Goal": "None" },
+    "RightLeg": { "Start Bone Name": "thigh_r", "End Bone Name": "foot_r", "IK Goal": "RightFootIK" },
+    "RightClavicle": { "Start Bone Name": "clavicle_r", "End Bone Name": "clavicle_r", "IK Goal": "None" },
+    "RightArm": { "Start Bone Name": "upperarm_r", "End Bone Name": "hand_r", "IK Goal": "RightHandIK" },
+    "RightThumb": { "Start Bone Name": "thumb_01_r", "End Bone Name": "thumb_03_r", "IK Goal": "None" },
+    "RightIndex": { "Start Bone Name": "index_01_r", "End Bone Name": "index_03_r", "IK Goal": "None" },
+    "RightMiddle": { "Start Bone Name": "middle_01_r", "End Bone Name": "middle_03_r", "IK Goal": "None" },
+    "RightRing": { "Start Bone Name": "ring_01_r", "End Bone Name": "ring_03_r", "IK Goal": "None" },
+    "RightPinky": { "Start Bone Name": "pinky_01_r", "End Bone Name": "pinky_03_r", "IK Goal": "None" },
+    "LeftToe": { "Start Bone Name": "ball_l", "End Bone Name": "ball_l", "IK Goal": "None" },
+    "RightToe": { "Start Bone Name": "ball_r", "End Bone Name": "ball_r", "IK Goal": "None" },
+    "LeftFootIK": { "Start Bone Name": "ik_foot_l", "End Bone Name": "ik_foot_l", "IK Goal": "None" },
+    "RightFootIK": { "Start Bone Name": "ik_foot_r", "End Bone Name": "ik_foot_r", "IK Goal": "None" },
+    "LeftHandIK": { "Start Bone Name": "ik_hand_l", "End Bone Name": "ik_hand_l", "IK Goal": "None" },
+    "RightHandIK": { "Start Bone Name": "ik_hand_r", "End Bone Name": "ik_hand_r", "IK Goal": "None" },
+    "HandGunIK": { "Start Bone Name": "ik_hand_gun", "End Bone Name": "ik_hand_gun", "IK Goal": "None" },
+    "FootRootIK": { "Start Bone Name": "ik_foot_root", "End Bone Name": "ik_foot_root", "IK Goal": "None" },
+    "HandRootIK": { "Start Bone Name": "ik_hand_root", "End Bone Name": "ik_hand_root", "IK Goal": "None" }
+  },
+  "IK Goal Parent": {
+    "LeftFootIK": {
+        "Parent": "foot_l"
+    },
+    "LeftHandIK": {
+        "Parent": "hand_l"
+    },
+    "RightFootIK": {
+        "Parent": "foot_r"
+    },
+    "RightHandIK": {
+        "Parent": "hand_r"
+    }
+  },
+  "FK Chain": {
+  },
+  "Pin Bone": {
+    "Pin Bone 1": {
+      "Bone To Copy From": "hand_l",
+      "Bone To Copy To": "ik_hand_l"
+    },
+    "Pin Bone 2": {
+      "Bone To Copy From": "hand_r",
+      "Bone To Copy To": "ik_hand_r"
+    },
+    "Pin Bone 3": {
+      "Bone To Copy From": "foot_l",
+      "Bone To Copy To": "ik_foot_l"
+    },
+    "Pin Bone 4": {
+      "Bone To Copy From": "foot_r",
+      "Bone To Copy To": "ik_foot_r"
+    },
+    "Pin Bone 5": {
+      "Bone To Copy From": "hand_r",
+      "Bone To Copy To": "ik_hand_gun"
+    },
+    "Pin Bone 6": {
+      "Bone To Copy From": "root",
+      "Bone To Copy To": "ik_foot_root"
+    },
+    "Pin Bone 7": {
+      "Bone To Copy From": "root",
+      "Bone To Copy To": "ik_hand_root"
+    }
+  },
+  "Align Pole Vector":["LeftLeg", "RightLeg"]
+}

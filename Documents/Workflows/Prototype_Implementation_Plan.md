@@ -78,6 +78,8 @@ Confirm the UE project compiles for Editor, Server, and Client targets.
 
 ### Agent Prompt
 ```
+CONVERSATION TITLE: Phase 0 — Verify Project Builds
+
 Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
 Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
 
@@ -128,6 +130,8 @@ A UE dedicated server starts, loads a map, and waits for connections.
 
 ### Agent Prompt
 ```
+CONVERSATION TITLE: Phase 1 — Dedicated Server Launches
+
 Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
 Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
 
@@ -172,6 +176,8 @@ A client connects to the dedicated server, spawns a default pawn, and two player
 
 ### Agent Prompt
 ```
+CONVERSATION TITLE: Phase 2 — Client Connects to Server
+
 Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
 Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
 
@@ -232,6 +238,8 @@ UE server can read/write to a PostgreSQL database.
 
 ### Agent Prompt (Session 1 of 2: libpq integration)
 ```
+CONVERSATION TITLE: Phase 3A — libpq Integration
+
 Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
 Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
 
@@ -257,6 +265,8 @@ Follow all rules in 00_Rules_and_Constraints.md. No file over 500 lines. Use Vis
 
 ### Agent Prompt (Session 2 of 2: Database Subsystem)
 ```
+CONVERSATION TITLE: Phase 3B — Database Subsystem
+
 Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
 Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
 
@@ -317,6 +327,8 @@ Client can create an account and log in; server validates credentials against th
 
 ### Agent Prompt (Session 1 of 2: Account Subsystem)
 ```
+CONVERSATION TITLE: Phase 4A — Account Subsystem
+
 Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
 Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
 
@@ -350,6 +362,8 @@ Follow all rules in 00_Rules_and_Constraints.md. No file over 500 lines. Server 
 
 ### Agent Prompt (Session 2 of 2: Login UI + RPC)
 ```
+CONVERSATION TITLE: Phase 4B — Login UI + RPC
+
 Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
 Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
 
@@ -388,6 +402,10 @@ Follow all rules in 00_Rules_and_Constraints.md. No file over 500 lines. Never s
 
 ## Phase 5: Character Create + Persist
 
+### Status
+- **Phase 5A (Backend):** ✅ COMPLETE — 2026-02-08 — See `Phase5A_CharacterCreation_Backend.md`
+- **Phase 5B (UI):** ✅ COMPLETE — 2026-02-08 — See `Phase5B_CharacterCreation_UI.md`
+
 ### Goal
 Logged-in player creates a character with name + basic appearance, validated and persisted to the database.
 
@@ -410,6 +428,8 @@ Logged-in player creates a character with name + basic appearance, validated and
 
 ### Agent Prompt (Session 1 of 2: Backend)
 ```
+CONVERSATION TITLE: Phase 5A — Character Creation Backend
+
 Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
 Read the file Documents/Technical/Character_Creation_System.md for the full character creation design.
 Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
@@ -440,6 +460,8 @@ Follow all rules in 00_Rules_and_Constraints.md and Character_Creation_System.md
 
 ### Agent Prompt (Session 2 of 2: UI)
 ```
+CONVERSATION TITLE: Phase 5B — Character Creation UI
+
 Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
 Read the file Documents/Technical/Character_Creation_System.md for the full character creation design.
 Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
@@ -477,6 +499,10 @@ Follow all rules in 00_Rules_and_Constraints.md. No file over 500 lines. For pro
 
 ## Phase 6: Character Select + Spawn
 
+### Status
+- **Phase 6 (C++ Code):** ✅ COMPLETE — 2026-02-08 — See `Phase6_CharacterSelect_Spawn.md`
+- **Phase 6 (WBP_CharacterSelect):** ⏳ PENDING — See `Phase6_WBP_CharacterSelect_BuildGuide.md`
+
 ### Goal
 Player selects a saved character and spawns in the world. Other players visible.
 
@@ -501,6 +527,8 @@ Player selects a saved character and spawns in the world. Other players visible.
 
 ### Agent Prompt
 ```
+CONVERSATION TITLE: Phase 6 — Character Select + Spawn
+
 Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
 Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
 
@@ -545,73 +573,6 @@ Follow all rules in 00_Rules_and_Constraints.md. No file over 500 lines. Server 
 
 ---
 
-## Phase 7: Gameplay Prototypes (Nodes & Caravans)
-
-### Goal
-Implement the core loops of the "Ashes-inspired" dynamic world: Nodes that level up based on player activity, and Caravans for transporting resources.
-
-### UE Locations
-| Action | Where to Find It |
-|--------|-----------------|
-| Create World Subsystem | **Tools** → **New C++ Class** → **World Subsystem** |
-| Create Actor | **Tools** → **New C++ Class** → **Actor** (or Pawn) |
-| Spline Component | **Add Component** in Blueprint -> **Spline** |
-
-### Files to Create
-| File | Path | Parent Class |
-|------|------|-------------|
-| `FPMNodeSubsystem.h/.cpp` | `Source/FaldoranPrimeMMO/Public/World/` and `Private/World/` | `UWorldSubsystem` |
-| `FPMCaravanActor.h/.cpp` | `Source/FaldoranPrimeMMO/Public/World/` and `Private/World/` | `AActor` (or `APawn`) |
-
-### Agent Prompt (Session 1 of 2: Node System)
-```
-Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
-Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
-
-TASK: Phase 7A — Create the Node System backend to track regional progression.
-
-Prerequisites: Phases 0-6 complete. DatabaseSubsystem works.
-
-Do this in micro-steps, one at a time, each must compile:
-1. Create Database Schema for Nodes (provide SQL):
-   - world_nodes table (node_id VARCHAR PK, level INT, current_xp INT, next_level_xp INT)
-   - Insert default node 'starting_area' with level 1
-2. Create UFPMNodeSubsystem (inherits UWorldSubsystem) in Source/FaldoranPrimeMMO/Public/World/
-   - On Initialize: Load node state from DB for the current map
-   - AddNodeXP(int32 Amount)
-     - Updates local state
-     - Checks for LevelUp
-     - Flushes to DB (periodically or on change)
-   - OnLevelUp delegate/event
-3. Console Command test:
-   - FPM.AddNodeXP 100
-   - Verify DB updates
-4. Compile and test
-```
-
-### Agent Prompt (Session 2 of 2: Caravan System)
-```
-Read the file Documents/Design/00_Rules_and_Constraints.md for project rules.
-Read the file Documents/Workflows/Prototype_Implementation_Plan.md for full context.
-
-TASK: Phase 7B — Create the Caravan Actor for resource transport.
-
-Prerequisites: Phases 0-7A complete.
-
-Do this in micro-steps, one at a time, each must compile:
-1. Create AFPMCaravanActor (inherits APawn) in Source/FaldoranPrimeMMO/Public/World/
-   - Replicated movement (slow speed)
-   - Health component (can be damaged by players - rudimentary PvP test)
-   - Simple Inventory (TMap<ResourceId, Quantity>)
-   - Function: InitializeCaravan(FVector Destination)
-2. Interaction:
-   - Simple "Interact" interface to let owner "Push" or "Drive" it (attach to player or follow spline)
-3. DB Integration hooks (placeholders):
-   - On Destroyed by Enemy -> Drop loot (log for now)
-   - On Arrive -> Grant rewards (log for now)
-4. Compile and test:
-   - Spawn caravan -> Walk it around -> Have another client shoot it -> Verify Health drops
-```
 
 ---
 

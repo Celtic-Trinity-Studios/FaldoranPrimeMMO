@@ -1,0 +1,47 @@
+#pragma once
+#define IC_CURRENT_FOCAL_LENGTH   "CurrentFocalLength"
+#define IC_FOCAL_REIGON           "Range"
+#define IC_NEAR_TRANSITION_REGION "NearTransitionRegion"
+#define IC_FAR_TRANSITION_REGION  "FarTransitionRegion"
+#define IC_NEAR_BLUR              "NearBlurScale"
+#define IC_FAR_BLUR               "FarBlurScale"
+#define IC_SENSOR_WIDTH           "SensorWidth"
+#define IC_SENSOR_HEIGHT          "SensorHeight"
+#define IC_FOCUS_DISTANCE         "Focus"
+#define IC_FOCUS_OFFSET           "FocusOffset"
+
+#define UE_CURRENT_FOCAL_LENGTH   "CurrentFocalLength"
+#define UE_FOCAL_REIGON           "FocalRegion"
+#define UE_NEAR_TRANSITION_REGION "NearTransitionRegion"
+#define UE_FAR_TRANSITION_REGION  "FarTransitionRegion"
+#define UE_NEAR_BLUR              "NearBlurSize"
+#define UE_FAR_BLUR               "FarBlurSize"
+#define UE_SENSOR_WIDTH           "SensorWidth"
+#define UE_SENSOR_HEIGHT          "SensorHeight"
+#define UE_FOCUS_DISTANCE         "FocusSettings.ManualFocusDistance"
+#define UE_FOCUS_OFFSET           "FocusOffset"
+
+#define UE_FOCAL_REIGON_PATH           "PostProcessSettings.DepthOfFieldFocalRegion"
+#define UE_NEAR_TRANSITION_REGION_PATH "PostProcessSettings.DepthOfFieldNearTransitionRegion"
+#define UE_FAR_TRANSITION_REGION_PATH  "PostProcessSettings.DepthOfFieldFarTransitionRegion"
+#define UE_NEAR_BLUR_PATH              "PostProcessSettings.DepthOfFieldNearBlurSize"
+#define UE_FAR_BLUR_PATH               "PostProcessSettings.DepthOfFieldFarBlurSize"
+#define UE_SENSOR_WIDTH_PATH           "Filmback.SensorWidth"
+#define UE_SENSOR_HEIGHT_PATH          "Filmback.SensorHeight"
+#define UE_FOCUS_DISTANCE_PATH         "FocusSettings.ManualFocusDistance"
+#define UE_FOCUS_OFFSET_PATH           "FocusSettings.FocusOffset"
+
+// for Game Path
+#define RLLIVELINK_CONTENT_GAME_PATH FString( "/RLContent" )
+#define RLLIVELINK_SUBJECT_CAMERA    "Camera"
+#define RLLIVELINK_SUBJECT_LIGHT     "Light"
+// for Folder name
+#define RLLIVELINK_CONTENT_PATH        FString( "/Content/RL_Common/LiveLink" )
+#define RLLIVELINK_CONTENT_CAMERA_PATH FString( "/" ) + RLLIVELINK_SUBJECT_CAMERA
+#define RLLIVELINK_CONTENT_DATA_PATH   "/Data"
+#define RLLIVELINK_CONTENT_Light_PATH  FString( "/" ) + RLLIVELINK_SUBJECT_LIGHT
+
+// for File name
+#define RLLIVELINK_BLUEPRINT        "CCLiveLink_Blueprint"
+#define RLLIVELINK_BLUEPRINT_CAMERA "LiveLinkCameraBlueprint"
+#define RLLIVELINK_BLUEPRINT_CAMERA "LiveLinkCameraBlueprint"

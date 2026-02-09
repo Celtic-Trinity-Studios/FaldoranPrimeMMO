@@ -16,6 +16,8 @@ TArray<IConsoleObject *> UFPMAccountTestCommands::RegisteredCommands;
 // -------------------------------------------------------------------
 // In PIE the Output Log's console runs commands in the CLIENT world.
 // We need the SERVER world to access server-only subsystems.
+// Wrapped in anonymous namespace to avoid Unity Build collisions.
+namespace {
 static UWorld *FindServerWorld(UWorld *FallbackWorld) {
 #if WITH_EDITOR
   if (GEngine) {
@@ -60,6 +62,7 @@ static UFPMAccountSubsystem *GetAccountSubsystem(UWorld *World) {
 
   return AccountSys;
 }
+} // anonymous namespace
 
 // -------------------------------------------------------------------
 // Registration
