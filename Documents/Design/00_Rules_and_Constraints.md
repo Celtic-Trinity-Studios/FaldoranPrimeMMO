@@ -79,12 +79,26 @@ These are **not required for the prototype** but are **mandatory before any publ
 
 ### 1.3 Workflow
 - **Scope:** ONE task per chat session.
-- **Micro-steps:** ONE micro-step at a time. No skipping steps.
+- **Micro-steps:** ONE micro-step at a time. No skipping steps. Each micro-step must specify:
+  - **What** is being created or modified (class name, file name)
+  - **Where** it goes (full absolute path, e.g., `Source/FaldoranPrimeMMO/Public/Character/`)
+  - **Parent class** (if creating a new class)
+  - **What it does** (one-sentence purpose)
 - **Stability:** Each step must compile successfully.
 - **Transparency:** Explain WHY big logical decisions are made.
 - **Path Specification:** Always provide full absolute file paths or Content Browser paths.
 - **Step Numbering:** List Step Number and total Number of Steps for big logical phases.
 - **Step Documentation:** For each major step, create a document in `Documents/Workflows/`.
+- **UE Location Tables:** Every task involving Unreal Editor work must include a **UE Locations** table showing WHERE to find things:
+  - Editor menu paths (e.g., `Edit → Project Settings → Maps & Modes`)
+  - Content Browser paths (e.g., `Content/UI/WBP_LoginScreen`)
+  - Config file paths (e.g., `Config/DefaultGame.ini`)
+  - How to launch/test (e.g., PIE settings, console commands, server launch commands)
+- **Context Requirements:** Every agent prompt must specify:
+  - Which documents to read for context and rules
+  - What prerequisite phases are complete
+  - What files/classes already exist that the task depends on
+  - What the exact deliverables are (files to create, tests to pass)
 
 ### 1.4 Version Control
 - **Tooling:** GitHub Desktop ONLY. Agent must not use git command line.
@@ -333,6 +347,24 @@ These are the **binding invariants** that must be respected by all systems.
 | `Source/FaldoranPrimeMMO/Public/` | C++ header files (API surface). |
 | `Source/FaldoranPrimeMMO/Private/` | C++ implementation files. |
 | `Content/` | Unreal assets (Blueprints, meshes, materials, maps). |
+
+| `Content/` | Unreal assets (Blueprints, meshes, materials, maps). |
+
+### 5.1 File Naming Policy
+**Core Principle:** All file names use **Snake_Case** or **PascalCase** only. No mixed formats (e.g., `Pillar02_Phase1`).
+
+- **Design Documents:** `Documents/Design/XX_Topic_Name.md`
+  - Use 2-digit number prefixes for sequential reading order (e.g., `01_Philosophy.md`).
+- **Technical Documents:** `Documents/Technical/Topic_Name.md`
+  - Use descriptive names (e.g., `Database_Schema.md`). Only use number prefixes if order is critical.
+- **Workflows:**
+  - **Active Plan:** `Documents/Workflows/Current_Phase_Plan.md`
+  - **Archived Work:** `Documents/Workflows/Archive/XX_Topic_Name.md` (Matches execution order).
+  - **Reference/Guides:** `Documents/Workflows/Reference/Topic_Name_Guide.md`
+- **Source Code:**
+  - **Classes:** PascalCase with Prefix (e.g., `FPMMyClass`).
+  - **Files:** Match class name exactly (e.g., `FPMMyClass.h`, `FPMMyClass.cpp`).
+- **Assets:** Use PascalCase (e.g., `M_MasterMaterial`, `SK_Mannequin`).
 
 ---
 

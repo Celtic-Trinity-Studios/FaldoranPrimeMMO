@@ -3,11 +3,13 @@
 #include "Player/FPMPlayerCharacter.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
-#include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
+
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPMPlayerCharacter, Log, All);
 
@@ -19,17 +21,16 @@ AFPMPlayerCharacter::AFPMPlayerCharacter() {
   // Replicate this actor to all clients
   bReplicates = true;
 
-  // Visible body mesh — simple sphere for prototype visibility
-  BodyMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BodyMesh"));
-  BodyMesh->SetupAttachment(GetCapsuleComponent());
-  BodyMesh->SetRelativeLocation(FVector(0.0f, 0.0f, 0.0f));
-  BodyMesh->SetWorldScale3D(FVector(0.75f, 0.75f, 1.5f)); // Capsule-ish shape
-  BodyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  // Configure the inherited skeletal mesh
+  if (GetMesh()) {
+    GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
+    GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
 
-  static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(
-      TEXT("/Engine/BasicShapes/Sphere"));
-  if (SphereMesh.Succeeded()) {
-    BodyMesh->SetStaticMesh(SphereMesh.Object);
+    static ConstructorHelpers::FObjectFinder<USkeletalMesh> MannyMesh(
+        TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple"));
+    if (MannyMesh.Succeeded()) {
+      GetMesh()->SetSkeletalMeshAsset(MannyMesh.Object);
+    }
   }
 
   // Spring arm for third-person camera

@@ -104,7 +104,7 @@ protected:
 
   /** Notify the client that world entry succeeded — hide UI. */
   UFUNCTION(Client, Reliable)
-  void ClientEnterWorldSuccess();
+  void ClientEnterWorldSuccess(const FVector &InSpawnLocation);
 
   /** Notify the client that world entry failed. */
   UFUNCTION(Client, Reliable)

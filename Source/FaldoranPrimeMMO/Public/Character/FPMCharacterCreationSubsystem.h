@@ -2,8 +2,8 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
 #include "Character/FPMCharacterCreationDataContract.h"
+#include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "FPMCharacterCreationSubsystem.generated.h"
 
@@ -27,13 +27,12 @@
  */
 UCLASS()
 class FALDORANPRIMEMMO_API UFPMCharacterCreationSubsystem
-    : public UGameInstanceSubsystem
-{
+    : public UGameInstanceSubsystem {
   GENERATED_BODY()
 
 public:
   // --- Lifecycle ---
-  virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+  virtual void Initialize(FSubsystemCollectionBase &Collection) override;
   virtual void Deinitialize() override;
 
   // --- Character Creation (Server-Only) ---
@@ -48,8 +47,8 @@ public:
    * @return           FFPMCharacterCreationResult with success or error info.
    */
   FFPMCharacterCreationResult
-  SubmitCharacterCreation(const FGuid& AccountId,
-                          const FFPMCharacterCreationRequest& Request);
+  SubmitCharacterCreation(const FGuid &AccountId,
+                          const FFPMCharacterCreationRequest &Request);
 
 private:
   // --- Rate Limiting ---
@@ -64,8 +63,7 @@ private:
    * Per-account rate limiting data.
    * Tracks timestamps of recent creation attempts to prevent spam.
    */
-  struct FRateLimitEntry
-  {
+  struct FRateLimitEntry {
     TArray<double> RequestTimestamps;
   };
 
@@ -79,14 +77,14 @@ private:
    * @param AccountId  The account to check.
    * @return           true if the account is rate-limited (reject request).
    */
-  bool IsRateLimited(const FGuid& AccountId);
+  bool IsRateLimited(const FGuid &AccountId);
 
   /**
    * Record a new request timestamp for rate limiting.
    *
    * @param AccountId  The account that made the request.
    */
-  void RecordRequest(const FGuid& AccountId);
+  void RecordRequest(const FGuid &AccountId);
 
   // --- Database Operations ---
 
@@ -97,7 +95,7 @@ private:
    * @param CharacterName  The name to check.
    * @return               true if the name is already in use.
    */
-  bool IsNameTaken(const FString& CharacterName);
+  bool IsNameTaken(const FString &CharacterName);
 
   /**
    * Get the number of characters owned by an account.
@@ -105,7 +103,7 @@ private:
    * @param AccountId  The account to check.
    * @return           Number of characters, or -1 on query failure.
    */
-  int32 GetCharacterCount(const FGuid& AccountId);
+  int32 GetCharacterCount(const FGuid &AccountId);
 
   /**
    * Insert a new character into the database.
@@ -116,9 +114,23 @@ private:
    * @param OutError       Set to error description on failure.
    * @return               true if the insert succeeded.
    */
-  bool InsertCharacter(const FGuid& AccountId,
-                       const FFPMCharacterCreationRequest& Request,
-                       FGuid& OutCharacterId, FString& OutError);
+  bool InsertCharacter(const FGuid &AccountId,
+                       const FFPMCharacterCreationRequest &Request,
+                       FGuid &OutCharacterId, FString &OutError);
+
+  /**
+   * Insert affinity rows for a newly created character.
+   * One row per affinity (6 playstyle + 8 magical = up to 14 rows).
+   * Only inserts non-empty pools.
+   *
+   * @param CharacterId  The new character's UUID.
+   * @param Request      The validated creation request containing affinities.
+   * @param OutError     Set to error description on failure.
+   * @return             true if all affinity rows were inserted.
+   */
+  bool InsertAffinities(const FGuid &CharacterId,
+                        const FFPMCharacterCreationRequest &Request,
+                        FString &OutError);
 
   // --- Audit Logging ---
 
@@ -130,9 +142,9 @@ private:
    * @param Request     The creation request data.
    * @param Result      The result of the attempt.
    */
-  static void AuditLog(const FGuid& AccountId,
-                       const FFPMCharacterCreationRequest& Request,
-                       const FFPMCharacterCreationResult& Result);
+  static void AuditLog(const FGuid &AccountId,
+                       const FFPMCharacterCreationRequest &Request,
+                       const FFPMCharacterCreationResult &Result);
 
   // --- Server Guard ---
 

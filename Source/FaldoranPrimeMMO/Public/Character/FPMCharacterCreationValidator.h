@@ -5,7 +5,6 @@
 #include "Character/FPMCharacterCreationDataContract.h"
 #include "CoreMinimal.h"
 
-
 /**
  * FFPMCharacterCreationValidator
  *
@@ -18,7 +17,7 @@
  */
 class FALDORANPRIMEMMO_API FFPMCharacterCreationValidator {
 public:
-  // --- Named Constants (no magic numbers) ---
+  // --- Named Constants: Name / Appearance ---
 
   /** Minimum allowed character name length. */
   static constexpr int32 MinNameLength = 3;
@@ -35,11 +34,46 @@ public:
   /** Maximum characters per account. */
   static constexpr int32 MaxCharactersPerAccount = 5;
 
+  // --- Named Constants: Playstyle Affinities (§4.2) ---
+
+  /** Number of playstyle affinity categories. */
+  static constexpr int32 PlaystyleAffinityCount = 6;
+
+  /** Default points per playstyle affinity. */
+  static constexpr int32 PlaystyleDefaultPoints = 100;
+
+  /** Minimum points allowed per playstyle affinity. */
+  static constexpr int32 PlaystyleMinPoints = 90;
+
+  /** Maximum points allowed per playstyle affinity. */
+  static constexpr int32 PlaystyleMaxPoints = 150;
+
+  /** Total point budget for the playstyle pool (zero-sum invariant). */
+  static constexpr int32 PlaystyleTotalBudget = 600;
+
+  // --- Named Constants: Magical Affinities (§4.3) ---
+
+  /** Number of magical affinity categories. */
+  static constexpr int32 MagicalAffinityCount = 8;
+
+  /** Default points per magical affinity. */
+  static constexpr int32 MagicalDefaultPoints = 100;
+
+  /** Minimum points allowed per magical affinity. */
+  static constexpr int32 MagicalMinPoints = 90;
+
+  /** Maximum points allowed per magical affinity. */
+  static constexpr int32 MagicalMaxPoints = 150;
+
+  /** Total point budget for the magical pool (zero-sum invariant). */
+  static constexpr int32 MagicalTotalBudget = 800;
+
   // --- Validation Methods ---
 
   /**
    * Validate the entire character creation request.
-   * Calls ValidateName() and ValidateAppearance() in sequence.
+   * Calls ValidateName(), ValidateAppearance(), and both affinity
+   * validators in sequence.
    * Returns the FIRST error found (fail closed — no partial validation).
    *
    * @param Request       The untrusted client request to validate.
@@ -80,6 +114,38 @@ public:
    */
   static bool ValidateAppearance(const FFPMCharacterCreationRequest &Request,
                                  FString &OutError);
+
+  /**
+   * Validate playstyle affinity distribution.
+   * Rules:
+   *   - Exactly PlaystyleAffinityCount (6) entries
+   *   - All affinity types present (Martial through Survival)
+   *   - Each value in [PlaystyleMinPoints, PlaystyleMaxPoints]
+   *   - Total = PlaystyleTotalBudget (zero-sum invariant)
+   *
+   * @param Request   The request containing affinity values.
+   * @param OutError  Set to the error description on failure.
+   * @return          true if the playstyle affinities are valid.
+   */
+  static bool
+  ValidatePlaystyleAffinities(const FFPMCharacterCreationRequest &Request,
+                              FString &OutError);
+
+  /**
+   * Validate magical affinity distribution.
+   * Rules:
+   *   - Exactly MagicalAffinityCount (8) entries
+   *   - All affinity types present (Fire through Arcane)
+   *   - Each value in [MagicalMinPoints, MagicalMaxPoints]
+   *   - Total = MagicalTotalBudget (zero-sum invariant)
+   *
+   * @param Request   The request containing affinity values.
+   * @param OutError  Set to the error description on failure.
+   * @return          true if the magical affinities are valid.
+   */
+  static bool
+  ValidateMagicalAffinities(const FFPMCharacterCreationRequest &Request,
+                            FString &OutError);
 
 private:
   /**

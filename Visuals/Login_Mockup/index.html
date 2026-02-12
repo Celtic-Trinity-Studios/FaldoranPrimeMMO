@@ -1,42 +1,86 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Faldoran Prime - Login</title>
+    <title>Faldoran Prime - Login Screen Reference</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=Spectral:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Spectral:ital,wght@0,400;0,600;0,700;1,400&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <div class="background-container">
         <div class="background-overlay"></div>
+        <div class="bg-glow bg-glow-1"></div>
+        <div class="bg-glow bg-glow-2"></div>
+        <div class="bg-glow bg-glow-3"></div>
         <div class="particles" id="particles"></div>
+        <div class="rune-ring" id="runeRing"></div>
     </div>
 
     <main class="login-wrapper">
         <header class="game-logo">
+            <div class="logo-icon">
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M24 2L44 14V34L24 46L4 34V14L24 2Z" stroke="url(#goldGrad)" stroke-width="1.5" fill="none"
+                        opacity="0.6" />
+                    <path d="M24 8L38 16V32L24 40L10 32V16L24 8Z" stroke="url(#goldGrad)" stroke-width="1" fill="none"
+                        opacity="0.3" />
+                    <circle cx="24" cy="24" r="4" fill="url(#goldGrad)" opacity="0.8" />
+                    <line x1="24" y1="2" x2="24" y2="20" stroke="url(#goldGrad)" stroke-width="0.5" opacity="0.4" />
+                    <line x1="24" y1="28" x2="24" y2="46" stroke="url(#goldGrad)" stroke-width="0.5" opacity="0.4" />
+                    <defs>
+                        <linearGradient id="goldGrad" x1="0" y1="0" x2="48" y2="48">
+                            <stop offset="0%" stop-color="#c5a059" />
+                            <stop offset="50%" stop-color="#eecd8d" />
+                            <stop offset="100%" stop-color="#a68b4c" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+            </div>
             <h1 class="logo-text">FALDORAN <span class="highlight">PRIME</span></h1>
-            <p class="tagline">The Civilization Evolution</p>
+            <div class="tagline-container">
+                <span class="tagline-line"></span>
+                <p class="tagline">The Civilization Evolution</p>
+                <span class="tagline-line"></span>
+            </div>
         </header>
 
-        <section class="login-card">
+        <section class="login-card" id="loginCard">
+            <div class="card-border-glow"></div>
             <div class="card-content">
                 <div class="status-indicator">
                     <span class="status-dot"></span>
                     <span class="status-text">SERVER ONLINE</span>
+                    <span class="status-ping">42ms</span>
                 </div>
 
                 <form id="loginForm" class="auth-form">
                     <div class="input-group">
                         <label for="username">ACCOUNT IDENTITY</label>
-                        <input type="text" id="username" placeholder="Username" required autocomplete="username">
+                        <div class="input-wrapper">
+                            <svg class="input-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M8 8a3 3 0 100-6 3 3 0 000 6zm0 1c-3.3 0-6 1.8-6 4v1h12v-1c0-2.2-2.7-4-6-4z" />
+                            </svg>
+                            <input type="text" id="username" placeholder="Enter your username" required
+                                autocomplete="username">
+                        </div>
                     </div>
 
                     <div class="input-group">
                         <label for="password">ACCESS CIPHER</label>
-                        <input type="password" id="password" placeholder="••••••••" required autocomplete="current-password">
+                        <div class="input-wrapper">
+                            <svg class="input-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M11 7V5a3 3 0 10-6 0v2H4v7h8V7h-1zm-4-2a1 1 0 112 0v2H7V5z" />
+                            </svg>
+                            <input type="password" id="password" placeholder="••••••••" required
+                                autocomplete="current-password">
+                        </div>
                     </div>
 
                     <div class="form-options">
@@ -48,12 +92,16 @@
                         <a href="#" class="forgot-link">FORGOT CIPHER?</a>
                     </div>
 
-                    <button type="submit" class="primary-btn">
+                    <div id="resultMessage" class="result-message" style="display:none;"></div>
+
+                    <button type="submit" class="primary-btn" id="loginBtn">
                         <span class="btn-text">CONNECT TO WORLD</span>
                         <div class="btn-glow"></div>
+                        <div class="btn-particles"></div>
                     </button>
-                    
+
                     <button type="button" class="secondary-btn" id="createAccountBtn">
+                        <span class="btn-border-anim"></span>
                         CREATE NEW IDENTITY
                     </button>
                 </form>
@@ -68,4 +116,5 @@
 
     <script src="script.js"></script>
 </body>
+
 </html>

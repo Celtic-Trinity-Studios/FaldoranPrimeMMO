@@ -9,9 +9,15 @@ public class FaldoranPrimeMMO : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG", "Slate", "SlateCore" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG", "Slate", "SlateCore", "Landscape", "Foliage", "ProceduralMeshComponent", "Json", "JsonUtilities" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
+
+		// Editor-only: needed for GEditor in terrain generation console commands
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.Add("UnrealEd");
+		}
 
 		// --- libpq (PostgreSQL C API) integration ---
 		string ThirdPartyPath = Path.Combine(ModuleDirectory, "..", "ThirdParty", "libpq");

@@ -5,7 +5,6 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Misc/ConfigCacheIni.h"
-#include "TimerManager.h"
 
 THIRD_PARTY_INCLUDES_START
 #include "libpq-fe.h"
@@ -83,17 +82,57 @@ bool UFPMDatabaseSubsystem::Connect() {
     return false;
   }
 
-  if (Connection != nullptr) {
+  if (Connection != nullptr && PQstatus(Connection) == CONNECTION_OK) {
     UE_LOG(LogFPMDatabase, Warning,
            TEXT("FPM Database: Already connected. Call Disconnect() first."));
     return true;
   }
 
-  // Build the libpq connection string from config values
-  const FString ConnInfo = FString::Printf(
-      TEXT("host=%s port=%s dbname=%s user=%s password=%s connect_timeout=10"),
-      *ConfigHost, *ConfigPort, *ConfigDatabaseName, *ConfigUsername,
-      *ConfigPassword);
+  // Retry loop: attempt connection up to MaxConnectionRetries times
+  for (int32 Attempt = 1; Attempt <= MaxConnectionRetries; ++Attempt) {
+    UE_LOG(LogFPMDatabase, Log,
+           TEXT("FPM Database: Connection attempt %d/%d to %s:%s/%s..."),
+           Attempt, MaxConnectionRetries, *ConfigHost, *ConfigPort,
+           *ConfigDatabaseName);
+
+    if (AttemptSingleConnection()) {
+      UE_LOG(LogFPMDatabase, Log,
+             TEXT("FPM Database: Connected successfully on attempt %d "
+                  "(libpq version %d)"),
+             Attempt, PQlibVersion());
+      return true;
+    }
+
+    // Don't sleep after the last failed attempt
+    if (Attempt < MaxConnectionRetries) {
+      const float DelayThisAttempt = BackoffDelaySeconds * Attempt;
+      UE_LOG(LogFPMDatabase, Warning,
+             TEXT("FPM Database: Attempt %d failed. Retrying in %.1fs..."),
+             Attempt, DelayThisAttempt);
+      FPlatformProcess::Sleep(DelayThisAttempt);
+    }
+  }
+
+  UE_LOG(LogFPMDatabase, Error,
+         TEXT("FPM Database: All %d connection attempts failed. "
+              "Server will operate without database."),
+         MaxConnectionRetries);
+  return false;
+}
+
+bool UFPMDatabaseSubsystem::AttemptSingleConnection() {
+  // Clean up any stale connection handle
+  if (Connection != nullptr) {
+    PQfinish(Connection);
+    Connection = nullptr;
+  }
+
+  // Build the libpq connection string with timeout and SSL preference
+  const FString ConnInfo =
+      FString::Printf(TEXT("host=%s port=%s dbname=%s user=%s password=%s "
+                           "connect_timeout=%d sslmode=prefer"),
+                      *ConfigHost, *ConfigPort, *ConfigDatabaseName,
+                      *ConfigUsername, *ConfigPassword, ConnectTimeoutSeconds);
 
   // PQconnectdb expects a UTF-8 C string
   Connection = PQconnectdb(TCHAR_TO_UTF8(*ConnInfo));
@@ -108,11 +147,6 @@ bool UFPMDatabaseSubsystem::Connect() {
     Connection = nullptr;
     return false;
   }
-
-  UE_LOG(LogFPMDatabase, Log,
-         TEXT("FPM Database: Connected successfully to %s:%s/%s (libpq version "
-              "%d)"),
-         *ConfigHost, *ConfigPort, *ConfigDatabaseName, PQlibVersion());
 
   return true;
 }
@@ -134,6 +168,37 @@ bool UFPMDatabaseSubsystem::IsConnected() const {
   return PQstatus(Connection) == CONNECTION_OK;
 }
 
+bool UFPMDatabaseSubsystem::IsConnectionHealthy() {
+  if (IsConnected()) {
+    return true;
+  }
+
+  // Connection is lost — attempt to re-establish it
+  UE_LOG(LogFPMDatabase, Warning,
+         TEXT("FPM Database: Connection unhealthy. Attempting reconnect..."));
+  return AttemptReconnect();
+}
+
+bool UFPMDatabaseSubsystem::AttemptReconnect() {
+  UE_LOG(LogFPMDatabase, Log, TEXT("FPM Database: Reconnecting to %s:%s/%s..."),
+         *ConfigHost, *ConfigPort, *ConfigDatabaseName);
+
+  // Clean disconnect first
+  Disconnect();
+
+  // Use the full retry-aware Connect()
+  const bool bReconnected = Connect();
+
+  if (bReconnected) {
+    UE_LOG(LogFPMDatabase, Log, TEXT("FPM Database: Reconnection successful!"));
+  } else {
+    UE_LOG(LogFPMDatabase, Error,
+           TEXT("FPM Database: Reconnection FAILED after all retries."));
+  }
+
+  return bReconnected;
+}
+
 // -------------------------------------------------------------------
 // Query Execution
 // -------------------------------------------------------------------
@@ -150,11 +215,18 @@ UFPMDatabaseSubsystem::ExecuteQuery(const FString &SQL,
     return Result;
   }
 
+  // Auto-reconnect: if connection was lost, try to re-establish it
   if (!IsConnected()) {
-    Result.ErrorMessage = TEXT("Not connected to database.");
-    UE_LOG(LogFPMDatabase, Warning, TEXT("FPM Database: %s"),
-           *Result.ErrorMessage);
-    return Result;
+    UE_LOG(LogFPMDatabase, Warning,
+           TEXT("FPM Database: Connection lost before query. "
+                "Attempting auto-reconnect..."));
+    if (!AttemptReconnect()) {
+      Result.ErrorMessage =
+          TEXT("Not connected to database and reconnect failed.");
+      UE_LOG(LogFPMDatabase, Error, TEXT("FPM Database: %s"),
+             *Result.ErrorMessage);
+      return Result;
+    }
   }
 
   // Convert FString params to UTF-8 C strings for PQexecParams
@@ -189,8 +261,7 @@ UFPMDatabaseSubsystem::ExecuteQuery(const FString &SQL,
   const ExecStatusType Status = PQresultStatus(PgResult);
 
   if (Status == PGRES_COMMAND_OK) {
-    // Successful command with no result rows (INSERT, UPDATE, DELETE, CREATE,
-    // etc.)
+    // Successful command with no result rows (INSERT, UPDATE, DELETE, etc.)
     Result.bSuccess = true;
     const char *RowsAffectedStr = PQcmdTuples(PgResult);
     if (RowsAffectedStr && RowsAffectedStr[0] != '\0') {

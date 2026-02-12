@@ -140,6 +140,19 @@ UFPMCharacterCreationSubsystem::SubmitCharacterCreation(
     return Result;
   }
 
+  // --- Insert affinities (if provided) ---
+  if (Request.PlaystyleAffinities.Num() > 0 ||
+      Request.MagicalAffinities.Num() > 0) {
+    FString AffinityError;
+    if (!InsertAffinities(NewCharacterId, Request, AffinityError)) {
+      // Character was already inserted — log the error.
+      // Production would use a DB transaction; prototype logs and continues.
+      UE_LOG(LogFPMCharacterCreation, Error,
+             TEXT("FPM CharacterCreation: Affinity insert failed — %s"),
+             *AffinityError);
+    }
+  }
+
   // --- Success ---
   Result.bSuccess = true;
   Result.CharacterId = NewCharacterId;
@@ -303,9 +316,82 @@ bool UFPMCharacterCreationSubsystem::InsertCharacter(
   }
 
   UE_LOG(LogFPMCharacterCreation, Log,
-         TEXT("FPM CharacterCreation: Character inserted — name='%s', id=%s, "
-              "account=%s"),
+         TEXT("FPM CharacterCreation: Character inserted — name='%s', "
+              "id=%s, account=%s"),
          *Request.CharacterName, *OutCharacterId.ToString(), *AccountIdStr);
+
+  return true;
+}
+
+// -------------------------------------------------------------------
+// Insert Affinities
+// -------------------------------------------------------------------
+
+bool UFPMCharacterCreationSubsystem::InsertAffinities(
+    const FGuid &CharacterId, const FFPMCharacterCreationRequest &Request,
+    FString &OutError) {
+  UGameInstance *GI = GetGameInstance();
+  if (!GI) {
+    OutError = TEXT("No GameInstance.");
+    return false;
+  }
+
+  UFPMDatabaseSubsystem *DB = GI->GetSubsystem<UFPMDatabaseSubsystem>();
+  if (!DB || !DB->IsConnected()) {
+    OutError = TEXT("Database not available.");
+    return false;
+  }
+
+  const FString CharIdStr =
+      CharacterId.ToString(EGuidFormats::DigitsWithHyphensLower);
+
+  const FString SQL =
+      TEXT("INSERT INTO character_affinities "
+           "(character_id, affinity_pool, affinity_type, points) "
+           "VALUES ($1, $2, $3, $4)");
+
+  // Pool 0 = Playstyle affinities
+  static constexpr int32 PlaystylePoolId = 0;
+  for (const FFPMPlaystyleAffinityEntry &Entry : Request.PlaystyleAffinities) {
+    const int32 TypeIndex = static_cast<int32>(Entry.Affinity);
+    TArray<FString> Params;
+    Params.Add(CharIdStr);
+    Params.Add(FString::Printf(TEXT("%d"), PlaystylePoolId));
+    Params.Add(FString::Printf(TEXT("%d"), TypeIndex));
+    Params.Add(FString::Printf(TEXT("%d"), Entry.Points));
+
+    FFPMDatabaseQueryResult DBResult = DB->ExecuteQuery(SQL, Params);
+    if (!DBResult.bSuccess) {
+      OutError =
+          FString::Printf(TEXT("Playstyle affinity %d insert failed — %s"),
+                          TypeIndex, *DBResult.ErrorMessage);
+      return false;
+    }
+  }
+
+  // Pool 1 = Magical affinities
+  static constexpr int32 MagicalPoolId = 1;
+  for (const FFPMMagicalAffinityEntry &Entry : Request.MagicalAffinities) {
+    const int32 TypeIndex = static_cast<int32>(Entry.Affinity);
+    TArray<FString> Params;
+    Params.Add(CharIdStr);
+    Params.Add(FString::Printf(TEXT("%d"), MagicalPoolId));
+    Params.Add(FString::Printf(TEXT("%d"), TypeIndex));
+    Params.Add(FString::Printf(TEXT("%d"), Entry.Points));
+
+    FFPMDatabaseQueryResult DBResult = DB->ExecuteQuery(SQL, Params);
+    if (!DBResult.bSuccess) {
+      OutError = FString::Printf(TEXT("Magical affinity %d insert failed — %s"),
+                                 TypeIndex, *DBResult.ErrorMessage);
+      return false;
+    }
+  }
+
+  UE_LOG(LogFPMCharacterCreation, Log,
+         TEXT("FPM CharacterCreation: Affinities inserted — character=%s, "
+              "playstyle=%d, magical=%d"),
+         *CharIdStr, Request.PlaystyleAffinities.Num(),
+         Request.MagicalAffinities.Num());
 
   return true;
 }

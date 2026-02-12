@@ -79,6 +79,41 @@ enum class EFPMCharacterCreationError : uint8 {
 };
 
 /**
+ * FFPMPlaystyleAffinityEntry
+ *
+ * Single key-value pair for playstyle affinity distribution.
+ * TArray of these is used instead of TMap for RPC compatibility
+ * (UE5 UHT does not support TMap in replicated structs).
+ */
+USTRUCT(BlueprintType)
+struct FALDORANPRIMEMMO_API FFPMPlaystyleAffinityEntry {
+  GENERATED_BODY()
+
+  UPROPERTY(BlueprintReadWrite)
+  EFPMPlaystyleAffinity Affinity = EFPMPlaystyleAffinity::Martial;
+
+  UPROPERTY(BlueprintReadWrite)
+  int32 Points = 0;
+};
+
+/**
+ * FFPMMagicalAffinityEntry
+ *
+ * Single key-value pair for magical affinity distribution.
+ * TArray of these is used instead of TMap for RPC compatibility.
+ */
+USTRUCT(BlueprintType)
+struct FALDORANPRIMEMMO_API FFPMMagicalAffinityEntry {
+  GENERATED_BODY()
+
+  UPROPERTY(BlueprintReadWrite)
+  EFPMMagicalAffinity Affinity = EFPMMagicalAffinity::Fire;
+
+  UPROPERTY(BlueprintReadWrite)
+  int32 Points = 0;
+};
+
+/**
  * FFPMCharacterCreationRequest
  *
  * Data contract for a character creation request sent from client to server.
@@ -114,18 +149,20 @@ struct FALDORANPRIMEMMO_API FFPMCharacterCreationRequest {
   /**
    * Playstyle affinity point distribution. Zero-sum pool: total must equal 600.
    * Each value must be in [90, 150]. All 6 affinities must be present.
+   * Uses TArray instead of TMap for UE5 RPC/replication compatibility.
    * See 00_Rules_and_Constraints.md §4.2.
    */
   UPROPERTY(BlueprintReadWrite)
-  TMap<EFPMPlaystyleAffinity, int32> PlaystyleAffinities;
+  TArray<FFPMPlaystyleAffinityEntry> PlaystyleAffinities;
 
   /**
    * Magical affinity point distribution. Zero-sum pool: total must equal 800.
    * Each value must be in [90, 150]. All 8 affinities must be present.
+   * Uses TArray instead of TMap for UE5 RPC/replication compatibility.
    * See 00_Rules_and_Constraints.md §4.3.
    */
   UPROPERTY(BlueprintReadWrite)
-  TMap<EFPMMagicalAffinity, int32> MagicalAffinities;
+  TArray<FFPMMagicalAffinityEntry> MagicalAffinities;
 };
 
 /**

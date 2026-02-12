@@ -37,4 +37,13 @@ private:
    */
   static void HandleTestCreateCharacter(const TArray<FString> &Args,
                                         UWorld *World);
+
+  /**
+   * Handle: FPM.TestCreateCharacterWithAffinities
+   * Creates a character with default appearance and a test affinity
+   * distribution (non-default) for both playstyle and magical pools.
+   */
+  static void
+  HandleTestCreateCharacterWithAffinities(const TArray<FString> &Args,
+                                          UWorld *World);
 };

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
+#include "TimerManager.h"
 
 // Forward-declare the libpq connection type so we don't expose the header
 // publicly
@@ -61,7 +62,11 @@ public:
 
   // --- Connection Management ---
 
-  /** Attempt to connect to the PostgreSQL database using config values. */
+  /**
+   * Attempt to connect to the PostgreSQL database using config values.
+   * Retries up to MaxConnectionRetries times with BackoffDelaySeconds between
+   * attempts. Uses connect_timeout from config to limit each attempt.
+   */
   bool Connect();
 
   /** Disconnect from the database, releasing the libpq connection. */
@@ -70,6 +75,14 @@ public:
   /** Returns true if we have an active, valid database connection. */
   UFUNCTION(BlueprintCallable, Category = "FPM|Database")
   bool IsConnected() const;
+
+  /**
+   * Checks if the connection is healthy by verifying PQstatus.
+   * Unlike IsConnected(), this also attempts a reconnect if the connection
+   * has been lost, making it suitable for use before critical operations.
+   */
+  UFUNCTION(BlueprintCallable, Category = "FPM|Database")
+  bool IsConnectionHealthy();
 
   // --- Query Execution ---
 
@@ -92,6 +105,16 @@ private:
   /** The active libpq connection handle. Null when disconnected. */
   PGconn *Connection = nullptr;
 
+  // --- Connection Retry Configuration ---
+  /** Maximum number of connection attempts before giving up. */
+  static constexpr int32 MaxConnectionRetries = 3;
+
+  /** Seconds to wait between retry attempts (linear backoff). */
+  static constexpr float BackoffDelaySeconds = 2.0f;
+
+  /** Connection timeout in seconds (used in libpq connect string). */
+  static constexpr int32 ConnectTimeoutSeconds = 10;
+
   // --- Config values read from DefaultGame.ini ---
   FString ConfigHost;
   FString ConfigPort;
@@ -105,4 +128,21 @@ private:
   /** Returns true only if running on a dedicated server. All DB ops check this.
    */
   bool IsDedicatedServerContext() const;
+
+  /**
+   * Attempt a single connection to PostgreSQL without retries.
+   * Used internally by Connect() for each retry attempt.
+   * @return true if connection was established successfully.
+   */
+  bool AttemptSingleConnection();
+
+  /**
+   * Attempt to re-establish a lost connection.
+   * Disconnects cleanly first, then calls Connect() with retries.
+   * @return true if reconnection succeeded.
+   */
+  bool AttemptReconnect();
+
+  /** Timer handle for deferred reconnection attempts in PIE. */
+  FTimerHandle ReconnectTimerHandle;
 };

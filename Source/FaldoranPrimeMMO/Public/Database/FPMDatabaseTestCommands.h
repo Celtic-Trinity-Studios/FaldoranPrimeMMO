@@ -9,9 +9,12 @@
  * UFPMDatabaseTestCommands
  *
  * Registers console commands for testing the database subsystem:
- *   FPM.TestDBConnect  — Connects to the database and logs the result.
- *   FPM.TestDBWrite    — Inserts a test row into a db_test table.
- *   FPM.TestDBRead     — Reads all rows from db_test and logs them.
+ *   FPM.TestDBConnect       — Connects to the database and logs the result.
+ *   FPM.TestDBWrite         — Inserts a test row into a db_test table.
+ *   FPM.TestDBRead          — Reads all rows from db_test and logs them.
+ *   FPM.TestRemoteDBConnect — Full remote connection verification (connect +
+ * query + latency). FPM.TestDBHealth        — Tests IsConnectionHealthy() with
+ * auto-reconnect.
  *
  * These commands only work on a dedicated server.
  * Will be removed or disabled once the Account subsystem is operational.
@@ -35,4 +38,7 @@ private:
   static void HandleTestDBConnect(const TArray<FString> &Args, UWorld *World);
   static void HandleTestDBWrite(const TArray<FString> &Args, UWorld *World);
   static void HandleTestDBRead(const TArray<FString> &Args, UWorld *World);
+  static void HandleTestRemoteDBConnect(const TArray<FString> &Args,
+                                        UWorld *World);
+  static void HandleTestDBHealth(const TArray<FString> &Args, UWorld *World);
 };

@@ -11,21 +11,27 @@
 class UButton;
 class UTextBlock;
 class UVerticalBox;
+class UCanvasPanel;
+class UImage;
+class UBorder;
+class UOverlay;
+class USizeBox;
+class USpacer;
+class UScrollBox;
 
 /**
  * UFPMCharacterSelectWidget
  *
- * C++ backing class for the WBP_CharacterSelect Widget Blueprint.
- * Displays the player's existing characters in a scrollable list and
- * provides buttons to enter the world, delete, or create a new character.
+ * Self-contained character select screen widget for Faldoran Prime.
  *
- * The Blueprint must contain widgets with these exact names:
- *   - CharacterListBox (VerticalBox) — dynamically populated
- *   - EnterWorldButton (Button)
- *   - DeleteCharacterButton (Button)
- *   - CreateNewButton (Button) — navigates to character creation
- *   - SelectedCharacterText (TextBlock)
- *   - StatusText (TextBlock) — loading/error messages
+ * Builds its entire UI programmatically in C++ with the same
+ * "Glass & Gold" visual theme as the login screen.
+ * Full-screen dark background, themed panel, styled character list,
+ * and action buttons.
+ *
+ * NOTE: The WBP_CharacterSelect Blueprint should have its root be an
+ * empty Canvas Panel (no children). All visual children are created
+ * in NativeConstruct.
  */
 UCLASS()
 class FALDORANPRIMEMMO_API UFPMCharacterSelectWidget : public UUserWidget {
@@ -44,41 +50,70 @@ public:
 protected:
   virtual void NativeConstruct() override;
 
-  // --- Bound Widgets (must match names in Blueprint) ---
+private:
+  // --- Programmatically created widgets ---
 
-  UPROPERTY(meta = (BindWidget))
+  UPROPERTY()
+  TObjectPtr<UImage> BackgroundImage;
+
+  UPROPERTY()
+  TObjectPtr<UTextBlock> TitleText;
+
+  UPROPERTY()
+  TObjectPtr<UTextBlock> SubtitleText;
+
+  UPROPERTY()
   TObjectPtr<UVerticalBox> CharacterListBox;
 
-  UPROPERTY(meta = (BindWidget))
+  UPROPERTY()
   TObjectPtr<UButton> EnterWorldButton;
 
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<UButton> DeleteCharacterButton;
+  UPROPERTY()
+  TObjectPtr<UTextBlock> EnterWorldButtonText;
 
-  UPROPERTY(meta = (BindWidget))
+  UPROPERTY()
   TObjectPtr<UButton> CreateNewButton;
 
-  UPROPERTY(meta = (BindWidget))
+  UPROPERTY()
+  TObjectPtr<UTextBlock> CreateNewButtonText;
+
+  UPROPERTY()
+  TObjectPtr<UButton> BackButton;
+
+  UPROPERTY()
+  TObjectPtr<UTextBlock> BackButtonText;
+
+  UPROPERTY()
   TObjectPtr<UTextBlock> SelectedCharacterText;
 
-  UPROPERTY(meta = (BindWidget))
+  UPROPERTY()
   TObjectPtr<UTextBlock> StatusText;
 
-private:
+  UPROPERTY()
+  TObjectPtr<UTextBlock> FooterText;
+
+  // --- Helpers ---
+
+  /** Build the entire UI tree and add it to the root canvas. */
+  void BuildUI();
+
   /** Called when Enter World is clicked. */
   UFUNCTION()
   void OnEnterWorldClicked();
-
-  /** Called when Delete Character is clicked. */
-  UFUNCTION()
-  void OnDeleteCharacterClicked();
 
   /** Called when Create New is clicked. */
   UFUNCTION()
   void OnCreateNewClicked();
 
-  /** Called when a character entry button is clicked. */
+  /** Called when Back is clicked. */
+  UFUNCTION()
+  void OnBackClicked();
+
+  /** Called when a character entry is selected. */
   void OnCharacterSelected(int32 Index);
+
+  /** Update button enabled states based on selection. */
+  void UpdateButtonStates();
 
   /** The currently selected character index in the list. */
   int32 SelectedIndex = -1;
@@ -86,6 +121,6 @@ private:
   /** Cached character list from the server. */
   TArray<FFPMCharacterSummary> CachedCharacters;
 
-  /** Update button enabled states based on selection. */
-  void UpdateButtonStates();
+  /** References to character entry buttons for styling updates. */
+  TArray<TObjectPtr<UButton>> CharacterEntryButtons;
 };

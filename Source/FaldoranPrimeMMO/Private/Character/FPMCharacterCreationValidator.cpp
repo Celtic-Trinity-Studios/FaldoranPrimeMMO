@@ -35,6 +35,22 @@ bool FFPMCharacterCreationValidator::ValidateRequest(
     return false;
   }
 
+  // Validate affinity pools (only if provided — empty maps are valid
+  // for backward compatibility with the original creation flow)
+  if (Request.PlaystyleAffinities.Num() > 0) {
+    if (!ValidatePlaystyleAffinities(Request, OutError)) {
+      OutErrorCode = EFPMCharacterCreationError::InvalidAffinities;
+      return false;
+    }
+  }
+
+  if (Request.MagicalAffinities.Num() > 0) {
+    if (!ValidateMagicalAffinities(Request, OutError)) {
+      OutErrorCode = EFPMCharacterCreationError::InvalidAffinities;
+      return false;
+    }
+  }
+
   OutErrorCode = EFPMCharacterCreationError::None;
   return true;
 }
@@ -162,6 +178,135 @@ bool FFPMCharacterCreationValidator::ValidateColorRange(
     OutError =
         FString::Printf(TEXT("%s color values must be between %.1f and %.1f."),
                         *FieldName, MinColorValue, MaxColorValue);
+    return false;
+  }
+
+  return true;
+}
+
+// -------------------------------------------------------------------
+// ValidatePlaystyleAffinities
+// -------------------------------------------------------------------
+
+bool FFPMCharacterCreationValidator::ValidatePlaystyleAffinities(
+    const FFPMCharacterCreationRequest &Request, FString &OutError) {
+  const auto &Entries = Request.PlaystyleAffinities;
+
+  // Correct number of entries
+  if (Entries.Num() != PlaystyleAffinityCount) {
+    OutError = FString::Printf(
+        TEXT("Playstyle affinities must have exactly %d entries (got %d)."),
+        PlaystyleAffinityCount, Entries.Num());
+    return false;
+  }
+
+  // Track which affinity types we've seen (detect duplicates + missing)
+  const int32 EnumMax = static_cast<int32>(EFPMPlaystyleAffinity::MAX);
+  TArray<bool> Seen;
+  Seen.SetNumZeroed(EnumMax);
+
+  int32 Total = 0;
+
+  for (const FFPMPlaystyleAffinityEntry &Entry : Entries) {
+    const int32 Index = static_cast<int32>(Entry.Affinity);
+
+    // Bounds check the enum value
+    if (Index < 0 || Index >= EnumMax) {
+      OutError =
+          FString::Printf(TEXT("Invalid playstyle affinity type %d."), Index);
+      return false;
+    }
+
+    // Duplicate check
+    if (Seen[Index]) {
+      OutError =
+          FString::Printf(TEXT("Duplicate playstyle affinity type %d."), Index);
+      return false;
+    }
+    Seen[Index] = true;
+
+    // Range check
+    if (Entry.Points < PlaystyleMinPoints ||
+        Entry.Points > PlaystyleMaxPoints) {
+      OutError = FString::Printf(
+          TEXT("Playstyle affinity %d value %d is out of range [%d, %d]."),
+          Index, Entry.Points, PlaystyleMinPoints, PlaystyleMaxPoints);
+      return false;
+    }
+
+    Total += Entry.Points;
+  }
+
+  // All types must be present (covered by count + no-duplicates check)
+
+  // Zero-sum invariant
+  if (Total != PlaystyleTotalBudget) {
+    OutError =
+        FString::Printf(TEXT("Playstyle affinity total must be %d (got %d)."),
+                        PlaystyleTotalBudget, Total);
+    return false;
+  }
+
+  return true;
+}
+
+// -------------------------------------------------------------------
+// ValidateMagicalAffinities
+// -------------------------------------------------------------------
+
+bool FFPMCharacterCreationValidator::ValidateMagicalAffinities(
+    const FFPMCharacterCreationRequest &Request, FString &OutError) {
+  const auto &Entries = Request.MagicalAffinities;
+
+  // Correct number of entries
+  if (Entries.Num() != MagicalAffinityCount) {
+    OutError = FString::Printf(
+        TEXT("Magical affinities must have exactly %d entries (got %d)."),
+        MagicalAffinityCount, Entries.Num());
+    return false;
+  }
+
+  // Track which affinity types we've seen
+  const int32 EnumMax = static_cast<int32>(EFPMMagicalAffinity::MAX);
+  TArray<bool> Seen;
+  Seen.SetNumZeroed(EnumMax);
+
+  int32 Total = 0;
+
+  for (const FFPMMagicalAffinityEntry &Entry : Entries) {
+    const int32 Index = static_cast<int32>(Entry.Affinity);
+
+    // Bounds check
+    if (Index < 0 || Index >= EnumMax) {
+      OutError =
+          FString::Printf(TEXT("Invalid magical affinity type %d."), Index);
+      return false;
+    }
+
+    // Duplicate check
+    if (Seen[Index]) {
+      OutError =
+          FString::Printf(TEXT("Duplicate magical affinity type %d."), Index);
+      return false;
+    }
+    Seen[Index] = true;
+
+    // Range check
+    if (Entry.Points < MagicalMinPoints || Entry.Points > MagicalMaxPoints) {
+      OutError = FString::Printf(
+          TEXT("Magical affinity %d value %d is out of range [%d, %d]."), Index,
+          Entry.Points, MagicalMinPoints, MagicalMaxPoints);
+      return false;
+    }
+
+    Total += Entry.Points;
+  }
+
+  // Zero-sum invariant
+  if (Total != MagicalTotalBudget) {
+    OutError =
+        FString::Printf(TEXT("Magical affinity total must be %d (got %d)."),
+                        MagicalTotalBudget, Total);
     return false;
   }
 

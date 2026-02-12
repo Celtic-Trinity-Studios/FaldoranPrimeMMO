@@ -4,15 +4,19 @@
 #include "Account/FPMAccountSubsystem.h"
 #include "Blueprint/UserWidget.h"
 #include "Character/FPMCharacterCreationSubsystem.h"
+#include "Components/CapsuleComponent.h"
 #include "Database/FPMDatabaseSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/GameModeBase.h"
 #include "Player/FPMPlayerCharacter.h"
 #include "UI/FPMCharacterCreationWidget.h"
 #include "UI/FPMCharacterSelectWidget.h"
 #include "UI/FPMLoginWidget.h"
 #include "UObject/ConstructorHelpers.h"
+#include "World/FPMChunkData.h"
+#include "World/FPMWorldChunkManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPMPlayerController, Log, All);
 
@@ -361,19 +365,130 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     return;
   }
 
-  FVector SpawnLoc(0.0f, 0.0f, 200.0f);
+  // --- Random spawn on terrain ---
+  // Pick a random land position on the starter island, 10 units above ground
+  FVector SpawnLoc(0.0f, 0.0f, 5000.0f); // Fallback
   FRotator SpawnRot = FRotator::ZeroRotator;
-  if (AGameModeBase *GM = World->GetAuthGameMode()) {
-    if (AActor *Start = GM->FindPlayerStart(this)) {
-      SpawnLoc = Start->GetActorLocation();
-      SpawnRot = Start->GetActorRotation();
+
+  {
+    const float HalfIsland = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
+    const float InnerMargin =
+        HalfIsland * 0.3f; // Stay away from edges (coast/ocean)
+    bool bFoundLand = false;
+
+    for (int32 Attempt = 0; Attempt < 20; ++Attempt) {
+      // Random X,Y within the inner portion of the island
+      const float RandX = FMath::FRandRange(-HalfIsland + InnerMargin,
+                                            HalfIsland - InnerMargin);
+      const float RandY = FMath::FRandRange(-HalfIsland + InnerMargin,
+                                            HalfIsland - InnerMargin);
+
+      // Figure out which chunk this falls in
+      const FVector TestPos(RandX, RandY, 0.0f);
+      const FFPMChunkCoord ChunkCoord =
+          FPMChunkGenerator::WorldToChunkCoord(TestPos);
+
+      // Generate a temporary chunk to get the height at this point
+      FFPMChunkHeightmapData TempData;
+      FPMChunkGenerator::GenerateChunk(
+          ChunkCoord, 42, TempData); // Use a fixed seed for height lookup
+
+      // Get the world chunk manager to read the actual seed
+      for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
+        FPMChunkGenerator::GenerateChunk(ChunkCoord, It->WorldSeed, TempData);
+        break;
+      }
+
+      if (!TempData.bIsValid)
+        continue;
+
+      // Find the closest vertex in the chunk to our random position
+      const FVector ChunkOrigin =
+          FPMChunkGenerator::ChunkToWorldOrigin(ChunkCoord);
+      const float LocalNormX =
+          (RandX - ChunkOrigin.X) / FPMChunkConstants::ChunkWorldSize;
+      const float LocalNormY =
+          (RandY - ChunkOrigin.Y) / FPMChunkConstants::ChunkWorldSize;
+      const int32 Res = FPMChunkConstants::ChunkResolution;
+      const int32 IX =
+          FMath::Clamp(FMath::FloorToInt(LocalNormX * (Res - 1)), 0, Res - 1);
+      const int32 IY =
+          FMath::Clamp(FMath::FloorToInt(LocalNormY * (Res - 1)), 0, Res - 1);
+      const int32 Idx = IY * Res + IX;
+
+      const EFPMBiome Biome = TempData.BiomeValues[Idx];
+
+      // Skip ocean and coast — we want solid land
+      if (Biome == EFPMBiome::Ocean || Biome == EFPMBiome::Coast)
+        continue;
+
+      // Skip low-elevation areas (swamp, river valleys, coast edges)
+      // that would put us below surrounding terrain
+      const float NormHeight = TempData.HeightValues[Idx];
+      if (NormHeight < 0.10f)
+        continue;
+
+      // Only accept primary land biomes
+      if (Biome != EFPMBiome::Meadows && Biome != EFPMBiome::Forest &&
+          Biome != EFPMBiome::Mountain)
+        continue;
+
+      // Get the terrain height at this point
+      const float TerrainZ =
+          -2000.0f + NormHeight * 30000.0f; // Same as HeightToWorldZ
+
+      SpawnLoc = FVector(RandX, RandY, TerrainZ + 2.0f);
+      SpawnRot = FRotator(0.0f, FMath::FRandRange(0.0f, 360.0f),
+                          0.0f); // Random facing
+      bFoundLand = true;
+
+      UE_LOG(LogFPMPlayerController, Log,
+             TEXT("FPM: Random spawn at (%.0f, %.0f, %.0f) — Biome=%d, "
+                  "Height=%.3f, Attempt=%d"),
+             SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z, static_cast<int32>(Biome),
+             NormHeight, Attempt + 1);
+      break;
+    }
+
+    if (!bFoundLand) {
+      UE_LOG(LogFPMPlayerController, Warning,
+             TEXT("FPM: Could not find land spawn after 20 attempts, using "
+                  "fallback"));
     }
   }
+
+  // Force-load chunks at spawn position BEFORE spawning the player
+  // This prevents falling through the world while chunks async-load
+  for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
+    It->EnsureChunkLoadedAtWorldPos(SpawnLoc);
+    break;
+  }
+
+  // Compute a safe vertical offset based on the character capsule (from the
+  // CDO).
+  float CapsuleHalfHeight = 88.0f; // fallback
+  if (const AFPMPlayerCharacter *CDO =
+          GetDefault<AFPMPlayerCharacter>(AFPMPlayerCharacter::StaticClass())) {
+    if (const UCapsuleComponent *Capsule = CDO->GetCapsuleComponent()) {
+      CapsuleHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();
+    }
+  }
+
+  // Use the heightmap Z directly — it's computed from the same noise function
+  // that generates the terrain mesh, so it's guaranteed to match.
+  // Add capsule half-height + generous buffer so the character spawns ABOVE
+  // the surface. Gravity will handle the final ~200cm drop onto the terrain.
+  // Spawn just above terrain — gravity handles the short drop.
+  SpawnLoc.Z += CapsuleHalfHeight + 50.0f;
+
+  UE_LOG(LogFPMPlayerController, Log,
+         TEXT("FPM: Spawn Z adjusted to %.1f (capsuleHalf=%.1f, buffer=50)"),
+         SpawnLoc.Z, CapsuleHalfHeight);
 
   FActorSpawnParameters Params;
   Params.Owner = this;
   Params.SpawnCollisionHandlingOverride =
-      ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+      ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
   AFPMPlayerCharacter *Char = World->SpawnActor<AFPMPlayerCharacter>(
       AFPMPlayerCharacter::StaticClass(), SpawnLoc, SpawnRot, Params);
@@ -393,7 +508,7 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
 
   UE_LOG(LogFPMPlayerController, Log,
          TEXT("FPM Server: Spawned and possessed '%s'"), *Name);
-  ClientEnterWorldSuccess();
+  ClientEnterWorldSuccess(SpawnLoc);
 }
 
 // -------------------------------------------------------------------
@@ -449,7 +564,37 @@ void AFPMPlayerController::ClientReceiveCharacterList_Implementation(
     CharacterSelectWidget->PopulateCharacterList(Characters);
 }
 
-void AFPMPlayerController::ClientEnterWorldSuccess_Implementation() {
+void AFPMPlayerController::ClientEnterWorldSuccess_Implementation(
+    const FVector &InSpawnLocation) {
+  // CRITICAL: Force-load the chunk at the spawn location on the CLIENT.
+  // The server has already ensured it's loaded, but the client needs to assume
+  // it too. This prevents falling through the world if the client's chunk
+  // manager ticks late.
+  UWorld *World = GetWorld();
+  if (World) {
+    for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
+      UE_LOG(LogFPMPlayerController, Log,
+             TEXT("FPM Client: Force-loading spawn chunk at %.0f, %.0f, %.0f"),
+             InSpawnLocation.X, InSpawnLocation.Y, InSpawnLocation.Z);
+      It->ForceChunkUpdate(); // Reset internal timers
+      It->EnsureChunkLoadedAtWorldPos(InSpawnLocation);
+      break;
+    }
+  }
+
+  // Teleport the pawn to the spawn location AFTER chunks are loaded.
+  // The replicated pawn may have started falling before the client's
+  // terrain collision was ready. This resets its position above the
+  // now-loaded terrain so gravity can land it correctly.
+  if (APawn *MyPawn = GetPawn()) {
+    MyPawn->SetActorLocation(InSpawnLocation);
+    UE_LOG(
+        LogFPMPlayerController, Log,
+        TEXT(
+            "FPM Client: Teleported pawn to spawn location (%.0f, %.0f, %.0f)"),
+        InSpawnLocation.X, InSpawnLocation.Y, InSpawnLocation.Z);
+  }
+
   HideAllUIAndEnterGame();
 }
 
