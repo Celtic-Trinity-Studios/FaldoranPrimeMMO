@@ -83,27 +83,27 @@ enum class EFPMChunkLOD : uint8 {
  * All chunk-system constants in one place.
  */
 namespace FPMChunkConstants {
-/** Size of a single chunk in Unreal units (cm). 64m = 6400cm */
-constexpr float ChunkWorldSize = 6400.0f;
+/** Size of a single chunk in Unreal units (cm). 32m = 3200cm */
+constexpr float ChunkWorldSize = 3200.0f;
 
 /** Number of heightmap vertices per chunk edge (129 = 128 quads + 1 for
- * stitching). Gives ~50cm vertex spacing for smooth terrain. */
+ * stitching). At 32m chunk size this gives ~25cm vertex spacing. */
 constexpr int32 ChunkResolution = 129;
 
 /** Total heightmap vertices per chunk */
 constexpr int32 ChunkVertexCount = ChunkResolution * ChunkResolution;
 
 /** Starter island size in chunks per axis */
-constexpr int32 StarterIslandChunksPerAxis = 16;
+constexpr int32 StarterIslandChunksPerAxis = 32;
 
 /** Starter island total size in world units (1024m = 102400cm) */
 constexpr float StarterIslandWorldSize =
     ChunkWorldSize * StarterIslandChunksPerAxis;
 
-/** View distance rings (in chunks from player) */
-constexpr int32 FullDetailRange = 3;   // ~192m radius
-constexpr int32 MediumDetailRange = 6; // ~384m radius
-constexpr int32 LowDetailRange = 10;   // ~640m radius
+/** View distance rings (in chunks from player) — tighter to keep perf */
+constexpr int32 FullDetailRange = 3;   // ~96m radius
+constexpr int32 MediumDetailRange = 5; // ~160m radius
+constexpr int32 LowDetailRange = 8;    // ~256m radius
 // Beyond LowDetailRange = unloaded
 
 /** Island radius as a fraction of the island grid (for the circular mask) */
