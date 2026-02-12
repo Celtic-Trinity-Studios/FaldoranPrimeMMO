@@ -248,10 +248,15 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
         LandHeight += PeakNoise * 0.12f * Mask; // Was 0.3 — much gentler peaks
       }
 
-      // River carving
+      // --- River: paint at surface level, don't carve a valley ---
       const float River = RiverFactor(NormX, NormY, WorldSeed);
-      if (River > 0.0f && LandHeight > 0.02f) {
-        LandHeight = FMath::Max(0.01f, LandHeight - River);
+      if (River > 0.02f && Mask > 0.15f) {
+        // Override biome to Coast — renders as water-colored terrain
+        Biome = EFPMBiome::Coast;
+        // Gently flatten the river bed so it's a smooth level strip
+        constexpr float RiverBedHeight = 0.05f;
+        LandHeight = FMath::Lerp(LandHeight, RiverBedHeight,
+                                 FMath::Clamp(River * 8.0f, 0.0f, 0.85f));
       }
 
       // Clamp to prevent extreme spikes regardless of seed
@@ -262,13 +267,10 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
       if (Biome == EFPMBiome::Mountain && LandHeight > 0.40f) {
         Biome = EFPMBiome::Snow;
       }
-      // Swamp: low elevation interior
-      else if (LandHeight > 0.0f && LandHeight < 0.08f &&
+      // Swamp: low elevation interior (not on rivers or coast)
+      else if (LandHeight > 0.0f && LandHeight < 0.05f &&
                Biome != EFPMBiome::Coast && Biome != EFPMBiome::Ocean) {
-        // Simple moisture heuristic: low areas near rivers or basins
-        if (River > 0.0f || LandHeight < 0.03f) {
-          Biome = EFPMBiome::Swamp;
-        }
+        Biome = EFPMBiome::Swamp;
       }
 
       // Store results
