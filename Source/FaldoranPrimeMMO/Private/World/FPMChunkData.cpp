@@ -98,8 +98,20 @@ float FPMChunkGenerator::IslandMask(float NormX, float NormY) {
     return 0.0f;
   }
 
-  const float T = 1.0f - Dist;
-  return T * T * (3.0f - 2.0f * T); // Smoothstep falloff
+  // Use a gradual slope that starts ramping down earlier.
+  // The "shore zone" begins at 60% of the island radius and slopes
+  // gently to zero, creating a natural beach-like transition.
+  constexpr float ShoreStart = 0.60f; // Start sloping at 60% of radius
+  if (Dist > ShoreStart) {
+    // Remap [ShoreStart, 1.0] to [1.0, 0.0]
+    const float T = (1.0f - Dist) / (1.0f - ShoreStart);
+    // Gentle power curve — less steep than smoothstep
+    return T * FMath::Sqrt(T); // T^1.5 — gradual slope
+  }
+
+  // Interior: full height (slightly below 1.0 to avoid a flat plateau)
+  // Smoothly blend from 1.0 at center to 1.0 at ShoreStart
+  return 1.0f;
 }
 
 float FPMChunkGenerator::RiverFactor(float NormX, float NormY, int32 Seed) {
