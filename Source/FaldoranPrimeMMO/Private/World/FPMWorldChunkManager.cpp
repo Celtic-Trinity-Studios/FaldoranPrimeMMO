@@ -5,6 +5,7 @@
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Net/UnrealNetwork.h"
 
 #if WITH_EDITOR
 #include "Editor.h"
@@ -57,6 +58,14 @@ AFPMWorldChunkManager::AFPMWorldChunkManager() {
   PrimaryActorTick.bCanEverTick = true;
   PrimaryActorTick.TickInterval =
       0.0f; // Tick every frame, but we throttle internally
+  bReplicates = true;
+  bAlwaysRelevant = true;
+}
+
+void AFPMWorldChunkManager::GetLifetimeReplicatedProps(
+    TArray<FLifetimeProperty> &OutLifetimeProps) const {
+  Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+  DOREPLIFETIME(AFPMWorldChunkManager, WorldSeed);
 }
 
 // ===================================================================
@@ -68,8 +77,9 @@ void AFPMWorldChunkManager::BeginPlay() {
 
   GActiveChunkManager = this;
 
-  // Randomize seed if requested — different world every time you hit Play
-  if (bRandomizeSeed) {
+  // Randomize seed if requested — only on server so all clients share it.
+  // The seed is replicated via DOREPLIFETIME.
+  if (bRandomizeSeed && HasAuthority()) {
     WorldSeed = FMath::RandRange(1, 999999);
     UE_LOG(LogTemp, Warning,
            TEXT("FPM: Randomized seed = %d (set bRandomizeSeed=false and "

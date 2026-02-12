@@ -1,4 +1,4 @@
-// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+﻿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #pragma once
 
@@ -21,7 +21,7 @@
  *   - Manages LOD transitions
  *
  * DESIGN PHILOSOPHY:
- *   - Chunks are NEVER stored permanently — they are regenerated from seed
+ *   - Chunks are NEVER stored permanently - they are regenerated from seed
  *   - Only player modifications (overlays) are persisted
  *   - The same seed always produces the same terrain
  *   - Chunk loading is spread across frames to avoid hitches
@@ -38,8 +38,9 @@ public:
 
   // --- Configuration (set in Blueprint or level instance) ---
 
-  /** World seed for procedural generation */
-  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|World")
+  /** World seed for procedural generation (replicated from server) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated,
+            Category = "FPM|World")
   int32 WorldSeed = 42;
 
   /** If true, generate a random seed each time Play is pressed */
