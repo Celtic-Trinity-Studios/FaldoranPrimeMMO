@@ -131,6 +131,10 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
   UVs.Reserve(NumVerts);
   VColors.Reserve(NumVerts);
 
+  // Edge overlap: extend boundary vertices slightly beyond the chunk
+  // to eliminate collision gaps between adjacent chunks.
+  constexpr float EdgeOverlap = 10.0f; // 10cm overlap per side
+
   for (int32 Y = 0; Y < Res; ++Y) {
     for (int32 X = 0; X < Res; ++X) {
       const int32 SrcX = FMath::Min(X * LODStep, FullRes - 1);
@@ -140,7 +144,20 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
       const float U = static_cast<float>(X) / (Res - 1);
       const float V = static_cast<float>(Y) / (Res - 1);
 
-      Verts.Emplace(U * Size, V * Size,
+      float WorldX = U * Size;
+      float WorldY = V * Size;
+
+      // Push edge vertices outward to overlap with adjacent chunks
+      if (X == 0)
+        WorldX -= EdgeOverlap;
+      if (X == Res - 1)
+        WorldX += EdgeOverlap;
+      if (Y == 0)
+        WorldY -= EdgeOverlap;
+      if (Y == Res - 1)
+        WorldY += EdgeOverlap;
+
+      Verts.Emplace(WorldX, WorldY,
                     HeightToWorldZ(ChunkData.HeightValues[SrcIdx]));
       UVs.Emplace(U, V);
       VColors.Add(BiomeToVertexColor(ChunkData.BiomeValues[SrcIdx]));

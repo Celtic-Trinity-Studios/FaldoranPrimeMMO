@@ -16,6 +16,7 @@ TArray<IConsoleObject *> UFPMCharacterCreationTestCommands::RegisteredCommands;
 // -------------------------------------------------------------------
 // Helper: Find the server world in PIE
 // -------------------------------------------------------------------
+namespace FPMCharCreateTestHelpers {
 static UWorld *FindServerWorld(UWorld *FallbackWorld) {
 #if WITH_EDITOR
   if (GEngine) {
@@ -39,7 +40,7 @@ static UWorld *FindServerWorld(UWorld *FallbackWorld) {
 // For console testing, we need a valid account ID.
 // This queries the first account in the database.
 static FGuid GetTestAccountId(UWorld *World) {
-  UWorld *ServerWorld = FindServerWorld(World);
+  UWorld *ServerWorld = FPMCharCreateTestHelpers::FindServerWorld(World);
   if (!ServerWorld) {
     return FGuid();
   }
@@ -81,7 +82,7 @@ static FGuid GetTestAccountId(UWorld *World) {
 // Helper: Get the character creation subsystem from a World
 // -------------------------------------------------------------------
 static UFPMCharacterCreationSubsystem *GetCreationSubsystem(UWorld *World) {
-  UWorld *ServerWorld = FindServerWorld(World);
+  UWorld *ServerWorld = FPMCharCreateTestHelpers::FindServerWorld(World);
   if (!ServerWorld) {
     UE_LOG(LogFPMCharCreateTest, Error,
            TEXT("FPM CharCreateTest: No world available."));
@@ -106,6 +107,7 @@ static UFPMCharacterCreationSubsystem *GetCreationSubsystem(UWorld *World) {
 
   return CreationSys;
 }
+} // namespace FPMCharCreateTestHelpers
 
 // -------------------------------------------------------------------
 // Registration
@@ -163,13 +165,14 @@ void UFPMCharacterCreationTestCommands::HandleTestCreateCharacter(
     CharacterName += TEXT(" ") + Args[i];
   }
 
-  UFPMCharacterCreationSubsystem *CreationSys = GetCreationSubsystem(World);
+  UFPMCharacterCreationSubsystem *CreationSys =
+      FPMCharCreateTestHelpers::GetCreationSubsystem(World);
   if (!CreationSys) {
     return;
   }
 
   // Get a test account ID from the database
-  const FGuid TestAccountId = GetTestAccountId(World);
+  const FGuid TestAccountId = FPMCharCreateTestHelpers::GetTestAccountId(World);
   if (!TestAccountId.IsValid()) {
     UE_LOG(LogFPMCharCreateTest, Error,
            TEXT("FPM CharCreateTest: Could not find a test account. "
@@ -207,12 +210,13 @@ void UFPMCharacterCreationTestCommands::HandleTestCreateCharacter(
 
 void UFPMCharacterCreationTestCommands::HandleTestCreateCharacterWithAffinities(
     const TArray<FString> &Args, UWorld *World) {
-  UFPMCharacterCreationSubsystem *CreationSys = GetCreationSubsystem(World);
+  UFPMCharacterCreationSubsystem *CreationSys =
+      FPMCharCreateTestHelpers::GetCreationSubsystem(World);
   if (!CreationSys) {
     return;
   }
 
-  const FGuid TestAccountId = GetTestAccountId(World);
+  const FGuid TestAccountId = FPMCharCreateTestHelpers::GetTestAccountId(World);
   if (!TestAccountId.IsValid()) {
     UE_LOG(LogFPMCharCreateTest, Error,
            TEXT("FPM CharCreateTest: No test account. "

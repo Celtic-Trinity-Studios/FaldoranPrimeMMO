@@ -10,7 +10,6 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
 
-
 DEFINE_LOG_CATEGORY_STATIC(LogFPMPlayerCharacter, Log, All);
 
 // -------------------------------------------------------------------
@@ -70,6 +69,61 @@ void AFPMPlayerCharacter::Tick(float DeltaTime) {
 
   if (IsLocallyControlled()) {
     HandleMovementInput(DeltaTime);
+  }
+
+  // --- Fall-through recovery (server-authoritative) ---
+  // If the character falls below a safe threshold, trace from high above
+  // to find the terrain surface and teleport back up.
+  if (HasAuthority()) {
+    const FVector Loc = GetActorLocation();
+
+    // Only recover if significantly below sea level (allow normal falling)
+    constexpr float FallThroughThreshold = -3000.0f;
+
+    if (Loc.Z < FallThroughThreshold) {
+      // Trace from far above the character's XY to find terrain
+      const FVector TraceStart(Loc.X, Loc.Y, 50000.0f);
+      const FVector TraceEnd(Loc.X, Loc.Y, -10000.0f);
+
+      FHitResult Hit;
+      FCollisionQueryParams Params;
+      Params.AddIgnoredActor(this);
+
+      if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd,
+                                               ECC_WorldStatic, Params)) {
+        // Place character on top of terrain + half capsule height
+        const float CapsuleHalf =
+            GetCapsuleComponent()
+                ? GetCapsuleComponent()->GetScaledCapsuleHalfHeight()
+                : 90.0f;
+
+        const FVector SafePos(Hit.ImpactPoint.X, Hit.ImpactPoint.Y,
+                              Hit.ImpactPoint.Z + CapsuleHalf + 10.0f);
+
+        SetActorLocation(SafePos);
+
+        // Reset velocity to prevent immediately falling through again
+        if (GetCharacterMovement()) {
+          GetCharacterMovement()->StopMovementImmediately();
+        }
+
+        UE_LOG(LogFPMPlayerCharacter, Warning,
+               TEXT("FPM: Fall-through recovery — teleported from Z=%.0f to "
+                    "Z=%.0f"),
+               Loc.Z, SafePos.Z);
+      } else {
+        // No terrain found — emergency teleport to world origin
+        SetActorLocation(FVector(0.0f, 0.0f, 5000.0f));
+
+        if (GetCharacterMovement()) {
+          GetCharacterMovement()->StopMovementImmediately();
+        }
+
+        UE_LOG(LogFPMPlayerCharacter, Error,
+               TEXT("FPM: Fall-through recovery — no terrain found, "
+                    "teleported to world origin"));
+      }
+    }
   }
 }
 
