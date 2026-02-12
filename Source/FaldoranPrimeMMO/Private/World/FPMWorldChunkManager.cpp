@@ -2,10 +2,13 @@
 
 #include "World/FPMWorldChunkManager.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Net/UnrealNetwork.h"
+#include "UObject/ConstructorHelpers.h"
 
 #if WITH_EDITOR
 #include "Editor.h"
@@ -107,6 +110,9 @@ void AFPMWorldChunkManager::BeginPlay() {
          FPMChunkConstants::LowDetailRange);
   UE_LOG(LogTemp, Warning,
          TEXT("FPM: ========================================"));
+
+  // Spawn the water plane at sea level
+  SpawnWaterPlane();
 
   // Trigger initial chunk load on next tick
   TimeSinceLastUpdate = UpdateInterval;
@@ -512,4 +518,68 @@ void AFPMWorldChunkManager::DrawDebugChunks() const {
     DrawDebugString(GetWorld(), Center + FVector(0, 0, 200), Coord.ToString(),
                     nullptr, Color, UpdateInterval + 0.1f);
   }
+}
+
+// ===================================================================
+//  Water Plane
+// ===================================================================
+
+void AFPMWorldChunkManager::SpawnWaterPlane() {
+  // Use UE's built-in Plane mesh (100x100 cm, centered)
+  UStaticMesh *PlaneMesh =
+      LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+
+  if (!PlaneMesh) {
+    UE_LOG(LogTemp, Error, TEXT("FPM: Could not load Plane mesh for water!"));
+    return;
+  }
+
+  // Create the mesh component attached to this actor
+  WaterPlaneMesh = NewObject<UStaticMeshComponent>(
+      this, UStaticMeshComponent::StaticClass(), TEXT("WaterPlane"));
+  WaterPlaneMesh->SetStaticMesh(PlaneMesh);
+  WaterPlaneMesh->SetMobility(EComponentMobility::Static);
+  WaterPlaneMesh->RegisterComponent();
+  WaterPlaneMesh->AttachToComponent(
+      GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+
+  // --- Size: cover entire starter island + 50% padding ---
+  // The default Plane mesh is 100x100 cm.
+  // StarterIslandWorldSize = 16 * 6400 = 102400 cm.
+  // With 50% padding: 153600 cm. Scale factor = 153600 / 100 = 1536.
+  constexpr float IslandCm = FPMChunkConstants::StarterIslandWorldSize;
+  constexpr float Padding = IslandCm * 0.5f;
+  constexpr float TotalSize = IslandCm + Padding * 2.0f;
+  constexpr float ScaleFactor = TotalSize / 100.0f; // Plane is 100cm
+
+  WaterPlaneMesh->SetWorldLocation(FVector(0.0f, 0.0f, WaterZHeight));
+  WaterPlaneMesh->SetWorldScale3D(FVector(ScaleFactor, ScaleFactor, 1.0f));
+
+  // --- Material ---
+  if (WaterMaterial) {
+    WaterPlaneMesh->SetMaterial(0, WaterMaterial);
+  } else {
+    // Create a simple translucent ocean-blue material
+    UMaterial *BaseMat = LoadObject<UMaterial>(
+        nullptr,
+        TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
+
+    if (BaseMat) {
+      UMaterialInstanceDynamic *WaterMID =
+          UMaterialInstanceDynamic::Create(BaseMat, this);
+      WaterMID->SetVectorParameterValue(
+          TEXT("BaseColor"), FLinearColor(0.02f, 0.15f, 0.35f, 0.75f));
+      WaterPlaneMesh->SetMaterial(0, WaterMID);
+    }
+  }
+
+  // Disable collision on the water plane (it's visual only)
+  WaterPlaneMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+  // Cast shadows off — water doesn't cast shadows
+  WaterPlaneMesh->SetCastShadow(false);
+
+  UE_LOG(LogTemp, Warning,
+         TEXT("FPM: Water plane spawned at Z=%.0f, scale=%.0f"), WaterZHeight,
+         ScaleFactor);
 }

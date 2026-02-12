@@ -1,4 +1,4 @@
-﻿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #pragma once
 
@@ -19,6 +19,7 @@
  *   - Applies change overlays (player modifications)
  *   - Spawns/despawns AFPMChunkActor instances
  *   - Manages LOD transitions
+ *   - Spawns a water plane at sea level
  *
  * DESIGN PHILOSOPHY:
  *   - Chunks are NEVER stored permanently - they are regenerated from seed
@@ -58,6 +59,18 @@ public:
   /** Material to apply to all chunk terrain meshes */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|World")
   UMaterialInterface *TerrainMaterial;
+
+  // --- Water Configuration ---
+
+  /** World-space Z height for the water plane. Corresponds to normalized
+   *  height ~0.08 in HeightToWorldZ (-1000 + 0.08 * 12000 = -40). */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Water")
+  float WaterZHeight = -40.0f;
+
+  /** Optional material for the water plane. If null, a default translucent
+   *  blue material is created at runtime. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Water")
+  UMaterialInterface *WaterMaterial;
 
   /** Enable debug visualization of chunk boundaries */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Debug")
@@ -111,7 +124,14 @@ protected:
   /** Whether initial load has completed */
   bool bInitialLoadDone = false;
 
+  /** The spawned water plane mesh component */
+  UPROPERTY()
+  UStaticMeshComponent *WaterPlaneMesh = nullptr;
+
 private:
+  /** Spawn the water plane covering the starter island at WaterZHeight. */
+  void SpawnWaterPlane();
+
   /**
    * Gather the set of chunks that should be loaded based on player position.
    * @param PlayerChunk The chunk the player is currently in
