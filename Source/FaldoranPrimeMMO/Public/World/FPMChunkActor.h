@@ -46,6 +46,9 @@ public:
   /** Get stored heightmap data (read-only). */
   const FFPMChunkHeightmapData &GetChunkData() const { return ChunkData; }
 
+  /** Map a normalized height [0,1] to world-space Z (cm). */
+  static float HeightToWorldZ(float NormalizedHeight);
+
 protected:
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FPM|Chunk")
   UProceduralMeshComponent *TerrainMesh;
@@ -60,9 +63,6 @@ private:
    * @param bCollision  Whether to generate per-poly collision
    */
   void BuildMesh(int32 LODStep, bool bCollision);
-
-  /** Map a normalized height [0,1] to world-space Z (cm). */
-  static float HeightToWorldZ(float NormalizedHeight);
 
   /** Map a biome enum to a vertex color for material splatting. */
   static FLinearColor BiomeToVertexColor(EFPMBiome Biome);

@@ -15,6 +15,7 @@
 #include "UI/FPMCharacterSelectWidget.h"
 #include "UI/FPMLoginWidget.h"
 #include "UObject/ConstructorHelpers.h"
+#include "World/FPMChunkActor.h"
 #include "World/FPMChunkData.h"
 #include "World/FPMWorldChunkManager.h"
 
@@ -367,7 +368,7 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
 
   // --- Random spawn on terrain ---
   // Pick a random land position on the starter island, 10 units above ground
-  FVector SpawnLoc(0.0f, 0.0f, 5000.0f); // Fallback
+  FVector SpawnLoc(0.0f, 0.0f, 500.0f); // Fallback — close to terrain center
   FRotator SpawnRot = FRotator::ZeroRotator;
 
   {
@@ -433,11 +434,10 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
           Biome != EFPMBiome::Mountain)
         continue;
 
-      // Get the terrain height at this point
-      const float TerrainZ =
-          -2000.0f + NormHeight * 30000.0f; // Same as HeightToWorldZ
+      // Get the terrain height at this point — MUST match HeightToWorldZ
+      const float TerrainZ = AFPMChunkActor::HeightToWorldZ(NormHeight);
 
-      SpawnLoc = FVector(RandX, RandY, TerrainZ + 2.0f);
+      SpawnLoc = FVector(RandX, RandY, TerrainZ);
       SpawnRot = FRotator(0.0f, FMath::FRandRange(0.0f, 360.0f),
                           0.0f); // Random facing
       bFoundLand = true;
