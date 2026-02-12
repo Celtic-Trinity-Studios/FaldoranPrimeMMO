@@ -63,9 +63,10 @@ public:
   // --- Water Configuration ---
 
   /** World-space Z height for the water plane. With HeightToWorldZ
-   *  (-400 + h*5000), coast h=0.03 → Z=-250, meadow h=0.06 → Z=-100. */
+   *  (-400 + h*5000), river bed h=0.05 â†’ Z=-150, meadow h=0.06 â†’ Z=-100.
+   *  Water at Z=-100 sits above rivers and low coast. */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Water")
-  float WaterZHeight = -150.0f;
+  float WaterZHeight = -100.0f;
 
   /** Optional material for the water plane. If null, a default translucent
    *  blue material is created at runtime. */
@@ -182,3 +183,4 @@ private:
   static FAutoConsoleCommand CmdGenerateWorld;
   static FAutoConsoleCommand CmdRegenChunks;
 };
+

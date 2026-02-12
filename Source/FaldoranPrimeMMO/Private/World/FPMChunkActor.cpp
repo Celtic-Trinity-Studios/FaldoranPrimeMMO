@@ -149,7 +149,11 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
     }
   }
 
-  // ---- 2. Triangles (CW — front face from above in UE/DirectX) ----
+  // ---- 2. Triangles (alternating diagonal to prevent sawtooth) ----
+  //
+  // Checkerboard pattern: even quads split BL→TR, odd quads split TL→BR.
+  // This eliminates the directional bias that causes visible zigzag
+  // patterns on slopes.
   const int32 NumQuads = (Res - 1) * (Res - 1);
   TArray<int32> Tris;
   Tris.Reserve(NumQuads * 6);
@@ -161,13 +165,25 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
       const int32 TL = BL + Res;
       const int32 TR = TL + 1;
 
-      Tris.Add(BL);
-      Tris.Add(TL);
-      Tris.Add(BR);
+      if ((X + Y) % 2 == 0) {
+        // Even: split along BL→TR diagonal
+        Tris.Add(BL);
+        Tris.Add(TL);
+        Tris.Add(TR);
 
-      Tris.Add(BR);
-      Tris.Add(TL);
-      Tris.Add(TR);
+        Tris.Add(BL);
+        Tris.Add(TR);
+        Tris.Add(BR);
+      } else {
+        // Odd: split along TL→BR diagonal
+        Tris.Add(BL);
+        Tris.Add(TL);
+        Tris.Add(BR);
+
+        Tris.Add(BR);
+        Tris.Add(TL);
+        Tris.Add(TR);
+      }
     }
   }
 
@@ -196,7 +212,7 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
   }
 
   // ---- 4. Skirts ----
-  constexpr float SkirtDrop = 500.f;
+  constexpr float SkirtDrop = 200.f; // Reduced for flatter terrain
 
   auto AddSkirtQuad = [&](int32 IdxA, int32 IdxB) {
     const FVector PA = Verts[IdxA];
