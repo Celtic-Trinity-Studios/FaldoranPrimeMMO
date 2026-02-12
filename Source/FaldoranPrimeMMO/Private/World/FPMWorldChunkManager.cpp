@@ -559,17 +559,21 @@ void AFPMWorldChunkManager::SpawnWaterPlane() {
   if (WaterMaterial) {
     WaterPlaneMesh->SetMaterial(0, WaterMaterial);
   } else {
-    // Create a simple translucent ocean-blue material
-    UMaterial *BaseMat = LoadObject<UMaterial>(
+    // Use BasicShapeMaterial which has a "Color" vector parameter
+    UMaterialInterface *BaseMat = LoadObject<UMaterialInterface>(
         nullptr,
-        TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
+        TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 
     if (BaseMat) {
       UMaterialInstanceDynamic *WaterMID =
           UMaterialInstanceDynamic::Create(BaseMat, this);
+      // Teal blue-green ocean color
       WaterMID->SetVectorParameterValue(
-          TEXT("BaseColor"), FLinearColor(0.02f, 0.15f, 0.35f, 0.75f));
+          TEXT("Color"), FLinearColor(0.02f, 0.35f, 0.40f, 1.0f));
       WaterPlaneMesh->SetMaterial(0, WaterMID);
+    } else {
+      UE_LOG(LogTemp, Warning,
+             TEXT("FPM: Could not load BasicShapeMaterial for water"));
     }
   }
 
