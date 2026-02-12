@@ -538,7 +538,7 @@ void AFPMWorldChunkManager::SpawnWaterPlane() {
   WaterPlaneMesh = NewObject<UStaticMeshComponent>(
       this, UStaticMeshComponent::StaticClass(), TEXT("WaterPlane"));
   WaterPlaneMesh->SetStaticMesh(PlaneMesh);
-  WaterPlaneMesh->SetMobility(EComponentMobility::Static);
+  WaterPlaneMesh->SetMobility(EComponentMobility::Movable);
   WaterPlaneMesh->RegisterComponent();
   WaterPlaneMesh->AttachToComponent(
       GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);

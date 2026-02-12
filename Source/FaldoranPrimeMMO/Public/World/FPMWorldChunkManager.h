@@ -46,7 +46,7 @@ public:
 
   /** If true, generate a random seed each time Play is pressed */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|World")
-  bool bRandomizeSeed = true;
+  bool bRandomizeSeed = false;
 
   /** Maximum chunks to generate per frame (prevents hitching) */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|World")
@@ -65,7 +65,7 @@ public:
   /** World-space Z height for the water plane. Corresponds to normalized
    *  height ~0.08 in HeightToWorldZ (-1000 + 0.08 * 12000 = -40). */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Water")
-  float WaterZHeight = -40.0f;
+  float WaterZHeight = 200.0f;
 
   /** Optional material for the water plane. If null, a default translucent
    *  blue material is created at runtime. */
