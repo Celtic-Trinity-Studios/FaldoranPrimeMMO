@@ -137,17 +137,27 @@ void AFPMPlayerCharacter::Tick(float DeltaTime) {
     }
   }
 
-  // --- Fall-through recovery (server-authoritative) ---
-  // If the character falls below a safe threshold, trace from high above
-  // to find the terrain surface and teleport back up.
-  if (HasAuthority()) {
-    const FVector Loc = GetActorLocation();
+  // --- Velocity clamp (prevent collision ejection launches) ---
+  if (UCharacterMovementComponent *CMC = GetCharacterMovement()) {
+    const FVector Vel = CMC->Velocity;
+    constexpr float MaxSafeSpeed = 5000.0f; // 50 m/s
+    if (Vel.Size() > MaxSafeSpeed) {
+      CMC->StopMovementImmediately();
+      UE_LOG(LogFPMPlayerCharacter, Warning,
+             TEXT("FPM: Velocity clamp — killed extreme velocity (%.0f cm/s)"),
+             Vel.Size());
+    }
+  }
 
-    // Only recover if significantly below sea level (allow normal falling)
-    constexpr float FallThroughThreshold = -3000.0f;
+  // --- Fall-through recovery ---
+  // Runs on locally controlled character for immediate correction.
+  // Uses TeleportTo (not SetActorLocation) so the CMC doesn't override it.
+  {
+    const FVector Loc = GetActorLocation();
+    constexpr float FallThroughThreshold = -2000.0f;
 
     if (Loc.Z < FallThroughThreshold) {
-      // Trace from far above the character's XY to find terrain
+      // Trace from high above to find terrain
       const FVector TraceStart(Loc.X, Loc.Y, 50000.0f);
       const FVector TraceEnd(Loc.X, Loc.Y, -10000.0f);
 
@@ -155,40 +165,39 @@ void AFPMPlayerCharacter::Tick(float DeltaTime) {
       FCollisionQueryParams Params;
       Params.AddIgnoredActor(this);
 
+      FVector SafePos;
+
       if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd,
                                                ECC_WorldStatic, Params)) {
-        // Place character on top of terrain + half capsule height
         const float CapsuleHalf =
             GetCapsuleComponent()
                 ? GetCapsuleComponent()->GetScaledCapsuleHalfHeight()
                 : 90.0f;
-
-        const FVector SafePos(Hit.ImpactPoint.X, Hit.ImpactPoint.Y,
-                              Hit.ImpactPoint.Z + CapsuleHalf + 10.0f);
-
-        SetActorLocation(SafePos);
-
-        // Reset velocity to prevent immediately falling through again
-        if (GetCharacterMovement()) {
-          GetCharacterMovement()->StopMovementImmediately();
-        }
-
-        UE_LOG(LogFPMPlayerCharacter, Warning,
-               TEXT("FPM: Fall-through recovery — teleported from Z=%.0f to "
-                    "Z=%.0f"),
-               Loc.Z, SafePos.Z);
+        SafePos = FVector(Hit.ImpactPoint.X, Hit.ImpactPoint.Y,
+                          Hit.ImpactPoint.Z + CapsuleHalf + 50.0f);
       } else {
-        // No terrain found — emergency teleport to world origin
-        SetActorLocation(FVector(0.0f, 0.0f, 5000.0f));
-
-        if (GetCharacterMovement()) {
-          GetCharacterMovement()->StopMovementImmediately();
-        }
-
-        UE_LOG(LogFPMPlayerCharacter, Error,
-               TEXT("FPM: Fall-through recovery — no terrain found, "
-                    "teleported to world origin"));
+        // No terrain found — emergency teleport to safe origin
+        SafePos = FVector(0.0f, 0.0f, 5000.0f);
       }
+
+      // Stop all movement BEFORE teleporting
+      if (UCharacterMovementComponent *CMC = GetCharacterMovement()) {
+        CMC->StopMovementImmediately();
+        CMC->SetMovementMode(MOVE_Falling);
+      }
+
+      // TeleportTo resets physics state so CMC won't override the position
+      TeleportTo(SafePos, GetActorRotation());
+
+      // Switch back to Walking after teleport
+      if (UCharacterMovementComponent *CMC = GetCharacterMovement()) {
+        CMC->SetMovementMode(MOVE_Walking);
+      }
+
+      UE_LOG(LogFPMPlayerCharacter, Warning,
+             TEXT("FPM: Fall-through recovery — teleported from Z=%.0f to "
+                  "Z=%.0f at XY=(%.0f, %.0f)"),
+             Loc.Z, SafePos.Z, Loc.X, Loc.Y);
     }
   }
 }
