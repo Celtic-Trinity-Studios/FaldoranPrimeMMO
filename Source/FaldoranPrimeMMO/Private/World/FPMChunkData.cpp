@@ -284,43 +284,36 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
   //
   //  Average each vertex with its neighbors to prevent steep height jumps.
   //  Multiple passes spread the effect, turning cliffs into gentle slopes.
+  //
+  //  IMPORTANT: Do NOT smooth edge vertices (first/last row & column).
+  //  Edge vertices must keep their original generated heights so they
+  //  match the neighboring chunk's shared edge exactly (no tearing).
   // =================================================================
-  constexpr int32 SmoothPasses = 3;
-  constexpr float SmoothStrength =
-      0.5f; // 0 = no smoothing, 1 = full neighbor avg
+  constexpr int32 SmoothPasses = 6;
+  constexpr float SmoothStrength = 0.6f;
 
   const int32 SmoothRes = FPMChunkConstants::ChunkResolution;
   TArray<float> Smoothed;
   Smoothed.SetNumUninitialized(OutData.HeightValues.Num());
 
   for (int32 Pass = 0; Pass < SmoothPasses; ++Pass) {
-    for (int32 Y = 0; Y < SmoothRes; ++Y) {
-      for (int32 X = 0; X < SmoothRes; ++X) {
+    // Copy all values first (edges will stay unchanged)
+    FMemory::Memcpy(Smoothed.GetData(), OutData.HeightValues.GetData(),
+                    Smoothed.Num() * sizeof(float));
+
+    // Only smooth interior vertices — skip edges to prevent chunk seams
+    for (int32 Y = 1; Y < SmoothRes - 1; ++Y) {
+      for (int32 X = 1; X < SmoothRes - 1; ++X) {
         const int32 Idx = Y * SmoothRes + X;
         const float Center = OutData.HeightValues[Idx];
 
-        // Average of available neighbors (clamp at edges)
-        float Sum = 0.0f;
-        int32 Count = 0;
+        // 4-neighbor average (all neighbors guaranteed to exist for interior)
+        const float NeighborAvg =
+            (OutData.HeightValues[Idx - 1] + OutData.HeightValues[Idx + 1] +
+             OutData.HeightValues[Idx - SmoothRes] +
+             OutData.HeightValues[Idx + SmoothRes]) *
+            0.25f;
 
-        if (X > 0) {
-          Sum += OutData.HeightValues[Idx - 1];
-          ++Count;
-        }
-        if (X < SmoothRes - 1) {
-          Sum += OutData.HeightValues[Idx + 1];
-          ++Count;
-        }
-        if (Y > 0) {
-          Sum += OutData.HeightValues[Idx - SmoothRes];
-          ++Count;
-        }
-        if (Y < SmoothRes - 1) {
-          Sum += OutData.HeightValues[Idx + SmoothRes];
-          ++Count;
-        }
-
-        const float NeighborAvg = (Count > 0) ? (Sum / Count) : Center;
         Smoothed[Idx] = FMath::Lerp(Center, NeighborAvg, SmoothStrength);
       }
     }
