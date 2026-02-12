@@ -99,14 +99,14 @@ float FPMChunkGenerator::IslandMask(float NormX, float NormY) {
   }
 
   // Use a gradual slope that starts ramping down earlier.
-  // The "shore zone" begins at 60% of the island radius and slopes
+  // The "shore zone" begins at 40% of the island radius and slopes
   // gently to zero, creating a natural beach-like transition.
-  constexpr float ShoreStart = 0.60f; // Start sloping at 60% of radius
+  constexpr float ShoreStart = 0.40f; // Start sloping at 40% of radius
   if (Dist > ShoreStart) {
     // Remap [ShoreStart, 1.0] to [1.0, 0.0]
     const float T = (1.0f - Dist) / (1.0f - ShoreStart);
-    // Gentle power curve — less steep than smoothstep
-    return T * FMath::Sqrt(T); // T^1.5 — gradual slope
+    // Gentle power curve for smooth coastal ramp
+    return T * T; // T^2 — very gradual near the shore
   }
 
   // Interior: full height (slightly below 1.0 to avoid a flat plateau)
@@ -277,6 +277,56 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
       OutData.HeightValues[Idx] = LandHeight;
       OutData.BiomeValues[Idx] = Biome;
     }
+  }
+
+  // =================================================================
+  //  Post-Generation: Heightmap smoothing (eliminates stair-step cliffs)
+  //
+  //  Average each vertex with its neighbors to prevent steep height jumps.
+  //  Multiple passes spread the effect, turning cliffs into gentle slopes.
+  // =================================================================
+  constexpr int32 SmoothPasses = 3;
+  constexpr float SmoothStrength =
+      0.5f; // 0 = no smoothing, 1 = full neighbor avg
+
+  const int32 SmoothRes = FPMChunkConstants::ChunkResolution;
+  TArray<float> Smoothed;
+  Smoothed.SetNumUninitialized(OutData.HeightValues.Num());
+
+  for (int32 Pass = 0; Pass < SmoothPasses; ++Pass) {
+    for (int32 Y = 0; Y < SmoothRes; ++Y) {
+      for (int32 X = 0; X < SmoothRes; ++X) {
+        const int32 Idx = Y * SmoothRes + X;
+        const float Center = OutData.HeightValues[Idx];
+
+        // Average of available neighbors (clamp at edges)
+        float Sum = 0.0f;
+        int32 Count = 0;
+
+        if (X > 0) {
+          Sum += OutData.HeightValues[Idx - 1];
+          ++Count;
+        }
+        if (X < SmoothRes - 1) {
+          Sum += OutData.HeightValues[Idx + 1];
+          ++Count;
+        }
+        if (Y > 0) {
+          Sum += OutData.HeightValues[Idx - SmoothRes];
+          ++Count;
+        }
+        if (Y < SmoothRes - 1) {
+          Sum += OutData.HeightValues[Idx + SmoothRes];
+          ++Count;
+        }
+
+        const float NeighborAvg = (Count > 0) ? (Sum / Count) : Center;
+        Smoothed[Idx] = FMath::Lerp(Center, NeighborAvg, SmoothStrength);
+      }
+    }
+    // Copy smoothed back for next pass
+    FMemory::Memcpy(OutData.HeightValues.GetData(), Smoothed.GetData(),
+                    Smoothed.Num() * sizeof(float));
   }
 
   OutData.bIsValid = true;
