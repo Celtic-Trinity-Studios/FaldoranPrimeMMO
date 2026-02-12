@@ -98,19 +98,14 @@ float FPMChunkGenerator::IslandMask(float NormX, float NormY) {
     return 0.0f;
   }
 
-  // Use a gradual slope that starts ramping down earlier.
-  // The "shore zone" begins at 40% of the island radius and slopes
-  // gently to zero, creating a natural beach-like transition.
-  constexpr float ShoreStart = 0.40f; // Start sloping at 40% of radius
+  // Shore zone starts at 15% of radius — nearly the entire outer island
+  // is one long gentle slope. T^3 curve for an extremely gradual ramp.
+  constexpr float ShoreStart = 0.15f;
   if (Dist > ShoreStart) {
-    // Remap [ShoreStart, 1.0] to [1.0, 0.0]
     const float T = (1.0f - Dist) / (1.0f - ShoreStart);
-    // Gentle power curve for smooth coastal ramp
-    return T * T; // T^2 — very gradual near the shore
+    return T * T * T; // T^3 — very gradual, no steep faces
   }
 
-  // Interior: full height (slightly below 1.0 to avoid a flat plateau)
-  // Smoothly blend from 1.0 at center to 1.0 at ShoreStart
   return 1.0f;
 }
 
@@ -280,46 +275,75 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
   }
 
   // =================================================================
-  //  Post-Generation: Heightmap smoothing (eliminates stair-step cliffs)
-  //
-  //  Average each vertex with its neighbors to prevent steep height jumps.
-  //  Multiple passes spread the effect, turning cliffs into gentle slopes.
-  //
-  //  IMPORTANT: Do NOT smooth edge vertices (first/last row & column).
-  //  Edge vertices must keep their original generated heights so they
-  //  match the neighboring chunk's shared edge exactly (no tearing).
+  //  Post-Generation Step 1: Heightmap smoothing
+  //  Average interior vertices with neighbors to soften transitions.
+  //  Edge vertices are preserved to match neighboring chunks.
   // =================================================================
-  constexpr int32 SmoothPasses = 6;
-  constexpr float SmoothStrength = 0.6f;
+  constexpr int32 SmoothPasses = 10;
+  constexpr float SmoothStrength = 0.65f;
 
   const int32 SmoothRes = FPMChunkConstants::ChunkResolution;
   TArray<float> Smoothed;
   Smoothed.SetNumUninitialized(OutData.HeightValues.Num());
 
   for (int32 Pass = 0; Pass < SmoothPasses; ++Pass) {
-    // Copy all values first (edges will stay unchanged)
     FMemory::Memcpy(Smoothed.GetData(), OutData.HeightValues.GetData(),
                     Smoothed.Num() * sizeof(float));
 
-    // Only smooth interior vertices — skip edges to prevent chunk seams
     for (int32 Y = 1; Y < SmoothRes - 1; ++Y) {
       for (int32 X = 1; X < SmoothRes - 1; ++X) {
         const int32 Idx = Y * SmoothRes + X;
         const float Center = OutData.HeightValues[Idx];
-
-        // 4-neighbor average (all neighbors guaranteed to exist for interior)
         const float NeighborAvg =
             (OutData.HeightValues[Idx - 1] + OutData.HeightValues[Idx + 1] +
              OutData.HeightValues[Idx - SmoothRes] +
              OutData.HeightValues[Idx + SmoothRes]) *
             0.25f;
-
         Smoothed[Idx] = FMath::Lerp(Center, NeighborAvg, SmoothStrength);
       }
     }
-    // Copy smoothed back for next pass
     FMemory::Memcpy(OutData.HeightValues.GetData(), Smoothed.GetData(),
                     Smoothed.Num() * sizeof(float));
+  }
+
+  // =================================================================
+  //  Post-Generation Step 2: Slope limiter
+  //  Cap the maximum height difference between adjacent vertices so
+  //  no slope is ever steep enough to show individual polygon edges.
+  //  This processes ALL vertices (including edges) because the limiter
+  //  is deterministic — both adjacent chunks reach the same edge values.
+  // =================================================================
+  constexpr int32 SlopePasses = 8;
+  constexpr float MaxSlope = 0.003f; // Max normalized height diff per vertex
+
+  for (int32 Pass = 0; Pass < SlopePasses; ++Pass) {
+    for (int32 Y = 0; Y < SmoothRes; ++Y) {
+      for (int32 X = 0; X < SmoothRes; ++X) {
+        const int32 Idx = Y * SmoothRes + X;
+        float H = OutData.HeightValues[Idx];
+
+        // Check each neighbor and pull this vertex toward it if too steep
+        auto ClampToNeighbor = [&](int32 NIdx) {
+          const float NH = OutData.HeightValues[NIdx];
+          if (H - NH > MaxSlope) {
+            H = NH + MaxSlope;
+          } else if (NH - H > MaxSlope) {
+            H = NH - MaxSlope;
+          }
+        };
+
+        if (X > 0)
+          ClampToNeighbor(Idx - 1);
+        if (X < SmoothRes - 1)
+          ClampToNeighbor(Idx + 1);
+        if (Y > 0)
+          ClampToNeighbor(Idx - SmoothRes);
+        if (Y < SmoothRes - 1)
+          ClampToNeighbor(Idx + SmoothRes);
+
+        OutData.HeightValues[Idx] = H;
+      }
+    }
   }
 
   OutData.bIsValid = true;
