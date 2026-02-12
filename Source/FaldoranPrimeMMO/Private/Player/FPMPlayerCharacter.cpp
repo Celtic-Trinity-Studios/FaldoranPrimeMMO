@@ -4,11 +4,13 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "World/FPMChunkData.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPMPlayerCharacter, Log, All);
 
@@ -48,6 +50,12 @@ AFPMPlayerCharacter::AFPMPlayerCharacter() {
     CMC->bOrientRotationToMovement = true;
     CMC->RotationRate = FRotator(0.0f, 540.0f, 0.0f);
     CMC->MaxWalkSpeed = 600.0f;
+
+    // Reduce "ServerMove TimeStamp expired" warnings in PIE listen-server.
+    // These are cosmetic — timestamps desync when client+server share a
+    // process.
+    CMC->NetworkMaxSmoothUpdateDistance = 256.0f;
+    CMC->NetworkSimulatedSmoothLocationTime = 0.2f;
   }
 
   // Don't rotate character with controller pitch/roll
@@ -64,11 +72,69 @@ void AFPMPlayerCharacter::BeginPlay() {
          *CharacterName, IsLocallyControlled() ? TEXT("true") : TEXT("false"));
 }
 
+// --- Compass helper ---
+static FString YawToCompass(float Yaw) {
+  // Normalize to 0-360
+  while (Yaw < 0.f)
+    Yaw += 360.f;
+  while (Yaw >= 360.f)
+    Yaw -= 360.f;
+
+  // UE: 0=X+ (forward), 90=Y+ (right)
+  // Map to compass: N=+X, E=+Y, S=-X, W=-Y
+  FString Dir;
+  if (Yaw >= 337.5f || Yaw < 22.5f)
+    Dir = TEXT("N");
+  else if (Yaw < 67.5f)
+    Dir = TEXT("NE");
+  else if (Yaw < 112.5f)
+    Dir = TEXT("E");
+  else if (Yaw < 157.5f)
+    Dir = TEXT("SE");
+  else if (Yaw < 202.5f)
+    Dir = TEXT("S");
+  else if (Yaw < 247.5f)
+    Dir = TEXT("SW");
+  else if (Yaw < 292.5f)
+    Dir = TEXT("W");
+  else
+    Dir = TEXT("NW");
+
+  return FString::Printf(TEXT("%s (%.0f°)"), *Dir, Yaw);
+}
+
 void AFPMPlayerCharacter::Tick(float DeltaTime) {
   Super::Tick(DeltaTime);
 
   if (IsLocallyControlled()) {
     HandleMovementInput(DeltaTime);
+
+    // --- Debug HUD: Compass + Position ---
+    if (GEngine) {
+      const FVector Pos = GetActorLocation();
+      const APlayerController *PC = Cast<APlayerController>(GetController());
+      const float Yaw =
+          PC ? PC->GetControlRotation().Yaw : GetActorRotation().Yaw;
+
+      // Chunk coordinate
+      const FFPMChunkCoord Chunk = FPMChunkGenerator::WorldToChunkCoord(Pos);
+
+      // Line 1: Compass
+      GEngine->AddOnScreenDebugMessage(
+          -1, 0.f, FColor::Cyan,
+          FString::Printf(TEXT("Compass: %s"), *YawToCompass(Yaw)));
+
+      // Line 2: World position
+      GEngine->AddOnScreenDebugMessage(
+          -2, 0.f, FColor::Yellow,
+          FString::Printf(TEXT("Pos: X=%.0f  Y=%.0f  Z=%.0f"), Pos.X, Pos.Y,
+                          Pos.Z));
+
+      // Line 3: Chunk coordinate
+      GEngine->AddOnScreenDebugMessage(
+          -3, 0.f, FColor::Green,
+          FString::Printf(TEXT("Chunk: (%d, %d)"), Chunk.X, Chunk.Y));
+    }
   }
 
   // --- Fall-through recovery (server-authoritative) ---
