@@ -62,10 +62,10 @@ public:
 
   // --- Water Configuration ---
 
-  /** World-space Z height for the water plane. Corresponds to normalized
-   *  height ~0.08 in HeightToWorldZ (-1000 + 0.08 * 12000 = -40). */
+  /** World-space Z height for the water plane. With HeightToWorldZ
+   *  (-400 + h*5000), coast h=0.03 → Z=-250, meadow h=0.06 → Z=-100. */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Water")
-  float WaterZHeight = 200.0f;
+  float WaterZHeight = -150.0f;
 
   /** Optional material for the water plane. If null, a default translucent
    *  blue material is created at runtime. */

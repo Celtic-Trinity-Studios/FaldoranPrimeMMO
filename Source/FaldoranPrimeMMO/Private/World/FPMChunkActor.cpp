@@ -29,7 +29,9 @@ AFPMChunkActor::AFPMChunkActor() {
 // =====================================================================
 
 float AFPMChunkActor::HeightToWorldZ(float NormalizedHeight) {
-  return -1000.0f + NormalizedHeight * 12000.0f;
+  // Reduced range: 50m total height (was 120m).
+  // This makes all slopes ~2.4x gentler, eliminating sawtooth artifacts.
+  return -400.0f + NormalizedHeight * 5000.0f;
 }
 
 FLinearColor AFPMChunkActor::BiomeToVertexColor(EFPMBiome Biome) {
