@@ -97,6 +97,12 @@ private:
 
   // --- Input (local player only) ---
 
+  /** Whether the character is in flight mode (toggled by F key). */
+  bool bIsFlying = false;
+
+  /** Toggle flight mode on/off. */
+  void ToggleFlight();
+
   /** Process WASD movement input. */
   void HandleMovementInput(float DeltaTime);
 };

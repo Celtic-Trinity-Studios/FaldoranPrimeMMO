@@ -170,21 +170,21 @@ EFPMBiome FPMChunkGenerator::AssignBiomeFromNoise(float NormX, float NormY,
 float FPMChunkGenerator::BiomeElevationBias(EFPMBiome Biome) {
   switch (Biome) {
   case EFPMBiome::Mountain:
-    return 0.18f;
+    return 0.10f; // was 0.18 — gentler hills
   case EFPMBiome::Forest:
-    return 0.08f;
+    return 0.05f; // was 0.08
   case EFPMBiome::Meadows:
     return 0.03f;
   case EFPMBiome::Coast:
-    return -0.01f;
+    return 0.01f; // was -0.01 — slight positive so coast isn't below water
   case EFPMBiome::Swamp:
-    return 0.00f;
+    return 0.02f; // was 0.00
   case EFPMBiome::Snow:
-    return 0.25f;
+    return 0.15f; // was 0.25
   case EFPMBiome::Ocean:
-    return -0.10f;
+    return -0.03f; // was -0.10 — less extreme ocean drop
   default:
-    return 0.05f;
+    return 0.04f; // was 0.05
   }
 }
 

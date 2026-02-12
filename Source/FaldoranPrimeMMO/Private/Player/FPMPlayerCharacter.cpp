@@ -269,6 +269,27 @@ void AFPMPlayerCharacter::ApplyAppearance() {
 }
 
 // -------------------------------------------------------------------
+// Flight Toggle
+// -------------------------------------------------------------------
+
+void AFPMPlayerCharacter::ToggleFlight() {
+  UCharacterMovementComponent *CMC = GetCharacterMovement();
+  if (!CMC)
+    return;
+
+  bIsFlying = !bIsFlying;
+
+  if (bIsFlying) {
+    CMC->SetMovementMode(MOVE_Flying);
+    CMC->MaxFlySpeed = 1200.0f;
+    UE_LOG(LogFPMPlayerCharacter, Log, TEXT("FPM: Flight mode ENABLED"));
+  } else {
+    CMC->SetMovementMode(MOVE_Falling); // Gravity takes over
+    UE_LOG(LogFPMPlayerCharacter, Log, TEXT("FPM: Flight mode DISABLED"));
+  }
+}
+
+// -------------------------------------------------------------------
 // Input Handling
 // -------------------------------------------------------------------
 
@@ -276,6 +297,16 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
   APlayerController *PC = Cast<APlayerController>(GetController());
   if (!PC) {
     return;
+  }
+
+  // --- Flight toggle (F key with debounce) ---
+  {
+    static bool bFKeyWasDown = false;
+    const bool bFKeyIsDown = PC->IsInputKeyDown(EKeys::F);
+    if (bFKeyIsDown && !bFKeyWasDown) {
+      ToggleFlight();
+    }
+    bFKeyWasDown = bFKeyIsDown;
   }
 
   FVector MoveInput = FVector::ZeroVector;
@@ -298,6 +329,14 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
 
     AddMovementInput(ForwardDir, MoveInput.X);
     AddMovementInput(RightDir, MoveInput.Y);
+  }
+
+  // --- Vertical movement while flying ---
+  if (bIsFlying) {
+    if (PC->IsInputKeyDown(EKeys::SpaceBar))
+      AddMovementInput(FVector::UpVector, 1.0f);
+    if (PC->IsInputKeyDown(EKeys::C))
+      AddMovementInput(FVector::UpVector, -1.0f);
   }
 
   // Mouse look
