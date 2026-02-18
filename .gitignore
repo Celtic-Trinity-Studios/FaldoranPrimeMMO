@@ -8,6 +8,10 @@ DerivedDataCache/
 # Saved state (local only)
 Saved/
 
+# Content assets (tracked via Perforce / LFS, not raw Git)
+*.uasset
+*.umap
+
 # IDE files
 .vs/
 .vscode/

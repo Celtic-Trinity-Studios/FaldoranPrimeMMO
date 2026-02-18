@@ -9,6 +9,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/GameModeBase.h"
 #include "Player/FPMPlayerCharacter.h"
 #include "UI/FPMCharacterCreationWidget.h"
@@ -17,6 +18,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "World/FPMChunkActor.h"
 #include "World/FPMChunkData.h"
+#include "World/FPMVoxelChunk.h"
 #include "World/FPMWorldChunkManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPMPlayerController, Log, All);
@@ -64,10 +66,6 @@ void AFPMPlayerController::OnPossess(APawn *InPawn) {
   UE_LOG(LogFPMPlayerController, Log, TEXT("FPM Server: Possessed pawn %s"),
          *GetNameSafe(InPawn));
 }
-
-// -------------------------------------------------------------------
-// Widget Management
-// -------------------------------------------------------------------
 
 void AFPMPlayerController::ShowLoginWidget() {
   if (LoginWidget || !LoginWidgetClass)
@@ -367,8 +365,9 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
   }
 
   // --- Random spawn on terrain ---
-  // Pick a random land position on the starter island, 10 units above ground
-  FVector SpawnLoc(0.0f, 0.0f, 500.0f); // Fallback — close to terrain center
+  // Pick a random land position on the starter island using the VOXEL
+  // system's TerrainSurfaceZ() so the Z matches the actual mesh surface.
+  FVector SpawnLoc(0.0f, 0.0f, 500.0f); // Overwritten below
   FRotator SpawnRot = FRotator::ZeroRotator;
 
   {
@@ -377,83 +376,79 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
         HalfIsland * 0.3f; // Stay away from edges (coast/ocean)
     bool bFoundLand = false;
 
-    for (int32 Attempt = 0; Attempt < 20; ++Attempt) {
+    // Get the world seed from the chunk manager
+    int32 ActualWorldSeed = 42;
+    for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
+      ActualWorldSeed = It->WorldSeed;
+      break;
+    }
+
+    for (int32 Attempt = 0; Attempt < 50; ++Attempt) {
       // Random X,Y within the inner portion of the island
       const float RandX = FMath::FRandRange(-HalfIsland + InnerMargin,
                                             HalfIsland - InnerMargin);
       const float RandY = FMath::FRandRange(-HalfIsland + InnerMargin,
                                             HalfIsland - InnerMargin);
 
-      // Figure out which chunk this falls in
-      const FVector TestPos(RandX, RandY, 0.0f);
-      const FFPMChunkCoord ChunkCoord =
-          FPMChunkGenerator::WorldToChunkCoord(TestPos);
+      // Get terrain surface Z from the VOXEL system (matches actual mesh)
+      const float TerrainZ =
+          FPMVoxelGenerator::TerrainSurfaceZ(RandX, RandY, ActualWorldSeed);
 
-      // Generate a temporary chunk to get the height at this point
-      FFPMChunkHeightmapData TempData;
-      FPMChunkGenerator::GenerateChunk(
-          ChunkCoord, 42, TempData); // Use a fixed seed for height lookup
-
-      // Get the world chunk manager to read the actual seed
-      for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
-        FPMChunkGenerator::GenerateChunk(ChunkCoord, It->WorldSeed, TempData);
-        break;
+      // Skip locations outside the voxel volume (no terrain)
+      if (TerrainZ < FPMVoxelConstants::WorldZBase ||
+          TerrainZ > FPMVoxelConstants::WorldZTop) {
+        continue;
       }
 
-      if (!TempData.bIsValid)
+      // Skip below sea level
+      if (TerrainZ < -50.0f) {
         continue;
+      }
 
-      // Find the closest vertex in the chunk to our random position
-      const FVector ChunkOrigin =
-          FPMChunkGenerator::ChunkToWorldOrigin(ChunkCoord);
-      const float LocalNormX =
-          (RandX - ChunkOrigin.X) / FPMChunkConstants::ChunkWorldSize;
-      const float LocalNormY =
-          (RandY - ChunkOrigin.Y) / FPMChunkConstants::ChunkWorldSize;
-      const int32 Res = FPMChunkConstants::ChunkResolution;
-      const int32 IX =
-          FMath::Clamp(FMath::FloorToInt(LocalNormX * (Res - 1)), 0, Res - 1);
-      const int32 IY =
-          FMath::Clamp(FMath::FloorToInt(LocalNormY * (Res - 1)), 0, Res - 1);
-      const int32 Idx = IY * Res + IX;
-
-      const EFPMBiome Biome = TempData.BiomeValues[Idx];
+      // Get biome at this location (uses same voxel system)
+      const float NormH = (TerrainZ - (-400.0f)) / 5000.0f;
+      const EFPMBiome Biome = FPMVoxelGenerator::BiomeAtWorldXY(
+          RandX, RandY, ActualWorldSeed, NormH);
 
       // Skip ocean and coast — we want solid land
       if (Biome == EFPMBiome::Ocean || Biome == EFPMBiome::Coast)
         continue;
 
-      // Skip low-elevation areas (swamp, river valleys, coast edges)
-      // that would put us below surrounding terrain
-      const float NormHeight = TempData.HeightValues[Idx];
-      if (NormHeight < 0.10f)
-        continue;
-
-      // Only accept primary land biomes
-      if (Biome != EFPMBiome::Meadows && Biome != EFPMBiome::Forest &&
-          Biome != EFPMBiome::Mountain)
-        continue;
-
-      // Get the terrain height at this point — MUST match HeightToWorldZ
-      const float TerrainZ = AFPMChunkActor::HeightToWorldZ(NormHeight);
+      // Biome selection strategy:
+      //   Attempts 0-14:  Meadows only (ideal open spawn)
+      //   Attempts 15-29: Meadows, Forest, or Mountain
+      //   Attempts 30-49: ANY non-ocean land biome
+      if (Attempt < 15) {
+        if (Biome != EFPMBiome::Meadows)
+          continue;
+      } else if (Attempt < 30) {
+        if (Biome != EFPMBiome::Meadows && Biome != EFPMBiome::Forest &&
+            Biome != EFPMBiome::Mountain)
+          continue;
+      }
+      // Attempts 30+: accept anything that passed ocean/coast check
 
       SpawnLoc = FVector(RandX, RandY, TerrainZ);
-      SpawnRot = FRotator(0.0f, FMath::FRandRange(0.0f, 360.0f),
-                          0.0f); // Random facing
+      SpawnRot = FRotator(0.0f, FMath::FRandRange(0.0f, 360.0f), 0.0f);
       bFoundLand = true;
 
       UE_LOG(LogFPMPlayerController, Log,
              TEXT("FPM: Random spawn at (%.0f, %.0f, %.0f) — Biome=%d, "
-                  "Height=%.3f, Attempt=%d"),
+                  "Attempt=%d"),
              SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z, static_cast<int32>(Biome),
-             NormHeight, Attempt + 1);
+             Attempt + 1);
       break;
     }
 
     if (!bFoundLand) {
+      // Fallback: use center of island with CORRECT terrain Z
+      const float FallbackZ =
+          FPMVoxelGenerator::TerrainSurfaceZ(0.0f, 0.0f, ActualWorldSeed);
+      SpawnLoc = FVector(0.0f, 0.0f, FallbackZ);
       UE_LOG(LogFPMPlayerController, Warning,
-             TEXT("FPM: Could not find land spawn after 20 attempts, using "
-                  "fallback"));
+             TEXT("FPM: Could not find land spawn after 50 attempts, using "
+                  "fallback at Z=%.1f"),
+             FallbackZ);
     }
   }
 
@@ -474,12 +469,10 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     }
   }
 
-  // Use the heightmap Z directly — it's computed from the same noise function
-  // that generates the terrain mesh, so it's guaranteed to match.
-  // Add capsule half-height + generous buffer so the character spawns ABOVE
-  // the surface. Gravity will handle the final ~200cm drop onto the terrain.
-  // Spawn just above terrain — gravity handles the short drop.
-  SpawnLoc.Z += CapsuleHalfHeight + 50.0f;
+  // Spawn well above the voxel terrain surface. The generous 200cm buffer
+  // prevents any visible "falling" during the brief frame before terrain
+  // renders. Gravity handles the short drop.
+  SpawnLoc.Z += CapsuleHalfHeight + 200.0f;
 
   UE_LOG(LogFPMPlayerController, Log,
          TEXT("FPM: Spawn Z adjusted to %.1f (capsuleHalf=%.1f, buffer=50)"),
@@ -497,9 +490,63 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     return;
   }
 
+  // Disable gravity and set Flying mode temporarily.
+  // Terrain collision cooking is async — the mesh is created but collision
+  // isn't ready for ~0.5s. Without this, the character falls through terrain.
+  if (UCharacterMovementComponent *MoveComp = Char->GetCharacterMovement()) {
+    MoveComp->SetMovementMode(MOVE_Flying);
+    MoveComp->GravityScale = 0.0f;
+    MoveComp->Velocity = FVector::ZeroVector;
+  }
+
   Char->InitializeAppearance(Name, BT, Skin, Hair);
   Possess(Char);
   ActiveCharacterId = CharacterId;
+
+  // Re-enable gravity only when terrain collision is ACTUALLY ready.
+  // Poll every 0.25s with a downward line trace. If it hits the terrain,
+  // collision cooking is done and it's safe to enable Walking mode.
+  TWeakObjectPtr<AFPMPlayerCharacter> WeakChar = Char;
+  TWeakObjectPtr<UWorld> WeakWorld = World;
+  TSharedPtr<int32> PollCount = MakeShared<int32>(0);
+  TSharedPtr<FTimerHandle> GravityTimerPtr = MakeShared<FTimerHandle>();
+  World->GetTimerManager().SetTimer(
+      *GravityTimerPtr,
+      [WeakChar, WeakWorld, PollCount, GravityTimerPtr]() {
+        if (!WeakWorld.IsValid()) {
+          return;
+        }
+        AFPMPlayerCharacter *C = WeakChar.Get();
+        if (!C) {
+          // Character gone, clear timer safely
+          WeakWorld->GetTimerManager().ClearTimer(*GravityTimerPtr);
+          return;
+        }
+
+        ++(*PollCount);
+
+        // Line trace downward from character to check terrain collision
+        FHitResult Hit;
+        const FVector Start = C->GetActorLocation();
+        const FVector End = Start - FVector(0.0f, 0.0f, 2000.0f);
+        const bool bHit = WeakWorld->LineTraceSingleByChannel(Hit, Start, End,
+                                                              ECC_WorldStatic);
+
+        if (bHit || *PollCount >= 20) { // 20 polls * 0.25s = 5s max wait
+          if (UCharacterMovementComponent *MC = C->GetCharacterMovement()) {
+            MC->GravityScale = 1.0f;
+            MC->SetMovementMode(MOVE_Walking);
+            UE_LOG(LogTemp, Log,
+                   TEXT("FPM: Gravity re-enabled after %d polls "
+                        "(collision %s)"),
+                   *PollCount, bHit ? TEXT("confirmed") : TEXT("timeout"));
+          }
+          // Stop this specific timer
+          WeakWorld->GetTimerManager().ClearTimer(*GravityTimerPtr);
+        }
+      },
+      0.25f, // Poll every 250ms
+      true); // Looping
 
   // Update last_played
   DB->ExecuteQuery(TEXT("UPDATE characters SET last_played = NOW() "

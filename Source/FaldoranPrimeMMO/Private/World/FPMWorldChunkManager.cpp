@@ -2,7 +2,6 @@
 
 #include "World/FPMWorldChunkManager.h"
 #include "DrawDebugHelpers.h"
-#include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
@@ -80,14 +79,85 @@ void AFPMWorldChunkManager::BeginPlay() {
 
   GActiveChunkManager = this;
 
-  // Randomize seed if requested — only on server so all clients share it.
-  // The seed is replicated via DOREPLIFETIME.
-  if (bRandomizeSeed && HasAuthority()) {
-    WorldSeed = FMath::RandRange(1, 999999);
-    UE_LOG(LogTemp, Warning,
-           TEXT("FPM: Randomized seed = %d (set bRandomizeSeed=false and "
-                "WorldSeed=%d to keep this one)"),
-           WorldSeed, WorldSeed);
+  // =================================================================
+  //  Load settings from Config/WorldGen.ini
+  //  Edit that file and restart PIE to iterate — no recompile needed.
+  // =================================================================
+  {
+    FString IniPath = FPaths::ConvertRelativePathToFull(
+        FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("WorldGen.ini")));
+    FConfigCacheIni::NormalizeConfigIniPath(IniPath);
+
+    if (FPaths::FileExists(IniPath)) {
+      UE_LOG(LogTemp, Warning, TEXT("FPM: Loading settings from %s"), *IniPath);
+
+      int32 IniSeed = 0;
+      if (GConfig->GetInt(TEXT("WorldGen"), TEXT("Seed"), IniSeed, IniPath)) {
+        if (IniSeed == 0) {
+          WorldSeed = FMath::RandRange(1, 999999);
+          UE_LOG(LogTemp, Warning,
+                 TEXT("FPM: Seed=0 in INI → randomized to %d"), WorldSeed);
+        } else {
+          WorldSeed = IniSeed;
+        }
+      }
+
+      float IniWaterZ = WaterZHeight;
+      if (GConfig->GetFloat(TEXT("WorldGen"), TEXT("WaterZHeight"), IniWaterZ,
+                            IniPath)) {
+        WaterZHeight = IniWaterZ;
+      }
+
+      int32 IniChunks = MaxChunksPerFrame;
+      if (GConfig->GetInt(TEXT("WorldGen"), TEXT("MaxChunksPerFrame"),
+                          IniChunks, IniPath)) {
+        MaxChunksPerFrame = IniChunks;
+      }
+
+      float IniUpdate = UpdateInterval;
+      if (GConfig->GetFloat(TEXT("WorldGen"), TEXT("UpdateInterval"), IniUpdate,
+                            IniPath)) {
+        UpdateInterval = IniUpdate;
+      }
+
+      bool IniDebug = bDrawDebugChunkBounds;
+      if (GConfig->GetBool(TEXT("WorldGen"), TEXT("bDrawDebugChunks"), IniDebug,
+                           IniPath)) {
+        bDrawDebugChunkBounds = IniDebug;
+      }
+
+      // View distance rings (INI-tuneable without recompile)
+      int32 IniFullRange = FPMChunkConstants::FullDetailRange;
+      if (GConfig->GetInt(TEXT("WorldGen"), TEXT("FullDetailRange"),
+                          IniFullRange, IniPath)) {
+        FPMChunkConstants::FullDetailRange = IniFullRange;
+      }
+      int32 IniMedRange = FPMChunkConstants::MediumDetailRange;
+      if (GConfig->GetInt(TEXT("WorldGen"), TEXT("MediumDetailRange"),
+                          IniMedRange, IniPath)) {
+        FPMChunkConstants::MediumDetailRange = IniMedRange;
+      }
+      int32 IniLowRange = FPMChunkConstants::LowDetailRange;
+      if (GConfig->GetInt(TEXT("WorldGen"), TEXT("LowDetailRange"), IniLowRange,
+                          IniPath)) {
+        FPMChunkConstants::LowDetailRange = IniLowRange;
+      }
+
+      // Island shape tuning
+      float IniRadius = FPMChunkConstants::IslandRadiusFraction;
+      if (GConfig->GetFloat(TEXT("Terrain"), TEXT("IslandRadiusFraction"),
+                            IniRadius, IniPath)) {
+        FPMChunkConstants::IslandRadiusFraction = IniRadius;
+      }
+    } else {
+      UE_LOG(LogTemp, Warning,
+             TEXT("FPM: No WorldGen.ini found, using defaults"));
+
+      // Randomize seed if requested (original behavior)
+      if (bRandomizeSeed && HasAuthority()) {
+        WorldSeed = FMath::RandRange(1, 999999);
+      }
+    }
   }
 
   // Initialize overlay system
@@ -99,12 +169,11 @@ void AFPMWorldChunkManager::BeginPlay() {
          TEXT("FPM: ========================================"));
   UE_LOG(LogTemp, Warning, TEXT("FPM: Chunk-based world system initialized"));
   UE_LOG(LogTemp, Warning,
-         TEXT("FPM: Seed=%d, ChunkSize=%.0fm, Island=%dx%d chunks"), WorldSeed,
-         FPMChunkConstants::ChunkWorldSize / 100.0f,
-         FPMChunkConstants::StarterIslandChunksPerAxis,
-         FPMChunkConstants::StarterIslandChunksPerAxis);
+         TEXT("FPM: Seed=%d, HexRadius=%.0fm, Island=%d rings (hex)"),
+         WorldSeed, FPMChunkConstants::HexOuterRadius / 100.0f,
+         FPMChunkConstants::StarterIslandRings);
   UE_LOG(LogTemp, Warning,
-         TEXT("FPM: LOD ranges: Full=%d, Medium=%d, Low=%d chunks"),
+         TEXT("FPM: LOD ranges: Full=%d, Medium=%d, Low=%d hex rings"),
          FPMChunkConstants::FullDetailRange,
          FPMChunkConstants::MediumDetailRange,
          FPMChunkConstants::LowDetailRange);
@@ -124,6 +193,14 @@ void AFPMWorldChunkManager::BeginPlay() {
 
 void AFPMWorldChunkManager::Tick(float DeltaTime) {
   Super::Tick(DeltaTime);
+
+  // Don't run chunk loading until a player pawn actually exists
+  // (avoids burning CPU during login / character creation screens).
+  APlayerController *PC =
+      GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+  if (!PC || !PC->GetPawn()) {
+    return;
+  }
 
   TimeSinceLastUpdate += DeltaTime;
 
@@ -146,9 +223,16 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
       GatherDesiredChunks(PlayerChunk, DesiredChunks);
 
       // Queue chunks to unload (loaded but no longer desired)
+      // Add hysteresis: only unload if chunk is 2+ hex rings beyond desired
+      // range
       for (auto It = LoadedChunks.CreateIterator(); It; ++It) {
         if (!DesiredChunks.Contains(It->Key)) {
-          ChunkUnloadQueue.AddUnique(It->Key);
+          const int32 HexDist =
+              FFPMChunkCoord::HexDistance(It->Key, PlayerChunk);
+          // Only unload if 2 rings beyond the desired range (hysteresis)
+          if (HexDist > FPMChunkConstants::LowDetailRange + 2) {
+            ChunkUnloadQueue.AddUnique(It->Key);
+          }
         }
       }
 
@@ -169,15 +253,15 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
         }
       }
 
-      // Sort load queue by distance to player (closest first)
-      ChunkLoadQueue.Sort([&PlayerChunk](const FFPMChunkCoord &A,
-                                         const FFPMChunkCoord &B) {
-        const int32 DistA =
-            FMath::Abs(A.X - PlayerChunk.X) + FMath::Abs(A.Y - PlayerChunk.Y);
-        const int32 DistB =
-            FMath::Abs(B.X - PlayerChunk.X) + FMath::Abs(B.Y - PlayerChunk.Y);
-        return DistA < DistB;
-      });
+      // Sort load queue by hex distance DESCENDING (farthest first)
+      // so that Pop() — which removes from the back — returns the
+      // closest chunk each time.  No Reverse needed in ProcessQueues.
+      ChunkLoadQueue.Sort(
+          [&PlayerChunk](const FFPMChunkCoord &A, const FFPMChunkCoord &B) {
+            const int32 DistA = FFPMChunkCoord::HexDistance(A, PlayerChunk);
+            const int32 DistB = FFPMChunkCoord::HexDistance(B, PlayerChunk);
+            return DistA > DistB; // descending — farthest at front
+          });
     }
   }
 
@@ -199,24 +283,23 @@ void AFPMWorldChunkManager::GatherDesiredChunks(
     TSet<FFPMChunkCoord> &OutDesiredChunks) const {
   const int32 Range = FPMChunkConstants::LowDetailRange;
 
-  for (int32 DY = -Range; DY <= Range; ++DY) {
-    for (int32 DX = -Range; DX <= Range; ++DX) {
-      const FFPMChunkCoord Coord(PlayerChunk.X + DX, PlayerChunk.Y + DY);
+  // Hex spiral: iterate over all hexes within Range hex rings of PlayerChunk.
+  // Ring 0 = center. Ring N has 6*N hexes.
+  // We use cube coordinate iteration for correctness.
+  for (int32 DQ = -Range; DQ <= Range; ++DQ) {
+    const int32 RMin = FMath::Max(-Range, -DQ - Range);
+    const int32 RMax = FMath::Min(Range, -DQ + Range);
+    for (int32 DR = RMin; DR <= RMax; ++DR) {
+      const FFPMChunkCoord Coord(PlayerChunk.Q + DQ, PlayerChunk.R + DR);
 
-      // Only include chunks within the starter island bounds (0 to 15)
-      // In the future, this restriction is removed for infinite worlds
-      if (Coord.X < 0 ||
-          Coord.X >= FPMChunkConstants::StarterIslandChunksPerAxis ||
-          Coord.Y < 0 ||
-          Coord.Y >= FPMChunkConstants::StarterIslandChunksPerAxis) {
+      // Optional: skip chunks outside starter island bounds
+      // (hex distance from origin > StarterIslandRings)
+      if (FFPMChunkCoord::HexDistance(Coord, FFPMChunkCoord(0, 0)) >
+          FPMChunkConstants::StarterIslandRings) {
         continue;
       }
 
-      // Use circular distance check instead of square
-      const float Dist = FMath::Sqrt(static_cast<float>(DX * DX + DY * DY));
-      if (Dist <= static_cast<float>(Range)) {
-        OutDesiredChunks.Add(Coord);
-      }
+      OutDesiredChunks.Add(Coord);
     }
   }
 }
@@ -228,17 +311,15 @@ void AFPMWorldChunkManager::GatherDesiredChunks(
 EFPMChunkLOD
 AFPMWorldChunkManager::DetermineLOD(const FFPMChunkCoord &ChunkCoord,
                                     const FFPMChunkCoord &PlayerChunk) const {
-  const int32 DX = FMath::Abs(ChunkCoord.X - PlayerChunk.X);
-  const int32 DY = FMath::Abs(ChunkCoord.Y - PlayerChunk.Y);
-  const float Dist = FMath::Sqrt(static_cast<float>(DX * DX + DY * DY));
+  const int32 HexDist = FFPMChunkCoord::HexDistance(ChunkCoord, PlayerChunk);
 
-  if (Dist <= static_cast<float>(FPMChunkConstants::FullDetailRange)) {
+  if (HexDist <= FPMChunkConstants::FullDetailRange) {
     return EFPMChunkLOD::Full;
   }
-  if (Dist <= static_cast<float>(FPMChunkConstants::MediumDetailRange)) {
+  if (HexDist <= FPMChunkConstants::MediumDetailRange) {
     return EFPMChunkLOD::Medium;
   }
-  if (Dist <= static_cast<float>(FPMChunkConstants::LowDetailRange)) {
+  if (HexDist <= FPMChunkConstants::LowDetailRange) {
     return EFPMChunkLOD::Low;
   }
   return EFPMChunkLOD::Unloaded;
@@ -254,19 +335,11 @@ void AFPMWorldChunkManager::LoadChunk(const FFPMChunkCoord &Coord,
     return; // Already loaded
   }
 
-  // 1. Generate chunk data from seed (deterministic)
-  FFPMChunkHeightmapData ChunkData;
-  FPMChunkGenerator::GenerateChunk(Coord, WorldSeed, ChunkData);
+  // 1. Generate voxel mesh via Marching Cubes (deterministic from seed)
+  FFPMVoxelMeshData MeshData;
+  FPMVoxelGenerator::GenerateAndMesh(Coord, WorldSeed, MeshData);
 
-  // 2. Load and apply overlay (player modifications)
-  FFPMChunkOverlay Overlay;
-  FPMChunkOverlayManager::LoadOverlay(Coord, Overlay);
-  if (Overlay.HasModifications()) {
-    FPMChunkOverlayManager::ApplyOverlay(Overlay, ChunkData);
-  }
-  LoadedOverlays.Add(Coord, Overlay);
-
-  // 3. Spawn chunk actor
+  // 2. Spawn chunk actor
   FActorSpawnParameters SpawnParams;
   SpawnParams.SpawnCollisionHandlingOverride =
       ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -276,18 +349,28 @@ void AFPMWorldChunkManager::LoadChunk(const FFPMChunkCoord &Coord,
       SpawnParams);
 
   if (ChunkActor) {
-    // Apply material if set
-    if (TerrainMaterial &&
-        ChunkActor->FindComponentByClass<UProceduralMeshComponent>()) {
-      ChunkActor->FindComponentByClass<UProceduralMeshComponent>()->SetMaterial(
-          0, TerrainMaterial);
+    // Pass biome configuration before initialization
+    // so vegetation spawning has mesh data available
+    if (BiomePCGConfig) {
+      ChunkActor->SetBiomePCGConfig(BiomePCGConfig, WorldSeed);
     }
 
-    ChunkActor->InitializeChunk(ChunkData, LOD);
+    // Initialize with voxel mesh data
+    ChunkActor->InitializeVoxelChunk(MeshData, Coord);
+
+    // Apply terrain material
+    if (TerrainMaterial) {
+      UProceduralMeshComponent *PMC =
+          ChunkActor->FindComponentByClass<UProceduralMeshComponent>();
+      if (PMC) {
+        PMC->SetMaterial(0, TerrainMaterial);
+      }
+    }
+
     LoadedChunks.Add(Coord, ChunkActor);
 
-    UE_LOG(LogTemp, Verbose, TEXT("FPM: Loaded chunk %s at LOD %d"),
-           *Coord.ToString(), static_cast<int32>(LOD));
+    UE_LOG(LogTemp, Verbose, TEXT("FPM: Loaded voxel chunk %s (%d verts)"),
+           *Coord.ToString(), MeshData.Vertices.Num());
   }
 }
 
@@ -316,16 +399,18 @@ void AFPMWorldChunkManager::UnloadChunk(const FFPMChunkCoord &Coord) {
 void AFPMWorldChunkManager::ProcessQueues() {
   int32 ChunksProcessed = 0;
 
-  // Unloads are cheap — do them all immediately
-  for (const FFPMChunkCoord &Coord : ChunkUnloadQueue) {
+  // Throttle unloads too — don't destroy everything at once
+  int32 UnloadsProcessed = 0;
+  while (ChunkUnloadQueue.Num() > 0 && UnloadsProcessed < MaxChunksPerFrame) {
+    const FFPMChunkCoord Coord = ChunkUnloadQueue.Pop();
     UnloadChunk(Coord);
+    UnloadsProcessed++;
   }
-  ChunkUnloadQueue.Empty();
 
-  // Loads are expensive — throttle per frame
+  // Loads are expensive — throttle per frame.
+  // Queue is sorted farthest-first so Pop() gives closest.
   while (ChunkLoadQueue.Num() > 0 && ChunksProcessed < MaxChunksPerFrame) {
-    const FFPMChunkCoord Coord = ChunkLoadQueue[0];
-    ChunkLoadQueue.RemoveAt(0);
+    const FFPMChunkCoord Coord = ChunkLoadQueue.Pop();
 
     const EFPMChunkLOD LOD = DetermineLOD(Coord, LastPlayerChunk);
     LoadChunk(Coord, LOD);
@@ -370,12 +455,16 @@ EFPMBiome AFPMWorldChunkManager::GetBiomeAtWorldPos(FVector WorldPos) {
   if (FoundActor && *FoundActor) {
     const FFPMChunkHeightmapData &Data = (*FoundActor)->GetChunkData();
     if (Data.bIsValid) {
-      // Find the closest vertex in the chunk
-      const FVector ChunkOrigin = FPMChunkGenerator::ChunkToWorldOrigin(Coord);
+      // Find the closest vertex in the chunk (hex bounding box UV)
+      const FVector HexCenter = FPMChunkGenerator::ChunkToWorldCenter(Coord);
       const float LocalX =
-          (WorldPos.X - ChunkOrigin.X) / FPMChunkConstants::ChunkWorldSize;
+          ((WorldPos.X - HexCenter.X) / FPMChunkConstants::HexOuterRadius +
+           1.0f) *
+          0.5f;
       const float LocalY =
-          (WorldPos.Y - ChunkOrigin.Y) / FPMChunkConstants::ChunkWorldSize;
+          ((WorldPos.Y - HexCenter.Y) / FPMChunkConstants::HexInnerRadius +
+           1.0f) *
+          0.5f;
 
       const int32 Res = FPMChunkConstants::ChunkResolution;
       const int32 IX =
@@ -405,37 +494,37 @@ void AFPMWorldChunkManager::ForceChunkUpdate() {
 void AFPMWorldChunkManager::EnsureChunkLoadedAtWorldPos(FVector WorldPos) {
   const FFPMChunkCoord Center = FPMChunkGenerator::WorldToChunkCoord(WorldPos);
 
-  // Load the target chunk AND all 8 neighbors (3x3 grid) immediately
+  // Load the target chunk AND all 6 hex neighbors (ring 0 + ring 1)
   // All at Full LOD with collision so the player has ground to stand on
-  for (int32 DY = -1; DY <= 1; ++DY) {
-    for (int32 DX = -1; DX <= 1; ++DX) {
-      const FFPMChunkCoord Coord(Center.X + DX, Center.Y + DY);
-
-      // Skip if out of island bounds
-      if (Coord.X < 0 ||
-          Coord.X >= FPMChunkConstants::StarterIslandChunksPerAxis ||
-          Coord.Y < 0 ||
-          Coord.Y >= FPMChunkConstants::StarterIslandChunksPerAxis) {
-        continue;
-      }
-
-      // If already loaded but not at Full LOD, upgrade it
-      if (LoadedChunks.Contains(Coord)) {
-        AFPMChunkActor *Existing = LoadedChunks[Coord];
-        if (Existing && Existing->GetCurrentLOD() != EFPMChunkLOD::Full) {
-          Existing->SetChunkLOD(EFPMChunkLOD::Full);
-        }
-        continue;
-      }
-
-      LoadChunk(Coord, EFPMChunkLOD::Full);
+  // Ring 0: center hex
+  auto LoadOrUpgradeChunk = [this](const FFPMChunkCoord &Coord) {
+    if (FFPMChunkCoord::HexDistance(Coord, FFPMChunkCoord(0, 0)) >
+        FPMChunkConstants::StarterIslandRings) {
+      return;
     }
+
+    if (LoadedChunks.Contains(Coord)) {
+      AFPMChunkActor *Existing = LoadedChunks[Coord];
+      if (Existing && Existing->GetCurrentLOD() != EFPMChunkLOD::Full) {
+        Existing->SetChunkLOD(EFPMChunkLOD::Full);
+      }
+      return;
+    }
+
+    LoadChunk(Coord, EFPMChunkLOD::Full);
+  };
+
+  // Center hex
+  LoadOrUpgradeChunk(Center);
+
+  // Ring 1: all 6 neighbors
+  for (int32 Dir = 0; Dir < 6; ++Dir) {
+    LoadOrUpgradeChunk(Center.Neighbor(Dir));
   }
 
-  UE_LOG(
-      LogTemp, Log,
-      TEXT("FPM: Force-loaded 3x3 chunk area around (%d,%d) for player spawn"),
-      Center.X, Center.Y);
+  UE_LOG(LogTemp, Log,
+         TEXT("FPM: Force-loaded hex ring around (%d,%d) for player spawn"),
+         Center.Q, Center.R);
 }
 
 // ===================================================================
@@ -488,8 +577,7 @@ void AFPMWorldChunkManager::DrawDebugChunks() const {
     if (!Actor)
       continue;
 
-    const FVector Origin = FPMChunkGenerator::ChunkToWorldOrigin(Coord);
-    const float Size = FPMChunkConstants::ChunkWorldSize;
+    const FVector HexCenter = FPMChunkGenerator::ChunkToWorldCenter(Coord);
 
     // Color based on LOD
     FColor Color;
@@ -508,15 +596,24 @@ void AFPMWorldChunkManager::DrawDebugChunks() const {
       break;
     }
 
-    // Draw chunk boundary box
-    const FVector Center = Origin + FVector(Size * 0.5f, Size * 0.5f, 1000.0f);
-    const FVector Extent(Size * 0.5f, Size * 0.5f, 100.0f);
-    DrawDebugBox(GetWorld(), Center, Extent, Color, false,
-                 UpdateInterval + 0.1f, 0, 5.0f);
+    // Draw hexagonal boundary (6 edges)
+    const float R = FPMChunkConstants::HexOuterRadius;
+    const float DebugZ = 1000.0f;
+    // Flat-top hex vertices (angle offset = 0 degrees for first vertex)
+    for (int32 i = 0; i < 6; ++i) {
+      const float Angle0 = FMath::DegreesToRadians(60.0f * i);
+      const float Angle1 = FMath::DegreesToRadians(60.0f * (i + 1));
+      const FVector P0 = HexCenter + FVector(R * FMath::Cos(Angle0),
+                                             R * FMath::Sin(Angle0), DebugZ);
+      const FVector P1 = HexCenter + FVector(R * FMath::Cos(Angle1),
+                                             R * FMath::Sin(Angle1), DebugZ);
+      DrawDebugLine(GetWorld(), P0, P1, Color, false, UpdateInterval + 0.1f, 0,
+                    5.0f);
+    }
 
     // Draw chunk coordinate text
-    DrawDebugString(GetWorld(), Center + FVector(0, 0, 200), Coord.ToString(),
-                    nullptr, Color, UpdateInterval + 0.1f);
+    DrawDebugString(GetWorld(), HexCenter + FVector(0, 0, DebugZ + 200),
+                    Coord.ToString(), nullptr, Color, UpdateInterval + 0.1f);
   }
 }
 
@@ -577,8 +674,11 @@ void AFPMWorldChunkManager::SpawnWaterPlane() {
     }
   }
 
-  // Disable collision on the water plane (it's visual only)
-  WaterPlaneMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  // Enable collision so the player doesn't fall through the ocean.
+  // Below-sea-level terrain IS generated, but the water surface acts
+  // as a walkable floor over it (until swimming is implemented).
+  WaterPlaneMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+  WaterPlaneMesh->SetCollisionProfileName(TEXT("BlockAll"));
 
   // Cast shadows off — water doesn't cast shadows
   WaterPlaneMesh->SetCastShadow(false);

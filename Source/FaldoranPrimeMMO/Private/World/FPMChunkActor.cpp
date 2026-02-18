@@ -1,6 +1,9 @@
 // Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #include "World/FPMChunkActor.h"
+#include "World/FPMBiomePCGConfig.h"
+#include "World/FPMBiomePCGSpawner.h"
+#include "World/FPMChunkData.h"
 
 // =====================================================================
 //  Constructor
@@ -9,6 +12,12 @@
 AFPMChunkActor::AFPMChunkActor() {
   PrimaryActorTick.bCanEverTick = false;
 
+  // Chunks are generated independently on server & client from the
+  // shared WorldSeed — no replication needed, avoids overhead for
+  // hundreds of procedural mesh actors.
+  bReplicates = false;
+  bNetLoadOnClient = false;
+
   TerrainMesh =
       CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("TerrainMesh"));
   RootComponent = TerrainMesh;
@@ -16,8 +25,8 @@ AFPMChunkActor::AFPMChunkActor() {
   // Per-triangle collision (not convex hull).
   TerrainMesh->bUseComplexAsSimpleCollision = true;
 
-  // Synchronous cooking so collision is ready immediately.
-  TerrainMesh->bUseAsyncCooking = false;
+  // Async collision cooking — prevents game-thread stalls.
+  TerrainMesh->bUseAsyncCooking = true;
 
   TerrainMesh->SetCastShadow(true);
   TerrainMesh->SetCollisionProfileName(TEXT("BlockAll"));
@@ -29,34 +38,43 @@ AFPMChunkActor::AFPMChunkActor() {
 // =====================================================================
 
 float AFPMChunkActor::HeightToWorldZ(float NormalizedHeight) {
-  // Reduced range: 50m total height (was 120m).
-  // This makes all slopes ~2.4x gentler, eliminating sawtooth artifacts.
-  return -400.0f + NormalizedHeight * 5000.0f;
+  return FPMChunkConstants::MinWorldZ +
+         NormalizedHeight * FPMChunkConstants::WorldHeightRange;
 }
 
-FLinearColor AFPMChunkActor::BiomeToVertexColor(EFPMBiome Biome) {
+FColor AFPMChunkActor::BiomeToVertexColor(EFPMBiome Biome) {
   switch (Biome) {
   case EFPMBiome::Meadows:
-    return FLinearColor(1.f, 0.f, 0.f, 0.f);
+    return FColor(255, 0, 0, 0);
   case EFPMBiome::Forest:
-    return FLinearColor(0.f, 1.f, 0.f, 0.f);
+    return FColor(0, 255, 0, 0);
   case EFPMBiome::Mountain:
-    return FLinearColor(0.f, 0.f, 1.f, 0.f);
+    return FColor(0, 0, 255, 0);
   case EFPMBiome::Coast:
-    return FLinearColor(.2f, 0.f, 0.f, 0.f);
+    return FColor(51, 0, 0, 0);
   case EFPMBiome::Swamp:
-    return FLinearColor(.5f, 0.f, .5f, 0.f);
+    return FColor(128, 0, 128, 0);
   case EFPMBiome::Snow:
-    return FLinearColor(0.f, 0.f, 0.f, 1.f);
+    return FColor(0, 0, 0, 255);
   case EFPMBiome::Ocean:
-    return FLinearColor(0.f, 0.f, 0.f, 0.f);
+    return FColor(0, 0, 0, 0);
   default:
-    return FLinearColor(.5f, .5f, .5f, 0.f);
+    return FColor(128, 128, 128, 0);
   }
 }
 
 // =====================================================================
-//  InitializeChunk  (simplified — no mobility dance)
+//  Biome PCG Config
+// =====================================================================
+
+void AFPMChunkActor::SetBiomePCGConfig(const UFPMBiomePCGConfig *InConfig,
+                                       int32 InWorldSeed) {
+  BiomePCGConfig = InConfig;
+  CachedWorldSeed = InWorldSeed;
+}
+
+// =====================================================================
+//  InitializeChunk
 // =====================================================================
 
 void AFPMChunkActor::InitializeChunk(const FFPMChunkHeightmapData &InData,
@@ -78,7 +96,13 @@ void AFPMChunkActor::InitializeChunk(const FFPMChunkHeightmapData &InData,
     break;
   case EFPMChunkLOD::Unloaded:
     TerrainMesh->ClearAllMeshSections();
-    break;
+    ClearBiome();
+    return; // Don't populate unloaded chunks
+  }
+
+  // Populate biome only at Full LOD
+  if (InLOD == EFPMChunkLOD::Full) {
+    PopulateBiome();
   }
 }
 
@@ -89,14 +113,24 @@ void AFPMChunkActor::InitializeChunk(const FFPMChunkHeightmapData &InData,
 void AFPMChunkActor::SetChunkLOD(EFPMChunkLOD NewLOD) {
   if (NewLOD == CurrentLOD)
     return;
+
+  // Only clear biome when dropping to Low or Unloaded.
+  // Trees/rocks stay visible on both Full AND Medium LOD chunks.
+  if ((NewLOD == EFPMChunkLOD::Low || NewLOD == EFPMChunkLOD::Unloaded) &&
+      bBiomePopulated) {
+    ClearBiome();
+  }
+
   CurrentLOD = NewLOD;
 
   switch (NewLOD) {
   case EFPMChunkLOD::Full:
     BuildMesh(1, true);
+    PopulateBiome(); // Trees spawn here (or persist from before)
     break;
   case EFPMChunkLOD::Medium:
     BuildMesh(2, true);
+    PopulateBiome(); // Keep trees alive on Medium LOD too
     break;
   case EFPMChunkLOD::Low:
     BuildMesh(4, false);
@@ -105,6 +139,59 @@ void AFPMChunkActor::SetChunkLOD(EFPMChunkLOD NewLOD) {
     TerrainMesh->ClearAllMeshSections();
     break;
   }
+}
+
+// =====================================================================
+//  PopulateBiome — Spawn trees/rocks using HISM
+// =====================================================================
+
+void AFPMChunkActor::PopulateBiome() {
+  if (bBiomePopulated) {
+    return; // Already populated
+  }
+
+  if (!BiomePCGConfig) {
+    UE_LOG(LogTemp, Verbose,
+           TEXT("FPM: Chunk %s — no BiomePCGConfig, skipping population"),
+           *ChunkData.Coord.ToString());
+    return;
+  }
+
+  // Skip foliage spawning on dedicated servers — purely visual, wastes CPU
+  if (GetWorld() && GetWorld()->GetNetMode() == NM_DedicatedServer) {
+    bBiomePopulated = true;
+    return;
+  }
+
+  // Only pass heightmap data if it was actually populated.
+  // Voxel-initialized chunks (InitializeVoxelChunk) don't fill HeightValues,
+  // so passing &ChunkData would cause SampleHeightmapZ to index into an
+  // empty array and crash.
+  const FFPMChunkHeightmapData *HeightPtr =
+      (ChunkData.bIsValid && ChunkData.HeightValues.Num() > 0) ? &ChunkData
+                                                               : nullptr;
+  FPMBiomePCGSpawner::PopulateChunk(
+      this, BiomePCGConfig, ChunkData.Coord, CachedWorldSeed,
+      CachedVoxelMesh.Vertices.Num() > 0 ? &CachedVoxelMesh : nullptr,
+      HeightPtr);
+
+  // Free mesh data — no longer needed after placement is computed
+  CachedVoxelMesh.Reset();
+
+  bBiomePopulated = true;
+}
+
+// =====================================================================
+//  ClearBiome — Remove all spawned instances
+// =====================================================================
+
+void AFPMChunkActor::ClearBiome() {
+  if (!bBiomePopulated) {
+    return;
+  }
+
+  FPMBiomePCGSpawner::ClearSpawnedInstances(this);
+  bBiomePopulated = false;
 }
 
 // =====================================================================
@@ -120,14 +207,20 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
 
   constexpr int32 FullRes = FPMChunkConstants::ChunkResolution;
   const int32 Res = (FullRes - 1) / LODStep + 1;
-  const float Size = FPMChunkConstants::ChunkWorldSize;
+  // Hex bounding box: width = 2*OuterRadius, height = 2*InnerRadius
+  constexpr float SizeX = FPMChunkConstants::HexOuterRadius * 2.0f; // 3200
+  constexpr float SizeY = FPMChunkConstants::HexInnerRadius * 2.0f; // ~2771
+
+  if (Res <= 1) {
+    return;
+  }
 
   // ---- 1. Vertices ----
   const int32 NumVerts = Res * Res;
 
   TArray<FVector> Verts;
   TArray<FVector2D> UVs;
-  TArray<FLinearColor> VColors;
+  TArray<FColor> VColors;
 
   Verts.Reserve(NumVerts);
   UVs.Reserve(NumVerts);
@@ -142,18 +235,73 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
       const float U = static_cast<float>(X) / (Res - 1);
       const float V = static_cast<float>(Y) / (Res - 1);
 
-      Verts.Emplace(U * Size, V * Size,
+      Verts.Emplace(U * SizeX, V * SizeY,
                     HeightToWorldZ(ChunkData.HeightValues[SrcIdx]));
       UVs.Emplace(U, V);
       VColors.Add(BiomeToVertexColor(ChunkData.BiomeValues[SrcIdx]));
     }
   }
 
+  // ---- 1b. Smooth vertex colors (biome transition blending) ----
+  // Box blur on the grid: average each vertex color with its cardinal
+  // neighbors.  Run multiple iterations for a wider gradient.
+  constexpr int32 BlurPasses = 2;
+  for (int32 Pass = 0; Pass < BlurPasses; ++Pass) {
+    TArray<FColor> Blurred;
+    Blurred.SetNum(NumVerts);
+
+    for (int32 Y = 0; Y < Res; ++Y) {
+      for (int32 X = 0; X < Res; ++X) {
+        const int32 Idx = Y * Res + X;
+        int32 SumR = VColors[Idx].R;
+        int32 SumG = VColors[Idx].G;
+        int32 SumB = VColors[Idx].B;
+        int32 SumA = VColors[Idx].A;
+        int32 Count = 1;
+
+        // Cardinal neighbors
+        if (X > 0) {
+          const FColor &C = VColors[Idx - 1];
+          SumR += C.R;
+          SumG += C.G;
+          SumB += C.B;
+          SumA += C.A;
+          ++Count;
+        }
+        if (X < Res - 1) {
+          const FColor &C = VColors[Idx + 1];
+          SumR += C.R;
+          SumG += C.G;
+          SumB += C.B;
+          SumA += C.A;
+          ++Count;
+        }
+        if (Y > 0) {
+          const FColor &C = VColors[Idx - Res];
+          SumR += C.R;
+          SumG += C.G;
+          SumB += C.B;
+          SumA += C.A;
+          ++Count;
+        }
+        if (Y < Res - 1) {
+          const FColor &C = VColors[Idx + Res];
+          SumR += C.R;
+          SumG += C.G;
+          SumB += C.B;
+          SumA += C.A;
+          ++Count;
+        }
+
+        Blurred[Idx] = FColor(
+            static_cast<uint8>(SumR / Count), static_cast<uint8>(SumG / Count),
+            static_cast<uint8>(SumB / Count), static_cast<uint8>(SumA / Count));
+      }
+    }
+    VColors = MoveTemp(Blurred);
+  }
+
   // ---- 2. Triangles (alternating diagonal to prevent sawtooth) ----
-  //
-  // Checkerboard pattern: even quads split BL→TR, odd quads split TL→BR.
-  // This eliminates the directional bias that causes visible zigzag
-  // patterns on slopes.
   const int32 NumQuads = (Res - 1) * (Res - 1);
   TArray<int32> Tris;
   Tris.Reserve(NumQuads * 6);
@@ -166,28 +314,26 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
       const int32 TR = TL + 1;
 
       if ((X + Y) % 2 == 0) {
-        // Even: split along BL→TR diagonal
         Tris.Add(BL);
-        Tris.Add(TL);
         Tris.Add(TR);
+        Tris.Add(TL);
 
         Tris.Add(BL);
-        Tris.Add(TR);
         Tris.Add(BR);
+        Tris.Add(TR);
       } else {
-        // Odd: split along TL→BR diagonal
         Tris.Add(BL);
-        Tris.Add(TL);
         Tris.Add(BR);
+        Tris.Add(TL);
 
         Tris.Add(BR);
-        Tris.Add(TL);
         Tris.Add(TR);
+        Tris.Add(TL);
       }
     }
   }
 
-  // ---- 3. Normals (flipped to +Z for lighting) ----
+  // ---- 3. Normals ----
   TArray<FVector> Normals;
   Normals.SetNumZeroed(NumVerts);
 
@@ -197,8 +343,6 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
     const FVector &C = Verts[Tris[i + 2]];
 
     FVector FaceN = FVector::CrossProduct(B - A, C - A).GetSafeNormal();
-    if (FaceN.Z < 0.f)
-      FaceN = -FaceN;
 
     Normals[Tris[i]] += FaceN;
     Normals[Tris[i + 1]] += FaceN;
@@ -212,35 +356,38 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
   }
 
   // ---- 4. Skirts ----
-  constexpr float SkirtDrop = 200.f; // Reduced for flatter terrain
+  constexpr float SkirtDrop = 200.f;
 
   auto AddSkirtQuad = [&](int32 IdxA, int32 IdxB) {
     const FVector PA = Verts[IdxA];
     const FVector PB = Verts[IdxB];
     const FVector2D UvA = UVs[IdxA];
     const FVector2D UvB = UVs[IdxB];
-    const FLinearColor ColA = VColors[IdxA];
-    const FLinearColor ColB = VColors[IdxB];
+    const FColor ColA = VColors[IdxA];
+    const FColor ColB = VColors[IdxB];
+
+    const FVector NormalA = Normals[IdxA];
+    const FVector NormalB = Normals[IdxB];
 
     const int32 BotA = Verts.Num();
     Verts.Emplace(PA.X, PA.Y, PA.Z - SkirtDrop);
     UVs.Add(UvA);
     VColors.Add(ColA);
-    Normals.Add(FVector::DownVector);
+    Normals.Add(NormalA);
 
     const int32 BotB = Verts.Num();
     Verts.Emplace(PB.X, PB.Y, PB.Z - SkirtDrop);
     UVs.Add(UvB);
     VColors.Add(ColB);
-    Normals.Add(FVector::DownVector);
+    Normals.Add(NormalB);
 
     Tris.Add(IdxA);
-    Tris.Add(IdxB);
     Tris.Add(BotA);
-
-    Tris.Add(IdxB);
     Tris.Add(BotB);
-    Tris.Add(BotA);
+
+    Tris.Add(IdxA);
+    Tris.Add(BotB);
+    Tris.Add(IdxB);
   };
 
   for (int32 X = 0; X < Res - 1; ++X)
@@ -256,25 +403,43 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
     AddSkirtQuad((Y + 1) * Res + Col, Y * Res + Col);
   }
 
-  // ---- 5. Create section ----
-  TArray<FColor> Colors;
-  Colors.Reserve(VColors.Num());
-  for (const FLinearColor &LC : VColors) {
-    Colors.Add(LC.ToFColor(true));
-  }
-
   TArray<FProcMeshTangent> Tangents;
 
-  // CreateMeshSection with bCreateCollision=true internally:
-  //   1. Creates a BodySetup with bDoubleSidedGeometry=true (PMC default)
-  //   2. Sets CollisionTraceFlag = CTF_UseComplexAsSimple (from our flag)
-  //   3. Cooks the trimesh collision
-  //   4. Calls RecreatePhysicsState()
-  // So collision is fully ready when this returns. No extra calls needed.
-  TerrainMesh->CreateMeshSection(0, Verts, Tris, Normals, UVs, Colors, Tangents,
-                                 bCollision);
+  TerrainMesh->CreateMeshSection(0, Verts, Tris, Normals, UVs, VColors,
+                                 Tangents, bCollision);
 
   TerrainMesh->SetCollisionEnabled(bCollision
                                        ? ECollisionEnabled::QueryAndPhysics
                                        : ECollisionEnabled::NoCollision);
+}
+
+// =====================================================================
+//  Voxel Chunk Initialization (Marching Cubes mesh)
+// =====================================================================
+
+void AFPMChunkActor::InitializeVoxelChunk(const FFPMVoxelMeshData &MeshData,
+                                          const FFPMChunkCoord &Coord) {
+  ChunkData.Coord = Coord;
+  CurrentLOD = EFPMChunkLOD::Full;
+
+  if (MeshData.Vertices.Num() == 0) {
+    return;
+  }
+
+  // Cache for tree/rock Z-position snapping
+  CachedVoxelMesh = MeshData;
+
+  const FVector Origin = FPMChunkGenerator::ChunkToWorldOrigin(Coord);
+  SetActorLocation(Origin);
+
+  TArray<FProcMeshTangent> Tangents;
+
+  TerrainMesh->CreateMeshSection(0, MeshData.Vertices, MeshData.Triangles,
+                                 MeshData.Normals, MeshData.UVs,
+                                 MeshData.Colors, Tangents, true);
+
+  TerrainMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+  // Voxel chunks also get biome population (server skips foliage)
+  PopulateBiome();
 }

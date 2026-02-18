@@ -1,6 +1,17 @@
 # 03 Progression and Attributes
 
-Faldoran Prime uses a classless, skill-based progression system where identity is defined by actions and consequences, not rigid archetypes.
+Faldoran Prime uses a classless, skill-based progression system where identity is defined by actions and consequences. However, **Biological Identity** (Species/Race) provides the foundational canvas for these skills.
+
+## distinct Species & Biological Morph Targets
+Inspired by the variety in *Light No Fire*, Faldoran Prime offers distinct **Species** that drastically alter gameplay, utilizing Character Creator 5's morph capabilities.
+
+### Species Traits
+*   **Humans:** The baseline. Balanced stats, high diplomacy/versatility.
+*   **Giants/Ogres:** (High Strength/Con, Low Agility). Can carry heavy loads without mounts but cannot ride standard horses.
+*   **Smallfolk (Gnomes/Tylwyth):** (High Agility/Stealth, Low Strength). Harder to hit, can access small cave passages, but lower carry weight.
+*   **Beast-Kin (Wolf/Badger/Fox):** (High Senses/Speed). Natural resistance to cold/heat, potential for "Scent" mechanics to track players/resources.
+
+> **Design Note:** Species choice is *permanent* (mostly). It defines your interaction with the physics of the world (Carry Weight, Hitbox, Interaction Height).
 
 ## The Affinity System
 

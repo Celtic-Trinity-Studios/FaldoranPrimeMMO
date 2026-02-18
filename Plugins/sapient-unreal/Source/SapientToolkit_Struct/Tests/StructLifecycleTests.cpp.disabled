@@ -1,0 +1,341 @@
+// Copyright 2024 - 2025 Sapient Technology, Inc.
+
+#include "Misc/AutomationTest.h"
+#include "TestBases/AssetToolTestBase.h"
+#include "Operations/StructToolOperations.h"
+#include "Operations/AssetOperationBase.h"
+#include "Engine/UserDefinedStruct.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonWriter.h"
+#include "Serialization/JsonSerializer.h"
+#include "Types/CoreTypes.h"
+
+/**
+ * Struct Lifecycle Tests
+ *
+ * These tests verify the full CRUD lifecycle of UserDefinedStructs:
+ * - Create → Read → Delete
+ */
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStructLifecycle_BasicCreateAndDelete,
+	"Sapient.Tools.Struct.Lifecycle.BasicCreateAndDelete",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FStructLifecycle_BasicCreateAndDelete::RunTest(const FString& Parameters)
+{
+	// Test: Create a Struct and then delete it
+	FAssetToolTestBase TestHelper(TEXT("BasicStructCreateDelete"));
+
+	// Generate unique paths
+	FString StructPath = TestHelper.GenerateUniqueAssetPath(TEXT("TestStruct"));
+
+	TestNotNull(TEXT("Test helper should be created"), &TestHelper);
+
+	// Create Struct with no fields
+	TSharedPtr<FJsonObject> CreateCommand = MakeShared<FJsonObject>();
+	CreateCommand->SetStringField(TEXT("operation"), TEXT("create"));
+	CreateCommand->SetStringField(TEXT("struct_path"), StructPath);
+
+	Sapient::FToolResult CreateResult = FStructCreateOperation::Execute(*CreateCommand);
+	TestTrue(TEXT("Should create Struct"), CreateResult.bSuccess);
+
+	if (!CreateResult.bSuccess)
+	{
+		AddError(FString::Printf(TEXT("Create error: %s"), *CreateResult.Message));
+	}
+
+	// Verify it exists
+	TestTrue(TEXT("Struct should exist after creation"),
+		FAssetOperationBase::AssetExists(StructPath));
+
+	// Delete it
+	TSharedPtr<FJsonObject> DeleteCommand = MakeShared<FJsonObject>();
+	DeleteCommand->SetStringField(TEXT("operation"), TEXT("delete"));
+	DeleteCommand->SetStringField(TEXT("struct_path"), StructPath);
+
+	Sapient::FToolResult DeleteResult = FStructDeleteOperation::Execute(*DeleteCommand);
+	TestTrue(TEXT("Should delete Struct"), DeleteResult.bSuccess);
+
+	// Verify it's gone
+	TestFalse(TEXT("Struct should not exist after deletion"),
+		FAssetOperationBase::AssetExists(StructPath));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStructLifecycle_CreateWithFieldsAndRead,
+	"Sapient.Tools.Struct.Lifecycle.CreateWithFieldsAndRead",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FStructLifecycle_CreateWithFieldsAndRead::RunTest(const FString& Parameters)
+{
+	// Test: Create Struct with fields, and read them back
+	FAssetToolTestBase TestHelper(TEXT("CreateStructWithFields"));
+
+	FString StructPath = TestHelper.GenerateUniqueAssetPath(TEXT("TestStruct"));
+
+	// Create Struct with multiple fields
+	TSharedPtr<FJsonObject> CreateCommand = MakeShared<FJsonObject>();
+	CreateCommand->SetStringField(TEXT("operation"), TEXT("create"));
+	CreateCommand->SetStringField(TEXT("struct_path"), StructPath);
+
+	// Add fields array
+	TArray<TSharedPtr<FJsonValue>> Fields;
+
+	TSharedPtr<FJsonObject> Field1 = MakeShared<FJsonObject>();
+	Field1->SetStringField(TEXT("name"), TEXT("Health"));
+	Field1->SetStringField(TEXT("type"), TEXT("float"));
+	Fields.Add(MakeShared<FJsonValueObject>(Field1));
+
+	TSharedPtr<FJsonObject> Field2 = MakeShared<FJsonObject>();
+	Field2->SetStringField(TEXT("name"), TEXT("Name"));
+	Field2->SetStringField(TEXT("type"), TEXT("string"));
+	Fields.Add(MakeShared<FJsonValueObject>(Field2));
+
+	TSharedPtr<FJsonObject> Field3 = MakeShared<FJsonObject>();
+	Field3->SetStringField(TEXT("name"), TEXT("IsActive"));
+	Field3->SetStringField(TEXT("type"), TEXT("bool"));
+	Fields.Add(MakeShared<FJsonValueObject>(Field3));
+
+	CreateCommand->SetArrayField(TEXT("fields"), Fields);
+
+	Sapient::FToolResult CreateResult = FStructCreateOperation::Execute(*CreateCommand);
+	TestTrue(TEXT("Should create Struct with fields"), CreateResult.bSuccess);
+
+	if (!CreateResult.bSuccess)
+	{
+		AddError(FString::Printf(TEXT("Create error: %s"), *CreateResult.Message));
+	}
+
+	// Verify it exists
+	TestTrue(TEXT("Struct should exist after creation"),
+		FAssetOperationBase::AssetExists(StructPath));
+
+	// Read the Struct back
+	TSharedPtr<FJsonObject> ReadCommand = MakeShared<FJsonObject>();
+	ReadCommand->SetStringField(TEXT("operation"), TEXT("read"));
+	ReadCommand->SetStringField(TEXT("struct_path"), StructPath);
+
+	Sapient::FToolResult ReadResult = FStructReadOperation::Execute(*ReadCommand);
+	TestTrue(TEXT("Read operation should succeed"), ReadResult.bSuccess);
+	TestFalse(TEXT("Read result should not be empty"), ReadResult.ResultJson.IsEmpty());
+
+	// Parse result to verify structure
+	TSharedPtr<FJsonObject> ResultJson;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ReadResult.ResultJson);
+	if (FJsonSerializer::Deserialize(Reader, ResultJson) && ResultJson.IsValid())
+	{
+		TestTrue(TEXT("Result should have 'fields' field"), ResultJson->HasField(TEXT("fields")));
+
+		int32 FieldCount = 0;
+		if (ResultJson->HasTypedField<EJson::Number>(TEXT("field_count")))
+		{
+			FieldCount = ResultJson->GetIntegerField(TEXT("field_count"));
+		}
+
+		TestEqual(TEXT("Should have 3 fields"), FieldCount, 3);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStructLifecycle_ReadByName,
+	"Sapient.Tools.Struct.Lifecycle.ReadByName",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FStructLifecycle_ReadByName::RunTest(const FString& Parameters)
+{
+	// Test: Create Struct and read it by name instead of path
+	FAssetToolTestBase TestHelper(TEXT("ReadByName"));
+
+	FString StructPath = TestHelper.GenerateUniqueAssetPath(TEXT("TestStruct"));
+	FString StructName = FAssetOperationBase::GetAssetNameFromPath(StructPath);
+
+	// Create Struct
+	TSharedPtr<FJsonObject> CreateCommand = MakeShared<FJsonObject>();
+	CreateCommand->SetStringField(TEXT("operation"), TEXT("create"));
+	CreateCommand->SetStringField(TEXT("struct_path"), StructPath);
+
+	Sapient::FToolResult CreateResult = FStructCreateOperation::Execute(*CreateCommand);
+	TestTrue(TEXT("Should create Struct"), CreateResult.bSuccess);
+
+	// Read by name
+	TSharedPtr<FJsonObject> ReadCommand = MakeShared<FJsonObject>();
+	ReadCommand->SetStringField(TEXT("operation"), TEXT("read"));
+	ReadCommand->SetStringField(TEXT("struct_name"), StructName);
+
+	Sapient::FToolResult ReadResult = FStructReadOperation::Execute(*ReadCommand);
+	TestTrue(TEXT("Read by name should succeed"), ReadResult.bSuccess);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStructLifecycle_IdempotentDelete,
+	"Sapient.Tools.Struct.Lifecycle.IdempotentDelete",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FStructLifecycle_IdempotentDelete::RunTest(const FString& Parameters)
+{
+	// Test: Delete operation should be idempotent (deleting non-existent struct should succeed)
+	FAssetToolTestBase TestHelper(TEXT("IdempotentDelete"));
+
+	FString StructPath = TestHelper.GenerateUniqueAssetPath(TEXT("NonExistentStruct"));
+
+	// Ensure it doesn't exist
+	TestFalse(TEXT("Struct should not exist initially"),
+		FAssetOperationBase::AssetExists(StructPath));
+
+	// Delete it (should succeed even though it doesn't exist)
+	TSharedPtr<FJsonObject> DeleteCommand = MakeShared<FJsonObject>();
+	DeleteCommand->SetStringField(TEXT("operation"), TEXT("delete"));
+	DeleteCommand->SetStringField(TEXT("struct_path"), StructPath);
+
+	Sapient::FToolResult DeleteResult = FStructDeleteOperation::Execute(*DeleteCommand);
+	TestTrue(TEXT("Delete of non-existent struct should succeed (idempotent)"), DeleteResult.bSuccess);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStructLifecycle_CreateDuplicate,
+	"Sapient.Tools.Struct.Lifecycle.CreateDuplicate",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FStructLifecycle_CreateDuplicate::RunTest(const FString& Parameters)
+{
+	// Test: Creating a struct that already exists should fail
+	FAssetToolTestBase TestHelper(TEXT("CreateDuplicate"));
+
+	FString StructPath = TestHelper.GenerateUniqueAssetPath(TEXT("TestStruct"));
+
+	// Create Struct first time
+	TSharedPtr<FJsonObject> CreateCommand1 = MakeShared<FJsonObject>();
+	CreateCommand1->SetStringField(TEXT("operation"), TEXT("create"));
+	CreateCommand1->SetStringField(TEXT("struct_path"), StructPath);
+
+	Sapient::FToolResult CreateResult1 = FStructCreateOperation::Execute(*CreateCommand1);
+	TestTrue(TEXT("First create should succeed"), CreateResult1.bSuccess);
+
+	// Try to create again with same path
+	TSharedPtr<FJsonObject> CreateCommand2 = MakeShared<FJsonObject>();
+	CreateCommand2->SetStringField(TEXT("operation"), TEXT("create"));
+	CreateCommand2->SetStringField(TEXT("struct_path"), StructPath);
+
+	Sapient::FToolResult CreateResult2 = FStructCreateOperation::Execute(*CreateCommand2);
+	TestFalse(TEXT("Second create with same path should fail"), CreateResult2.bSuccess);
+	TestTrue(TEXT("Error message should mention 'already exists'"),
+		CreateResult2.Message.Contains(TEXT("already exists")));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStructLifecycle_FullCRUDCycle,
+	"Sapient.Tools.Struct.Lifecycle.FullCRUDCycle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FStructLifecycle_FullCRUDCycle::RunTest(const FString& Parameters)
+{
+	// Test: Complete CRUD cycle - Create → Read → Delete
+	FAssetToolTestBase TestHelper(TEXT("FullCRUD"));
+
+	FString StructPath = TestHelper.GenerateUniqueAssetPath(TEXT("TestStruct"));
+
+	// === CREATE ===
+	TSharedPtr<FJsonObject> CreateCommand = MakeShared<FJsonObject>();
+	CreateCommand->SetStringField(TEXT("operation"), TEXT("create"));
+	CreateCommand->SetStringField(TEXT("struct_path"), StructPath);
+
+	TArray<TSharedPtr<FJsonValue>> Fields;
+	TSharedPtr<FJsonObject> Field1 = MakeShared<FJsonObject>();
+	Field1->SetStringField(TEXT("name"), TEXT("Score"));
+	Field1->SetStringField(TEXT("type"), TEXT("int"));
+	Fields.Add(MakeShared<FJsonValueObject>(Field1));
+	CreateCommand->SetArrayField(TEXT("fields"), Fields);
+
+	Sapient::FToolResult CreateResult = FStructCreateOperation::Execute(*CreateCommand);
+	TestTrue(TEXT("Create should succeed"), CreateResult.bSuccess);
+
+	// === READ ===
+	TSharedPtr<FJsonObject> ReadCommand = MakeShared<FJsonObject>();
+	ReadCommand->SetStringField(TEXT("operation"), TEXT("read"));
+	ReadCommand->SetStringField(TEXT("struct_path"), StructPath);
+
+	Sapient::FToolResult ReadResult = FStructReadOperation::Execute(*ReadCommand);
+	TestTrue(TEXT("Read should succeed"), ReadResult.bSuccess);
+	TestFalse(TEXT("Read result should contain data"), ReadResult.ResultJson.IsEmpty());
+
+	// === DELETE ===
+	TSharedPtr<FJsonObject> DeleteCommand = MakeShared<FJsonObject>();
+	DeleteCommand->SetStringField(TEXT("operation"), TEXT("delete"));
+	DeleteCommand->SetStringField(TEXT("struct_path"), StructPath);
+
+	Sapient::FToolResult DeleteResult = FStructDeleteOperation::Execute(*DeleteCommand);
+	TestTrue(TEXT("Delete should succeed"), DeleteResult.bSuccess);
+
+	// Verify final state
+	TestFalse(TEXT("Struct should not exist after full cycle"),
+		FAssetOperationBase::AssetExists(StructPath));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStructLifecycle_ErrorHandling,
+	"Sapient.Tools.Struct.Lifecycle.ErrorHandling",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FStructLifecycle_ErrorHandling::RunTest(const FString& Parameters)
+{
+	// Test: Various error conditions are handled gracefully
+	FAssetToolTestBase TestHelper(TEXT("ErrorHandling"));
+
+	// Test 1: Read non-existent struct
+	TSharedPtr<FJsonObject> ReadCommand = MakeShared<FJsonObject>();
+	ReadCommand->SetStringField(TEXT("operation"), TEXT("read"));
+	ReadCommand->SetStringField(TEXT("struct_name"), TEXT("NonExistentStruct_XYZ123"));
+
+	Sapient::FToolResult ReadResult = FStructReadOperation::Execute(*ReadCommand);
+	TestFalse(TEXT("Reading non-existent struct should fail"), ReadResult.bSuccess);
+	TestFalse(TEXT("Error message should not be empty"), ReadResult.Message.IsEmpty());
+
+	// Test 2: Create with empty path
+	TSharedPtr<FJsonObject> CreateCommand = MakeShared<FJsonObject>();
+	CreateCommand->SetStringField(TEXT("operation"), TEXT("create"));
+	CreateCommand->SetStringField(TEXT("struct_path"), TEXT(""));
+
+	Sapient::FToolResult CreateResult = FStructCreateOperation::Execute(*CreateCommand);
+	TestFalse(TEXT("Create with empty path should fail"), CreateResult.bSuccess);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStructLifecycle_AutomaticCleanup,
+	"Sapient.Tools.Struct.Lifecycle.AutomaticCleanup",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FStructLifecycle_AutomaticCleanup::RunTest(const FString& Parameters)
+{
+	// Test: AssetToolTestBase automatically cleans up assets
+	FString StructPath;
+
+	{
+		FAssetToolTestBase TestHelper(TEXT("AutoCleanup"));
+		StructPath = TestHelper.GenerateUniqueAssetPath(TEXT("TestStruct"));
+
+		// Create a struct
+		TSharedPtr<FJsonObject> CreateCommand = MakeShared<FJsonObject>();
+		CreateCommand->SetStringField(TEXT("operation"), TEXT("create"));
+		CreateCommand->SetStringField(TEXT("struct_path"), StructPath);
+
+		Sapient::FToolResult CreateResult = FStructCreateOperation::Execute(*CreateCommand);
+		TestTrue(TEXT("Should create struct"), CreateResult.bSuccess);
+
+		TestTrue(TEXT("Struct should exist"), FAssetOperationBase::AssetExists(StructPath));
+
+		// TestHelper destructor will run here when scope exits
+	}
+
+	// After TestHelper is destroyed, the struct should be cleaned up
+	TestFalse(TEXT("Struct should be cleaned up automatically after TestHelper destruction"),
+		FAssetOperationBase::AssetExists(StructPath));
+
+	return true;
+}

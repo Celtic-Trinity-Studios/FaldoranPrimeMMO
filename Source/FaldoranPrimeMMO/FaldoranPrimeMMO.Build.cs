@@ -9,7 +9,7 @@ public class FaldoranPrimeMMO : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG", "Slate", "SlateCore", "Landscape", "Foliage", "ProceduralMeshComponent", "Json", "JsonUtilities" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG", "Slate", "SlateCore", "Landscape", "Foliage", "ProceduralMeshComponent", "Json", "JsonUtilities", "PCG" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 

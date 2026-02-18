@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Character Creation - Glass & Gold Theme</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap"
+        rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --deep-bg: #0a0c10;
+            --panel-bg: rgba(15, 20, 30, 0.7);
+            --panel-border: rgba(197, 160, 89, 0.15);
+            --gold-primary: #c5a059;
+            --gold-light: #eecd8d;
+            --gold-dim: rgba(197, 160, 89, 0.4);
+            --text-main: #e0e0e0;
+            --text-muted: rgba(160, 160, 160, 0.7);
+            --btn-bg: #a68b4c;
+            --btn-hover: #b79c5e;
+            --btn-text: #0c0e12;
+            --slider-track: rgba(255, 255, 255, 0.08);
+            --slider-fill: #c5a059;
+            --input-bg: rgba(255, 255, 255, 0.05);
+            --input-border: rgba(197, 160, 89, 0.25);
+            --section-label: #c5a059;
+            --preview-bg: rgba(13, 13, 20, 1);
+            --error-red: #e57373;
+            --success-green: #4caf50;
+        }
+
+        body {
+            background: var(--deep-bg);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .screen {
+            width: 1200px;
+            max-width: 95vw;
+            height: 90vh;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        /* TITLE */
+        .title-bar {
+            text-align: center;
+            padding: 12px 0 8px;
+        }
+
+        .title-bar h1 {
+            font-family: 'Cinzel', serif;
+            font-size: 28px;
+            font-weight: 600;
+            color: #fff;
+            letter-spacing: 4px;
+            text-shadow: 0 2px 8px var(--gold-dim);
+        }
+
+        .title-bar .subtitle {
+            font-family: 'Cinzel', serif;
+            font-size: 11px;
+            letter-spacing: 6px;
+            color: var(--gold-primary);
+            margin-top: 2px;
+        }
+
+        /* MAIN 3-COLUMN LAYOUT */
+        .main-content {
+            display: flex;
+            flex: 1;
+            gap: 12px;
+            min-height: 0;
+        }
+
+        /* PANELS */
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            padding: 16px;
+            overflow-y: auto;
+            backdrop-filter: blur(8px);
+        }
+
+        .panel::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .panel::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .panel::-webkit-scrollbar-thumb {
+            background: var(--gold-dim);
+            border-radius: 2px;
+        }
+
+        .panel-left {
+            width: 280px;
+            flex-shrink: 0;
+        }
+
+        .panel-center {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 12px;
+        }
+
+        .panel-right {
+            width: 280px;
+            flex-shrink: 0;
+        }
+
+        /* SECTION LABELS */
+        .section-label {
+            font-family: 'Cinzel', serif;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 3px;
+            color: var(--section-label);
+            margin-bottom: 12px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(197, 160, 89, 0.15);
+        }
+
+        .sub-label {
+            font-size: 9px;
+            font-weight: 500;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-top: 14px;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+        }
+
+        /* INPUT FIELDS */
+        .input-group {
+            margin-bottom: 12px;
+        }
+
+        .input-group label {
+            display: block;
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            letter-spacing: 0.5px;
+        }
+
+        .input-group input[type="text"] {
+            width: 100%;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+            padding: 8px 10px;
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            font-size: 12px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .input-group input:focus {
+            border-color: var(--gold-primary);
+        }
+
+        /* GENDER TOGGLE BUTTON */
+        .gender-toggle {
+            display: flex;
+            gap: 0;
+            margin-bottom: 14px;
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid var(--input-border);
+        }
+
+        .gender-btn {
+            flex: 1;
+            padding: 7px 0;
+            text-align: center;
+            font-family: 'Cinzel', serif;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: var(--input-bg);
+            color: var(--text-muted);
+            border: none;
+        }
+
+        .gender-btn.active {
+            background: rgba(197, 160, 89, 0.2);
+            color: var(--gold-light);
+            box-shadow: inset 0 0 12px rgba(197, 160, 89, 0.1);
+        }
+
+        .gender-btn:hover:not(.active) {
+            background: rgba(197, 160, 89, 0.08);
+            color: var(--text-main);
+        }
+
+        /* SLIDER ROWS */
+        .slider-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 6px;
+            gap: 8px;
+        }
+
+        .slider-row .slider-label {
+            font-size: 9px;
+            color: var(--text-muted);
+            width: 24px;
+            text-align: right;
+            flex-shrink: 0;
+            letter-spacing: 0.5px;
+        }
+
+        .slider-row input[type="range"] {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 3px;
+            background: var(--slider-track);
+            border-radius: 2px;
+            outline: none;
+        }
+
+        .slider-row input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--slider-fill);
+            cursor: pointer;
+            box-shadow: 0 0 4px rgba(197, 160, 89, 0.4);
+        }
+
+        .slider-row .slider-val {
+            font-size: 9px;
+            color: var(--text-muted);
+            width: 28px;
+            text-align: left;
+            flex-shrink: 0;
+        }
+
+        /* HAIR STYLE DROPDOWN */
+        .dropdown-group {
+            margin-bottom: 12px;
+        }
+
+        .dropdown-group label {
+            display: block;
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .dropdown-group select {
+            width: 100%;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+            padding: 6px 8px;
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            font-size: 11px;
+            outline: none;
+        }
+
+        /* PREVIEW AREA */
+        .preview-container {
+            flex: 1;
+            background: var(--preview-bg);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(197, 160, 89, 0.1);
+        }
+
+        .preview-container .placeholder-text {
+            color: var(--text-muted);
+            font-size: 12px;
+            letter-spacing: 2px;
+        }
+
+        .preview-controls {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            padding: 8px 0 0;
+        }
+
+        .preview-ctrl-btn {
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+            padding: 4px 14px;
+            color: var(--text-muted);
+            font-size: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .preview-ctrl-btn:hover {
+            border-color: var(--gold-primary);
+            color: var(--gold-light);
+        }
+
+        /* AFFINITY SECTIONS */
+        .affinity-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 8px;
+            margin-top: 10px;
+        }
+
+        .affinity-header .pool-label {
+            font-family: 'Cinzel', serif;
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            color: var(--gold-primary);
+        }
+
+        .affinity-header .pool-total {
+            font-size: 10px;
+            font-weight: 500;
+            color: var(--gold-light);
+        }
+
+        .affinity-header .pool-total.over {
+            color: var(--error-red);
+        }
+
+        .affinity-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+            gap: 6px;
+        }
+
+        .affinity-row .aff-label {
+            font-size: 9px;
+            color: var(--text-muted);
+            width: 52px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .affinity-row input[type="range"] {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 3px;
+            background: var(--slider-track);
+            border-radius: 2px;
+            outline: none;
+        }
+
+        .affinity-row input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--slider-fill);
+            cursor: pointer;
+            box-shadow: 0 0 4px rgba(197, 160, 89, 0.4);
+        }
+
+        .affinity-row .aff-val {
+            font-size: 9px;
+            color: var(--text-muted);
+            width: 24px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        /* BOTTOM BAR */
+        .bottom-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0 4px;
+            gap: 16px;
+        }
+
+        .bottom-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .bottom-center {
+            flex: 1;
+            text-align: center;
+        }
+
+        .bottom-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .result-text {
+            font-size: 10px;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+        }
+
+        .result-text.error {
+            color: var(--error-red);
+        }
+
+        /* BUTTONS */
+        .btn-gold {
+            background: var(--btn-bg);
+            color: var(--btn-text);
+            border: none;
+            border-radius: 4px;
+            padding: 10px 28px;
+            font-family: 'Cinzel', serif;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-gold:hover {
+            background: var(--btn-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--gold-primary);
+            border: 1px solid var(--panel-border);
+            border-radius: 4px;
+            padding: 9px 20px;
+            font-family: 'Cinzel', serif;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-ghost:hover {
+            border-color: var(--gold-primary);
+            background: rgba(197, 160, 89, 0.06);
+        }
+
+        /* Gold separator line */
+        .gold-line {
+            width: 60px;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--gold-primary), transparent);
+            margin: 2px auto 0;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="screen">
+
+        <!-- TITLE -->
+        <div class="title-bar">
+            <h1>FALDORAN PRIME</h1>
+            <div class="subtitle">CREATE YOUR CHARACTER</div>
+            <div class="gold-line"></div>
+        </div>
+
+        <!-- 3-COLUMN LAYOUT -->
+        <div class="main-content">
+
+            <!-- LEFT PANEL: Physical Attributes -->
+            <div class="panel panel-left">
+                <div class="section-label">PHYSICAL ATTRIBUTES</div>
+
+                <div class="input-group">
+                    <label>CHARACTER NAME</label>
+                    <input type="text" placeholder="3-20 characters" maxlength="20">
+                </div>
+
+                <!-- Gender Toggle -->
+                <div class="gender-toggle">
+                    <button class="gender-btn active" onclick="toggleGender(this)">MALE</button>
+                    <button class="gender-btn" onclick="toggleGender(this)">FEMALE</button>
+                </div>
+
+                <!-- Body Type -->
+                <div class="sub-label">Body Type</div>
+                <div class="slider-row">
+                    <input type="range" min="0" max="3" step="1" value="0">
+                </div>
+
+                <!-- Skin Color -->
+                <div class="sub-label">Skin Color</div>
+                <div class="slider-row"><span class="slider-label">R</span><input type="range" min="0" max="100"
+                        value="70"><span class="slider-val">70</span></div>
+                <div class="slider-row"><span class="slider-label">G</span><input type="range" min="0" max="100"
+                        value="55"><span class="slider-val">55</span></div>
+                <div class="slider-row"><span class="slider-label">B</span><input type="range" min="0" max="100"
+                        value="45"><span class="slider-val">45</span></div>
+
+                <!-- Eye Color -->
+                <div class="sub-label">Eye Color</div>
+                <div class="slider-row"><span class="slider-label">R</span><input type="range" min="0" max="100"
+                        value="30"><span class="slider-val">30</span></div>
+                <div class="slider-row"><span class="slider-label">G</span><input type="range" min="0" max="100"
+                        value="50"><span class="slider-val">50</span></div>
+                <div class="slider-row"><span class="slider-label">B</span><input type="range" min="0" max="100"
+                        value="80"><span class="slider-val">80</span></div>
+
+                <!-- Hair Style -->
+                <div class="dropdown-group">
+                    <label>HAIR STYLE</label>
+                    <select>
+                        <option>Bald</option>
+                        <option>Short</option>
+                        <option>Medium</option>
+                        <option>Long</option>
+                    </select>
+                </div>
+
+                <!-- Hair Color -->
+                <div class="sub-label">Hair Color</div>
+                <div class="slider-row"><span class="slider-label">R</span><input type="range" min="0" max="100"
+                        value="30"><span class="slider-val">30</span></div>
+                <div class="slider-row"><span class="slider-label">G</span><input type="range" min="0" max="100"
+                        value="20"><span class="slider-val">20</span></div>
+                <div class="slider-row"><span class="slider-label">B</span><input type="range" min="0" max="100"
+                        value="10"><span class="slider-val">10</span></div>
+
+                <!-- Facial Features -->
+                <div class="sub-label">Facial Features</div>
+                <div class="slider-row"><span class="slider-label" style="width:60px">Jaw</span><input type="range"
+                        min="0" max="100" value="50"><span class="slider-val">50</span></div>
+                <div class="slider-row"><span class="slider-label" style="width:60px">Nose</span><input type="range"
+                        min="0" max="100" value="50"><span class="slider-val">50</span></div>
+                <div class="slider-row"><span class="slider-label" style="width:60px">Brow</span><input type="range"
+                        min="0" max="100" value="50"><span class="slider-val">50</span></div>
+                <div class="slider-row"><span class="slider-label" style="width:60px">Lips</span><input type="range"
+                        min="0" max="100" value="50"><span class="slider-val">50</span></div>
+            </div>
+
+            <!-- CENTER: Character Preview -->
+            <div class="panel panel-center">
+                <div class="preview-container">
+                    <span class="placeholder-text">3D CHARACTER PREVIEW</span>
+                </div>
+                <div class="preview-controls">
+                    <button class="preview-ctrl-btn">◀ ROTATE</button>
+                    <button class="preview-ctrl-btn">ZOOM +</button>
+                    <button class="preview-ctrl-btn">ZOOM −</button>
+                    <button class="preview-ctrl-btn">ROTATE ▶</button>
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL: Affinities -->
+            <div class="panel panel-right">
+                <div class="section-label">AFFINITIES</div>
+
+                <!-- Playstyle -->
+                <div class="affinity-header">
+                    <span class="pool-label">PLAYSTYLE</span>
+                    <span class="pool-total">600 / 600</span>
+                </div>
+
+                <div class="affinity-row"><span class="aff-label">Martial</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Ranged</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Magic</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Crafting</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Social</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Survival</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+
+                <!-- Magical -->
+                <div class="affinity-header" style="margin-top: 20px;">
+                    <span class="pool-label">MAGICAL</span>
+                    <span class="pool-total">800 / 800</span>
+                </div>
+
+                <div class="affinity-row"><span class="aff-label">Fire</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Water</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Earth</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Air</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Light</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Shadow</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Nature</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+                <div class="affinity-row"><span class="aff-label">Arcane</span><input type="range" min="0" max="200"
+                        value="100"><span class="aff-val">100</span></div>
+            </div>
+        </div>
+
+        <!-- BOTTOM BAR -->
+        <div class="bottom-bar">
+            <div class="bottom-left">
+                <button class="btn-ghost">BACK</button>
+            </div>
+            <div class="bottom-center">
+                <span class="result-text"></span>
+            </div>
+            <div class="bottom-right">
+                <button class="btn-gold">CREATE CHARACTER</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        function toggleGender(btn) {
+            document.querySelectorAll('.gender-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+        // Update slider value displays
+        document.querySelectorAll('input[type="range"]').forEach(slider => {
+            const valSpan = slider.parentElement.querySelector('.slider-val, .aff-val');
+            if (valSpan) {
+                slider.addEventListener('input', () => { valSpan.textContent = slider.value; });
+            }
+        });
+    </script>
+</body>
+
+</html>

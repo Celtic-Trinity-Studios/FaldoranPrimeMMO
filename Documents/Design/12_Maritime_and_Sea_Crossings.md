@@ -38,6 +38,7 @@ Speeds listed are **Raw Knots** (Coastal 1:1 scale). In Deep Sea (1:10 scale), t
 | **T3** | **Traders** | Carrack (Nao), Galleon | 10-40 | 8-11 kn | Bulk Transport / Trade |
 | **T4** | **Spec-Ops** | Xebec, Felucca, Fast Sloop | 5-12 | 11-14 kn | Pursuit / Interception |
 | **T5** | **Giants** | Frigate, Man-of-War | 30-80 | 9-14 kn | Fleet Conflict / Power |
+| **T6** | **Floating Cities** | Ark-Ships, Kraken-Tortoises | 100+ | 2-5 kn | **Mobile Territory:** Acts as a moving Guild Hall/Respawn Point. |
 
 ---
 

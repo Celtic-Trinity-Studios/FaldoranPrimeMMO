@@ -8,6 +8,12 @@ Faldoran Prime features a **Chunk-Based Planetary Scale (Earth-Sized) World** (~
 - **Chunk-Based Architecture:** The world is designed using a **system of seamless, hexagonal chunks (tiles)**. This allows the server to manage massive scale by only loading and simulating active regions.
 - **Development Strategy:** Handcrafting is impossible at this scale. The world uses a **Deterministic Seeded Procedure** (Procedural Layer) overlaid with handcrafted POIs and player-built Guild Towns.
 
+## 2. Extreme Verticality & Visual Fidelity
+To rival the immersion of titles like *Light No Fire*, the world generation prioritizes **Extreme Verticality** and **Visual Density**.
+- **Real Mountains:** Terrain is not just "rolling hills." Mountains are multi-kilometer high geological features that require hours to climb.
+- **Sky Islands:** Rare, floating landmasses exist in the upper atmosphere, accessible only via advanced mounts or magic.
+- **PCG Biome Density:** We utilize Unreal Engine 5.4+ **Procedural Content Generation (PCG)** framework to create "Movie-Quality" density. Forests are thick, swamps are treacherous, and grasslands are lush. The world must feel *alive* and *overgrown*, not empty.
+
 ## Traversal & Connectivity
 In a world this large, **Fast Travel is a high-cost infrastructure project and a geopolitical resource.**
 

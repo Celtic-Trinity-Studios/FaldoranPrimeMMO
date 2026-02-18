@@ -6,8 +6,11 @@
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
 #include "World/FPMChunkData.h"
+#include "World/FPMVoxelChunk.h"
 
 #include "FPMChunkActor.generated.h"
+
+class UFPMBiomePCGConfig;
 
 /**
  * AFPMChunkActor
@@ -15,12 +18,18 @@
  * A single terrain chunk rendered via ProceduralMeshComponent.
  * Spawned/despawned by AFPMWorldChunkManager.
  *
+ * Networking: Chunks are NOT replicated.  Both server and client run
+ * their own WorldChunkManager and generate identical terrain from the
+ * shared WorldSeed.  This avoids replication overhead for hundreds of
+ * mesh actors.  The server only needs collision; the client needs visuals.
+ *
  * Lifecycle:
  *   1. Manager spawns actor
  *   2. Manager calls InitializeChunk() with heightmap data + LOD
  *   3. BuildMesh() creates vertices, triangles, normals, collision
- *   4. SetChunkLOD() changes detail level as player moves
- *   5. Manager destroys actor when out of range
+ *   4. PopulateBiome() spawns trees/rocks via HISM (Full LOD only)
+ *   5. SetChunkLOD() changes detail level as player moves
+ *   6. Manager destroys actor when out of range
  */
 UCLASS()
 class FALDORANPRIMEMMO_API AFPMChunkActor : public AActor {
@@ -32,6 +41,10 @@ public:
   /** Initialize with generated heightmap data at the given LOD. */
   void InitializeChunk(const FFPMChunkHeightmapData &InData,
                        EFPMChunkLOD InLOD);
+
+  /** Initialize with pre-built voxel mesh data (Marching Cubes output). */
+  void InitializeVoxelChunk(const FFPMVoxelMeshData &MeshData,
+                            const FFPMChunkCoord &Coord);
 
   /** Switch LOD level. Rebuilds mesh at new resolution. */
   void SetChunkLOD(EFPMChunkLOD NewLOD);
@@ -49,12 +62,10 @@ public:
   /** Map a normalized height [0,1] to world-space Z (cm). */
   static float HeightToWorldZ(float NormalizedHeight);
 
-protected:
-  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FPM|Chunk")
-  UProceduralMeshComponent *TerrainMesh;
+  // ---- Biome Population ----
 
-  EFPMChunkLOD CurrentLOD = EFPMChunkLOD::Unloaded;
-  FFPMChunkHeightmapData ChunkData;
+  /** Set the PCG config data asset (called by WorldChunkManager). */
+  void SetBiomePCGConfig(const UFPMBiomePCGConfig *InConfig, int32 InWorldSeed);
 
 private:
   /**
@@ -65,5 +76,33 @@ private:
   void BuildMesh(int32 LODStep, bool bCollision);
 
   /** Map a biome enum to a vertex color for material splatting. */
-  static FLinearColor BiomeToVertexColor(EFPMBiome Biome);
+  static FColor BiomeToVertexColor(EFPMBiome Biome);
+
+  /**
+   * Trigger biome population (trees, rocks) after mesh + collision.
+   * Only runs at Full LOD. Uses HISM components for GPU instancing.
+   */
+  void PopulateBiome();
+
+  /** Clear all spawned biome instances (LOD change / unload). */
+  void ClearBiome();
+
+protected:
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FPM|Chunk")
+  UProceduralMeshComponent *TerrainMesh;
+
+  EFPMChunkLOD CurrentLOD = EFPMChunkLOD::Unloaded;
+  FFPMChunkHeightmapData ChunkData;
+
+  /** Biome configuration data asset (set by WorldChunkManager) */
+  const UFPMBiomePCGConfig *BiomePCGConfig = nullptr;
+
+  /** Cached world seed for deterministic placement */
+  int32 CachedWorldSeed = 0;
+
+  /** Whether biome instances have been spawned for this chunk */
+  bool bBiomePopulated = false;
+
+  /** Cached voxel mesh data for accurate object placement Z lookup */
+  FFPMVoxelMeshData CachedVoxelMesh;
 };

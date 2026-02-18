@@ -4,10 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "World/FPMBiomePCGConfig.h"
 #include "World/FPMChunkActor.h"
 #include "World/FPMChunkData.h"
 #include "World/FPMChunkOverlay.h"
 #include "FPMWorldChunkManager.generated.h"
+
 
 /**
  * AFPMWorldChunkManager
@@ -20,6 +22,7 @@
  *   - Spawns/despawns AFPMChunkActor instances
  *   - Manages LOD transitions
  *   - Spawns a water plane at sea level
+ *   - Propagates BiomePCGConfig to chunks for vegetation spawning
  *
  * DESIGN PHILOSOPHY:
  *   - Chunks are NEVER stored permanently - they are regenerated from seed
@@ -50,7 +53,7 @@ public:
 
   /** Maximum chunks to generate per frame (prevents hitching) */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|World")
-  int32 MaxChunksPerFrame = 4;
+  int32 MaxChunksPerFrame = 1;
 
   /** How often to check for chunk updates (seconds) */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|World")
@@ -62,16 +65,22 @@ public:
 
   // --- Water Configuration ---
 
-  /** World-space Z height for the water plane. With HeightToWorldZ
-   *  (-400 + h*5000), river bed h=0.05 â†’ Z=-150, meadow h=0.06 â†’ Z=-100.
-   *  Water at Z=-100 sits above rivers and low coast. */
+  /** World-space Z height for the water plane. */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Water")
-  float WaterZHeight = -100.0f;
+  float WaterZHeight = 400.0f;
 
   /** Optional material for the water plane. If null, a default translucent
    *  blue material is created at runtime. */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Water")
   UMaterialInterface *WaterMaterial;
+
+  // --- Biome Population (PCG) ---
+
+  /** Data asset configuring which meshes to spawn for trees/rocks.
+   *  Create via: Content Browser -> Add -> Data Asset -> FPMBiomePCGConfig.
+   *  If null, chunks will have terrain but no vegetation. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|PCG")
+  UFPMBiomePCGConfig *BiomePCGConfig = nullptr;
 
   /** Enable debug visualization of chunk boundaries */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Debug")
@@ -103,8 +112,9 @@ public:
 protected:
   // --- Internal State ---
 
-  /** Map of currently loaded chunk actors, keyed by chunk coordinate */
-  UPROPERTY()
+  /** Map of currently loaded chunk actors, keyed by chunk coordinate.
+   *  Transient: each side spawns its own chunks from the shared seed. */
+  UPROPERTY(Transient)
   TMap<FFPMChunkCoord, AFPMChunkActor *> LoadedChunks;
 
   /** Cached overlays for loaded chunks */
@@ -125,8 +135,8 @@ protected:
   /** Whether initial load has completed */
   bool bInitialLoadDone = false;
 
-  /** The spawned water plane mesh component */
-  UPROPERTY()
+  /** The spawned water plane mesh component (local only, transient) */
+  UPROPERTY(Transient)
   UStaticMeshComponent *WaterPlaneMesh = nullptr;
 
 private:
@@ -182,5 +192,7 @@ private:
   // --- Console Commands ---
   static FAutoConsoleCommand CmdGenerateWorld;
   static FAutoConsoleCommand CmdRegenChunks;
-};
 
+  void GetLifetimeReplicatedProps(
+      TArray<FLifetimeProperty> &OutLifetimeProps) const override;
+};

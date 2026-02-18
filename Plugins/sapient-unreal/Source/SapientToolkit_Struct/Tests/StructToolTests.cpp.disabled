@@ -1,0 +1,172 @@
+// Copyright 2024 - 2025 Sapient Technology, Inc.
+
+#include "Misc/AutomationTest.h"
+#include "SapientToolkitModule.h"
+#include "Interfaces/IToolExecutor.h"
+
+/**
+ * Test suite for Struct tool
+ */
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSapient_StructToolRegistered, "Sapient.Tools.Struct.Registered",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSapient_StructToolRegistered::RunTest(const FString& Parameters)
+{
+    // Test: Struct tool should be registered
+    auto Executor = FSapientToolkitModule::GetToolExecutor();
+
+    TestTrue(TEXT("Executor should be valid"), Executor.IsValid());
+    TestTrue(TEXT("'struct' tool should be registered"), Executor->HasTool(TEXT("struct")));
+
+    // Test: Tool should be in supported tools list
+    TArray<FString> Tools = Executor->GetSupportedTools();
+    TestTrue(TEXT("Supported tools should include 'struct'"), Tools.Contains(TEXT("struct")));
+
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSapient_StructToolSchema, "Sapient.Tools.Struct.Schema",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSapient_StructToolSchema::RunTest(const FString& Parameters)
+{
+    // Test: Struct tool should have valid schema and description
+    auto Executor = FSapientToolkitModule::GetToolExecutor();
+    if (!Executor.IsValid())
+    {
+        AddError(TEXT("Executor not available"));
+        return false;
+    }
+
+    // Get schema
+    FString Schema = Executor->GetToolSchema(TEXT("struct"));
+    TestFalse(TEXT("Schema should not be empty"), Schema.IsEmpty());
+    TestTrue(TEXT("Schema should contain 'operation'"), Schema.Contains(TEXT("operation")));
+    TestTrue(TEXT("Schema should contain 'create', 'read', 'modify', and 'delete'"),
+             Schema.Contains(TEXT("create")) && Schema.Contains(TEXT("read")) &&
+             Schema.Contains(TEXT("modify")) && Schema.Contains(TEXT("delete")));
+
+    // Get description
+    FString Description = Executor->GetToolDescription(TEXT("struct"));
+    TestFalse(TEXT("Description should not be empty"), Description.IsEmpty());
+    TestTrue(TEXT("Description should mention 'Struct' or 'struct'"),
+             Description.Contains(TEXT("Struct")) || Description.Contains(TEXT("struct")));
+
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSapient_StructToolValidation, "Sapient.Tools.Struct.Validation",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSapient_StructToolValidation::RunTest(const FString& Parameters)
+{
+    // Test: Struct tool should validate commands correctly
+    auto Executor = FSapientToolkitModule::GetToolExecutor();
+    if (!Executor.IsValid())
+    {
+        AddError(TEXT("Executor not available"));
+        return false;
+    }
+
+    // Test 1: Valid read command
+    FOnToolCompleteDelegate ValidResultToolComplete;
+    ValidResultToolComplete.BindLambda(
+        [this](Sapient::FToolResult& AsyncResult)
+        {
+            // Note: This will fail if TestStruct doesn't exist, but the command should at least parse
+            // The important part is it doesn't crash and returns a proper result structure
+        });
+
+    FString ValidReadCommand = TEXT("{\"operation\":\"read\",\"struct_name\":\"TestStruct\"}");
+    Executor->Execute(TEXT("struct id"), TEXT("struct"), ValidReadCommand, ValidResultToolComplete);
+
+    // Test 2: Invalid command - missing operation
+    FOnToolCompleteDelegate Invalid1ToolComplete;
+    Invalid1ToolComplete.BindLambda(
+        [this](Sapient::FToolResult& AsyncResult)
+        {
+            TestFalse(TEXT("Command without operation should fail"), AsyncResult.bSuccess);
+            TestFalse(TEXT("Error message should not be empty"), AsyncResult.Message.IsEmpty());
+        });
+
+    FString InvalidCommand1 = TEXT("{\"struct_name\":\"TestStruct\"}");
+    Executor->Execute(TEXT("struct id"), TEXT("struct"), InvalidCommand1, Invalid1ToolComplete);
+
+
+    // Test 3: Invalid command - invalid JSON
+    FOnToolCompleteDelegate Invalid2ToolComplete;
+    Invalid2ToolComplete.BindLambda(
+        [this](Sapient::FToolResult& AsyncResult)
+        {
+            TestFalse(TEXT("Invalid JSON should fail"), AsyncResult.bSuccess);
+        });
+
+    FString InvalidCommand2 = TEXT("{invalid json}");
+    Executor->Execute(TEXT("struct id"), TEXT("struct"), InvalidCommand2, Invalid2ToolComplete);
+
+    // Test 4: Invalid command - unknown operation
+    FOnToolCompleteDelegate Invalid3ToolComplete;
+    Invalid3ToolComplete.BindLambda(
+        [this](Sapient::FToolResult& AsyncResult)
+        {
+            TestFalse(TEXT("Unknown operation should fail"), AsyncResult.bSuccess);
+        });
+
+    FString InvalidCommand3 = TEXT("{\"operation\":\"invalid_operation\"}");
+    Executor->Execute(TEXT("struct id"), TEXT("struct"), InvalidCommand3, Invalid3ToolComplete);
+    
+
+    // Test 5: Valid create command structure (will fail without real data, but should parse)
+    FOnToolCompleteDelegate CreateResultToolComplete;
+    CreateResultToolComplete.BindLambda(
+        [this](Sapient::FToolResult& AsyncResult)
+        {
+            // Should at least parse the command even if it fails on missing assets
+        });
+
+    FString ValidCreateCommand = TEXT("{\"operation\":\"create\",\"struct_path\":\"/Game/TestStruct\",\"fields\":[]}");
+    Executor->Execute(TEXT("struct id"), TEXT("struct"), ValidCreateCommand, CreateResultToolComplete);
+    
+
+    // Test 6: Valid delete command structure
+    FOnToolCompleteDelegate DeleteResultToolComplete;
+    DeleteResultToolComplete.BindLambda(
+        [this](Sapient::FToolResult& AsyncResult)
+        {
+            // Should parse even if the struct doesn't exist (idempotent delete)
+        });
+
+    FString ValidDeleteCommand = TEXT("{\"operation\":\"delete\",\"struct_path\":\"/Game/TestStruct\"}");
+    Executor->Execute(TEXT("struct id"), TEXT("struct"), ValidDeleteCommand, DeleteResultToolComplete);
+    
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSapient_StructToolModifyNotImplemented, "Sapient.Tools.Struct.ModifyNotImplemented",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSapient_StructToolModifyNotImplemented::RunTest(const FString& Parameters)
+{
+    // Test: Modify operation should return not implemented message
+    auto Executor = FSapientToolkitModule::GetToolExecutor();
+    if (!Executor.IsValid())
+    {
+        AddError(TEXT("Executor not available"));
+        return false;
+    }
+
+    FOnToolCompleteDelegate ResultToolComplete;
+    ResultToolComplete.BindLambda(
+        [this](Sapient::FToolResult& AsyncResult)
+        {
+            TestFalse(TEXT("Modify operation should fail (not implemented)"), AsyncResult.bSuccess);
+            TestTrue(TEXT("Error message should mention 'not implemented'"),
+                     AsyncResult.Message.Contains(TEXT("not implemented")) || AsyncResult.Message.Contains(TEXT("not yet implemented")));
+        });
+
+    FString ModifyCommand = TEXT("{\"operation\":\"modify\",\"struct_path\":\"/Game/TestStruct\",\"fields\":[]}");
+    Executor->Execute(TEXT("struct id"), TEXT("struct"), ModifyCommand, ResultToolComplete);
+
+    return true;
+}

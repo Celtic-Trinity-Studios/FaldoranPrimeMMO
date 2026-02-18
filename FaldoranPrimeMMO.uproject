@@ -33,6 +33,17 @@
 		{
 			"Name": "Buoyancy",
 			"Enabled": true
+		},
+		{
+			"Name": "RLPlugin",
+			"Enabled": false,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
+			"Name": "PCG",
+			"Enabled": true
 		}
 	]
 }

@@ -60,6 +60,12 @@ Mounts are not static items; they are biological entities that improve with the 
 - **Mount Training:** A "Trained" mount can perform "Burst Gallops" or defensive maneuvers in combat.
 - **The "Spook" Meter:** Wild predators or magic effects can scare mounts. High **Beast-mastery** reduces the chance of being thrown from your saddle.
 
+### 5b. Legendary Taming (The "Avatar" Moment)
+Beyond buying horses, Guilds can organize raids to **Bind Legendary Beasts**.
+*   **Procedural Beasts:** The world generates unique "Alpha" predators (e.g., a lightning-infused Wyvern).
+*   **The Binding Ritual:** These cannot be tamed by one person. A Guild must weaken the beast, then use **Animist Chains** (Magic) to bind it.
+*   **Guild Asset:** A Dragon is not a personal pet; it is a **Guild Vehicle**. It requires immense food upkeep and acts as a bomber/troop transport in war. If it dies, it is gone forever.
+
 ---
 
 ## 6. Maintenance & Logistics

@@ -7,154 +7,40 @@
 #include "Components/ComboBoxString.h"
 #include "Components/EditableTextBox.h"
 #include "Components/Image.h"
-#include "Components/SlateWrapperTypes.h"
 #include "Components/Slider.h"
 #include "Components/TextBlock.h"
 #include "Engine/TextureRenderTarget2D.h"
-#include "Engine/World.h"
 #include "Player/FPMPlayerController.h"
+#include "Styling/SlateColor.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogFPMCharacterCreationWidget, Log, All);
 
-const FVector UFPMCharacterCreationWidget::PreviewSpawnOffset(-50000.0f,
-                                                              -50000.0f,
-                                                              -5000.0f);
+DEFINE_LOG_CATEGORY_STATIC(LogFPMCharCreate, Log, All);
 
-// -------------------------------------------------------------------
-// Constructor — make widget focusable so it receives mouse events
-// -------------------------------------------------------------------
+const FVector UFPMCharacterCreationWidget::PreviewSpawnOffset(-50000, -50000,
+                                                              -5000);
+const FName UFPMCharacterCreationWidget::MorphNames[4] = {
+    FName("Jaw_Width"), FName("Nose_Bridge"), FName("Brow_Ridge"),
+    FName("Lip_Fullness")};
 
+// =====================================================================
 UFPMCharacterCreationWidget::UFPMCharacterCreationWidget(
-    const FObjectInitializer &ObjectInitializer)
-    : Super(ObjectInitializer) {
-  SetIsFocusable(true);
-}
+    const FObjectInitializer &OI)
+    : Super(OI) {}
 
-// -------------------------------------------------------------------
-// Lifecycle
-// -------------------------------------------------------------------
+// =====================================================================
+// LIFECYCLE
+// =====================================================================
 
 void UFPMCharacterCreationWidget::NativeConstruct() {
   Super::NativeConstruct();
-
-  // --- Button bindings ---
-  if (SubmitButton) {
-    SubmitButton->OnClicked.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnSubmitClicked);
-  }
-  if (BackButton) {
-    BackButton->OnClicked.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnBackClicked);
-  }
-
-  // --- Body type slider ---
-  if (BodyTypeSlider) {
-    BodyTypeSlider->SetMinValue(0.0f);
-    BodyTypeSlider->SetMaxValue(3.0f);
-    BodyTypeSlider->SetStepSize(1.0f);
-    BodyTypeSlider->SetValue(0.0f);
-    BodyTypeSlider->OnValueChanged.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnBodyTypeSliderChanged);
-  }
-
-  // --- Skin color sliders ---
-  auto BindSkinSlider = [this](USlider *S, float Default) {
-    if (!S)
-      return;
-    S->SetValue(Default);
-    S->OnValueChanged.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnSkinSliderChanged);
-  };
-  BindSkinSlider(SkinRedSlider, 0.8f);
-  BindSkinSlider(SkinGreenSlider, 0.6f);
-  BindSkinSlider(SkinBlueSlider, 0.5f);
-
-  // --- Hair color sliders ---
-  auto BindHairSlider = [this](USlider *S, float Default) {
-    if (!S)
-      return;
-    S->SetValue(Default);
-    S->OnValueChanged.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnHairColorSliderChanged);
-  };
-  BindHairSlider(HairColorRedSlider, 0.2f);
-  BindHairSlider(HairColorGreenSlider, 0.15f);
-  BindHairSlider(HairColorBlueSlider, 0.1f);
-
-  // --- Hair style combo box ---
-  PopulateHairStyles();
-  if (HairStyleComboBox) {
-    HairStyleComboBox->OnSelectionChanged.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnHairStyleChanged);
-  }
-
-  // --- Playstyle affinity sliders (pool 600, each 90-150, default 100) ---
-  auto BindPlaystyleSlider = [this](USlider *S) {
-    if (!S)
-      return;
-    S->SetMinValue(90.0f);
-    S->SetMaxValue(150.0f);
-    S->SetStepSize(1.0f);
-    S->SetValue(100.0f);
-    S->OnValueChanged.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnPlaystyleAffinityChanged);
-  };
-  BindPlaystyleSlider(MartialSlider);
-  BindPlaystyleSlider(RangedSlider);
-  BindPlaystyleSlider(MagicSlider);
-  BindPlaystyleSlider(CraftingSlider);
-  BindPlaystyleSlider(SocialSlider);
-  BindPlaystyleSlider(SurvivalSlider);
-  UpdatePlaystyleTotal();
-
-  // --- Magical affinity sliders (pool 800, each 90-150, default 100) ---
-  auto BindMagicalSlider = [this](USlider *S) {
-    if (!S)
-      return;
-    S->SetMinValue(90.0f);
-    S->SetMaxValue(150.0f);
-    S->SetStepSize(1.0f);
-    S->SetValue(100.0f);
-    S->OnValueChanged.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnMagicalAffinityChanged);
-  };
-  BindMagicalSlider(FireSlider);
-  BindMagicalSlider(WaterSlider);
-  BindMagicalSlider(EarthSlider);
-  BindMagicalSlider(AirSlider);
-  BindMagicalSlider(LightSlider);
-  BindMagicalSlider(ShadowSlider);
-  BindMagicalSlider(NatureSlider);
-  BindMagicalSlider(ArcaneSlider);
-  UpdateMagicalTotal();
-
-  // --- Optional camera buttons ---
-  if (RotateLeftButton) {
-    RotateLeftButton->OnPressed.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnRotateLeftClicked);
-    RotateLeftButton->OnReleased.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnRotateLeftClicked);
-  }
-  if (RotateRightButton) {
-    RotateRightButton->OnPressed.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnRotateRightClicked);
-    RotateRightButton->OnReleased.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnRotateRightClicked);
-  }
-  if (ZoomInButton) {
-    ZoomInButton->OnClicked.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnZoomInClicked);
-  }
-  if (ZoomOutButton) {
-    ZoomOutButton->OnClicked.AddDynamic(
-        this, &UFPMCharacterCreationWidget::OnZoomOutClicked);
-  }
-
-  SetResultMessage(TEXT(""), false);
+  BuildUI();
   SpawnPreviewActor();
-
-  UE_LOG(LogFPMCharacterCreationWidget, Log,
-         TEXT("FPM CharCreate: Widget constructed with 3D preview."));
+  UpdateGenderButtons();
+  PopulateHairStyles();
+  UpdatePlaystyleTotal();
+  UpdateMagicalTotal();
+  UE_LOG(LogFPMCharCreate, Log,
+         TEXT("FPM CharCreate: Widget built with Glass & Gold theme."));
 }
 
 void UFPMCharacterCreationWidget::NativeDestruct() {
@@ -162,177 +48,39 @@ void UFPMCharacterCreationWidget::NativeDestruct() {
   Super::NativeDestruct();
 }
 
-void UFPMCharacterCreationWidget::NativeTick(const FGeometry &MyGeometry,
-                                             float DeltaTime) {
-  Super::NativeTick(MyGeometry, DeltaTime);
-  if (PreviewActor) {
-    if (bRotatingLeft) {
-      PreviewActor->AddYawRotation(-ButtonRotateSpeed * DeltaTime);
-    }
-    if (bRotatingRight) {
-      PreviewActor->AddYawRotation(ButtonRotateSpeed * DeltaTime);
-    }
-  }
-}
-
-// -------------------------------------------------------------------
-// Public API
-// -------------------------------------------------------------------
-
-void UFPMCharacterCreationWidget::SetResultMessage(const FString &Message,
-                                                   bool bIsError) {
-  if (!ResultText)
+void UFPMCharacterCreationWidget::NativeTick(const FGeometry &G, float Dt) {
+  Super::NativeTick(G, Dt);
+  if (!PreviewActor)
     return;
-  ResultText->SetText(FText::FromString(Message));
-  const FSlateColor Color =
-      bIsError ? FSlateColor(FLinearColor::Red)
-               : FSlateColor(FLinearColor(0.2f, 1.0f, 0.2f, 1.0f));
-  ResultText->SetColorAndOpacity(Color);
+  if (bRotatingLeft)
+    PreviewActor->AddYawRotation(-ButtonRotateSpeed * Dt);
+  if (bRotatingRight)
+    PreviewActor->AddYawRotation(ButtonRotateSpeed * Dt);
 }
 
-// -------------------------------------------------------------------
-// Button Handlers
-// -------------------------------------------------------------------
-
-void UFPMCharacterCreationWidget::OnSubmitClicked() {
-  if (!NameInput)
-    return;
-
-  const FString Name = NameInput->GetText().ToString();
-  if (Name.IsEmpty()) {
-    SetResultMessage(TEXT("Please enter a character name."), true);
-    return;
-  }
-
-  FFPMCharacterCreationRequest Request;
-  Request.CharacterName = Name;
-
-  if (BodyTypeSlider) {
-    Request.BodyType =
-        static_cast<uint8>(FMath::RoundToInt32(BodyTypeSlider->GetValue()));
-  }
-  if (SkinRedSlider && SkinGreenSlider && SkinBlueSlider) {
-    Request.SkinTone =
-        FLinearColor(SkinRedSlider->GetValue(), SkinGreenSlider->GetValue(),
-                     SkinBlueSlider->GetValue(), 1.0f);
-  }
-  if (HairStyleComboBox) {
-    Request.HairStyle =
-        static_cast<uint8>(HairStyleComboBox->GetSelectedIndex());
-  }
-  if (HairColorRedSlider && HairColorGreenSlider && HairColorBlueSlider) {
-    Request.HairColor = FLinearColor(HairColorRedSlider->GetValue(),
-                                     HairColorGreenSlider->GetValue(),
-                                     HairColorBlueSlider->GetValue(), 1.0f);
-  }
-
-  // --- Playstyle affinities ---
-  auto AddPlaystyle = [&](EFPMPlaystyleAffinity Aff, USlider *S) {
-    if (!S)
-      return;
-    FFPMPlaystyleAffinityEntry Entry;
-    Entry.Affinity = Aff;
-    Entry.Points = FMath::RoundToInt32(S->GetValue());
-    Request.PlaystyleAffinities.Add(Entry);
-  };
-  AddPlaystyle(EFPMPlaystyleAffinity::Martial, MartialSlider);
-  AddPlaystyle(EFPMPlaystyleAffinity::Ranged, RangedSlider);
-  AddPlaystyle(EFPMPlaystyleAffinity::Magic, MagicSlider);
-  AddPlaystyle(EFPMPlaystyleAffinity::Crafting, CraftingSlider);
-  AddPlaystyle(EFPMPlaystyleAffinity::Social, SocialSlider);
-  AddPlaystyle(EFPMPlaystyleAffinity::Survival, SurvivalSlider);
-
-  // --- Magical affinities ---
-  auto AddMagical = [&](EFPMMagicalAffinity Aff, USlider *S) {
-    if (!S)
-      return;
-    FFPMMagicalAffinityEntry Entry;
-    Entry.Affinity = Aff;
-    Entry.Points = FMath::RoundToInt32(S->GetValue());
-    Request.MagicalAffinities.Add(Entry);
-  };
-  AddMagical(EFPMMagicalAffinity::Fire, FireSlider);
-  AddMagical(EFPMMagicalAffinity::Water, WaterSlider);
-  AddMagical(EFPMMagicalAffinity::Earth, EarthSlider);
-  AddMagical(EFPMMagicalAffinity::Air, AirSlider);
-  AddMagical(EFPMMagicalAffinity::Light, LightSlider);
-  AddMagical(EFPMMagicalAffinity::Shadow, ShadowSlider);
-  AddMagical(EFPMMagicalAffinity::Nature, NatureSlider);
-  AddMagical(EFPMMagicalAffinity::Arcane, ArcaneSlider);
-
-  UE_LOG(LogFPMCharacterCreationWidget, Log,
-         TEXT("FPM CharCreate: Submitting — Playstyle entries=%d, Magical "
-              "entries=%d"),
-         Request.PlaystyleAffinities.Num(), Request.MagicalAffinities.Num());
-
-  AFPMPlayerController *PC = Cast<AFPMPlayerController>(GetOwningPlayer());
-  if (PC) {
-    PC->RequestCreateCharacter(Request);
-    SetResultMessage(TEXT("Creating character..."), false);
-  } else {
-    SetResultMessage(TEXT("Error: No player controller found."), true);
-  }
-}
-
-void UFPMCharacterCreationWidget::OnBackClicked() {
-  AFPMPlayerController *PC = Cast<AFPMPlayerController>(GetOwningPlayer());
-  if (PC) {
-    PC->TransitionToCharacterSelect();
-  }
-}
-
-// -------------------------------------------------------------------
-// Helpers
-// -------------------------------------------------------------------
-
-void UFPMCharacterCreationWidget::PopulateHairStyles() {
-  if (!HairStyleComboBox)
-    return;
-  HairStyleComboBox->ClearOptions();
-  static const TCHAR *HairStyleNames[] = {
-      TEXT("Bald"),     TEXT("Short"),   TEXT("Medium"), TEXT("Long"),
-      TEXT("Ponytail"), TEXT("Braided"), TEXT("Mohawk"), TEXT("Dreadlocks")};
-  for (const TCHAR *StyleName : HairStyleNames) {
-    HairStyleComboBox->AddOption(StyleName);
-  }
-  HairStyleComboBox->SetSelectedIndex(0);
-}
-
-// -------------------------------------------------------------------
-// Preview Actor Management
-// -------------------------------------------------------------------
+// =====================================================================
+// PREVIEW ACTOR
+// =====================================================================
 
 void UFPMCharacterCreationWidget::SpawnPreviewActor() {
-  UWorld *World = GetWorld();
-  if (!World || PreviewActor)
+  UWorld *W = GetWorld();
+  if (!W || PreviewActor)
     return;
-
-  FActorSpawnParameters Params;
-  Params.SpawnCollisionHandlingOverride =
+  FActorSpawnParameters P;
+  P.SpawnCollisionHandlingOverride =
       ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-  PreviewActor = World->SpawnActor<AFPMCharacterPreviewActor>(
+  PreviewActor = W->SpawnActor<AFPMCharacterPreviewActor>(
       AFPMCharacterPreviewActor::StaticClass(), PreviewSpawnOffset,
-      FRotator::ZeroRotator, Params);
-
+      FRotator::ZeroRotator, P);
   if (!PreviewActor) {
-    UE_LOG(LogFPMCharacterCreationWidget, Warning,
+    UE_LOG(LogFPMCharCreate, Warning,
            TEXT("FPM CharCreate: Failed to spawn preview actor."));
     return;
   }
-
   if (PreviewImage) {
-    // Make PreviewImage hit-testable so right-click and scroll events
-    // register on it and bubble up to our NativeOnMouse overrides.
-    PreviewImage->SetVisibility(ESlateVisibility::Visible);
-
     UTextureRenderTarget2D *RT = PreviewActor->GetRenderTarget();
-    if (RT) {
+    if (RT)
       PreviewImage->SetBrushResourceObject(RT);
-      UE_LOG(LogFPMCharacterCreationWidget, Log,
-             TEXT("FPM CharCreate: Render target bound to image "
-                  "(Visibility=Visible for mouse input)."));
-    }
   }
   UpdatePreviewFromSliders();
 }
@@ -347,203 +95,239 @@ void UFPMCharacterCreationWidget::DestroyPreviewActor() {
 void UFPMCharacterCreationWidget::UpdatePreviewFromSliders() {
   if (!PreviewActor)
     return;
-  if (SkinRedSlider && SkinGreenSlider && SkinBlueSlider) {
-    PreviewActor->SetSkinTone(FLinearColor(SkinRedSlider->GetValue(),
-                                           SkinGreenSlider->GetValue(),
-                                           SkinBlueSlider->GetValue(), 1.0f));
-  }
-  if (HairColorRedSlider && HairColorGreenSlider && HairColorBlueSlider) {
+  if (SkinSliders.Num() >= 3)
+    PreviewActor->SetSkinTone(FLinearColor(SkinSliders[0]->GetValue(),
+                                           SkinSliders[1]->GetValue(),
+                                           SkinSliders[2]->GetValue(), 1.f));
+  if (EyeSliders.Num() >= 3)
+    PreviewActor->SetEyeColor(FLinearColor(EyeSliders[0]->GetValue(),
+                                           EyeSliders[1]->GetValue(),
+                                           EyeSliders[2]->GetValue(), 1.f));
+  if (HairColorSliders.Num() >= 3)
     PreviewActor->SetHairColor(FLinearColor(
-        HairColorRedSlider->GetValue(), HairColorGreenSlider->GetValue(),
-        HairColorBlueSlider->GetValue(), 1.0f));
-  }
-  if (BodyTypeSlider) {
-    PreviewActor->SetBodyType(
-        static_cast<uint8>(FMath::RoundToInt32(BodyTypeSlider->GetValue())));
-  }
-  if (HairStyleComboBox) {
-    PreviewActor->SetHairStyle(
-        static_cast<uint8>(HairStyleComboBox->GetSelectedIndex()));
-  }
+        HairColorSliders[0]->GetValue(), HairColorSliders[1]->GetValue(),
+        HairColorSliders[2]->GetValue(), 1.f));
+  if (HairStyleComboBox)
+    PreviewActor->SetHairStyle(HairStyleComboBox->GetSelectedIndex());
+  for (int i = 0; i < FMath::Min(MorphSliders.Num(), 4); ++i)
+    PreviewActor->SetMorphValue(MorphNames[i], MorphSliders[i]->GetValue());
 }
 
-// -------------------------------------------------------------------
-// Appearance Slider Callbacks
-// -------------------------------------------------------------------
-
-void UFPMCharacterCreationWidget::OnBodyTypeSliderChanged(float Value) {
-  const int32 BT = FMath::RoundToInt32(Value);
-  UE_LOG(LogFPMCharacterCreationWidget, Log,
-         TEXT("FPM CharCreate: BodyType slider = %d"), BT);
-  if (PreviewActor) {
-    PreviewActor->SetBodyType(static_cast<uint8>(BT));
-  }
-}
-
-void UFPMCharacterCreationWidget::OnSkinSliderChanged(float /*Value*/) {
-  if (!SkinRedSlider || !SkinGreenSlider || !SkinBlueSlider)
+void UFPMCharacterCreationWidget::PopulateHairStyles() {
+  if (!HairStyleComboBox)
     return;
-  const float R = SkinRedSlider->GetValue();
-  const float G = SkinGreenSlider->GetValue();
-  const float B = SkinBlueSlider->GetValue();
-  UE_LOG(LogFPMCharacterCreationWidget, Log,
-         TEXT("FPM CharCreate: Skin slider = (%.2f, %.2f, %.2f)"), R, G, B);
-  if (PreviewActor) {
-    PreviewActor->SetSkinTone(FLinearColor(R, G, B, 1.0f));
-  }
+  HairStyleComboBox->ClearOptions();
+  static const TCHAR *Names[] = {
+      TEXT("Bald"),     TEXT("Short"),   TEXT("Medium"), TEXT("Long"),
+      TEXT("Ponytail"), TEXT("Braided"), TEXT("Mohawk"), TEXT("Dreadlocks")};
+  for (const TCHAR *N : Names)
+    HairStyleComboBox->AddOption(N);
+  HairStyleComboBox->SetSelectedIndex(0);
 }
 
-void UFPMCharacterCreationWidget::OnHairColorSliderChanged(float /*Value*/) {
-  if (!HairColorRedSlider || !HairColorGreenSlider || !HairColorBlueSlider)
+// =====================================================================
+// RESULT TEXT
+// =====================================================================
+
+void UFPMCharacterCreationWidget::SetResultMessage(const FString &Msg,
+                                                   bool bErr) {
+  if (!ResultText)
     return;
-  const float R = HairColorRedSlider->GetValue();
-  const float G = HairColorGreenSlider->GetValue();
-  const float B = HairColorBlueSlider->GetValue();
-  UE_LOG(LogFPMCharacterCreationWidget, Log,
-         TEXT("FPM CharCreate: HairColor slider = (%.2f, %.2f, %.2f)"), R, G,
-         B);
-  if (PreviewActor) {
-    PreviewActor->SetHairColor(FLinearColor(R, G, B, 1.0f));
-  }
+  ResultText->SetText(FText::FromString(Msg));
+  ResultText->SetColorAndOpacity(
+      bErr ? FSlateColor(FLinearColor::Red)
+           : FSlateColor(FLinearColor(0.2f, 1.f, 0.2f, 1.f)));
 }
 
-void UFPMCharacterCreationWidget::OnHairStyleChanged(
-    FString SelectedItem, ESelectInfo::Type /*SelectionType*/) {
-  UE_LOG(LogFPMCharacterCreationWidget, Log,
-         TEXT("FPM CharCreate: HairStyle changed to '%s'"), *SelectedItem);
-  if (PreviewActor && HairStyleComboBox) {
-    PreviewActor->SetHairStyle(
-        static_cast<uint8>(HairStyleComboBox->GetSelectedIndex()));
-  }
+// =====================================================================
+// CALLBACKS
+// =====================================================================
+
+void UFPMCharacterCreationWidget::OnGenderMaleClicked() {
+  bIsFemale = false;
+  UpdateGenderButtons();
+  if (PreviewActor)
+    PreviewActor->SetIsFemale(false);
 }
 
-// -------------------------------------------------------------------
-// Affinity Slider Callbacks
-// -------------------------------------------------------------------
+void UFPMCharacterCreationWidget::OnGenderFemaleClicked() {
+  bIsFemale = true;
+  UpdateGenderButtons();
+  if (PreviewActor)
+    PreviewActor->SetIsFemale(true);
+}
 
-void UFPMCharacterCreationWidget::OnPlaystyleAffinityChanged(float /*Value*/) {
+void UFPMCharacterCreationWidget::OnAppearanceChanged(float) {
+  UpdatePreviewFromSliders();
+}
+
+void UFPMCharacterCreationWidget::OnHairStyleChanged(FString,
+                                                     ESelectInfo::Type) {
+  if (PreviewActor && HairStyleComboBox)
+    PreviewActor->SetHairStyle(HairStyleComboBox->GetSelectedIndex());
+}
+
+void UFPMCharacterCreationWidget::OnPlaystyleChanged(float) {
+  for (int i = 0; i < PlaystyleSliders.Num(); ++i)
+    if (PlaystyleValues.IsValidIndex(i))
+      PlaystyleValues[i]->SetText(FText::FromString(FString::FromInt(
+          FMath::RoundToInt32(PlaystyleSliders[i]->GetValue()))));
   UpdatePlaystyleTotal();
 }
 
-void UFPMCharacterCreationWidget::OnMagicalAffinityChanged(float /*Value*/) {
+void UFPMCharacterCreationWidget::OnMagicalChanged(float) {
+  for (int i = 0; i < MagicalSliders.Num(); ++i)
+    if (MagicalValues.IsValidIndex(i))
+      MagicalValues[i]->SetText(FText::FromString(FString::FromInt(
+          FMath::RoundToInt32(MagicalSliders[i]->GetValue()))));
   UpdateMagicalTotal();
 }
 
 void UFPMCharacterCreationWidget::UpdatePlaystyleTotal() {
-  int32 Total = 0;
-  auto Add = [&](USlider *S) {
-    if (S)
-      Total += FMath::RoundToInt32(S->GetValue());
-  };
-  Add(MartialSlider);
-  Add(RangedSlider);
-  Add(MagicSlider);
-  Add(CraftingSlider);
-  Add(SocialSlider);
-  Add(SurvivalSlider);
-
-  if (PlaystyleTotalText) {
-    const FString Txt =
-        FString::Printf(TEXT("Playstyle (Total: %d/600)"), Total);
-    PlaystyleTotalText->SetText(FText::FromString(Txt));
-    // Red if over budget, green if exactly 600, yellow otherwise
-    FSlateColor Color = FSlateColor(FLinearColor(1.0f, 0.8f, 0.2f));
-    if (Total == 600)
-      Color = FSlateColor(FLinearColor(0.2f, 1.0f, 0.2f));
-    else if (Total > 600)
-      Color = FSlateColor(FLinearColor::Red);
-    PlaystyleTotalText->SetColorAndOpacity(Color);
-  }
+  int32 T = 0;
+  for (auto &S : PlaystyleSliders)
+    T += FMath::RoundToInt32(S->GetValue());
+  if (!PlaystyleTotalText)
+    return;
+  PlaystyleTotalText->SetText(
+      FText::FromString(FString::Printf(TEXT("PLAYSTYLE  %d / 600"), T)));
+  FLinearColor C(0.933f, 0.804f, 0.553f, 1.0f); // gold
+  if (T == 600)
+    C = FLinearColor(0.2f, 1.f, 0.2f, 1.f);
+  else if (T > 600)
+    C = FLinearColor::Red;
+  PlaystyleTotalText->SetColorAndOpacity(FSlateColor(C));
 }
 
 void UFPMCharacterCreationWidget::UpdateMagicalTotal() {
-  int32 Total = 0;
-  auto Add = [&](USlider *S) {
-    if (S)
-      Total += FMath::RoundToInt32(S->GetValue());
-  };
-  Add(FireSlider);
-  Add(WaterSlider);
-  Add(EarthSlider);
-  Add(AirSlider);
-  Add(LightSlider);
-  Add(ShadowSlider);
-  Add(NatureSlider);
-  Add(ArcaneSlider);
+  int32 T = 0;
+  for (auto &S : MagicalSliders)
+    T += FMath::RoundToInt32(S->GetValue());
+  if (!MagicalTotalText)
+    return;
+  MagicalTotalText->SetText(
+      FText::FromString(FString::Printf(TEXT("MAGICAL  %d / 800"), T)));
+  FLinearColor C(0.933f, 0.804f, 0.553f, 1.0f); // gold
+  if (T == 800)
+    C = FLinearColor(0.2f, 1.f, 0.2f, 1.f);
+  else if (T > 800)
+    C = FLinearColor::Red;
+  MagicalTotalText->SetColorAndOpacity(FSlateColor(C));
+}
 
-  if (MagicalTotalText) {
-    const FString Txt = FString::Printf(TEXT("Magical (Total: %d/800)"), Total);
-    MagicalTotalText->SetText(FText::FromString(Txt));
-    FSlateColor Color = FSlateColor(FLinearColor(1.0f, 0.8f, 0.2f));
-    if (Total == 800)
-      Color = FSlateColor(FLinearColor(0.2f, 1.0f, 0.2f));
-    else if (Total > 800)
-      Color = FSlateColor(FLinearColor::Red);
-    MagicalTotalText->SetColorAndOpacity(Color);
+// =====================================================================
+// SUBMIT / BACK
+// =====================================================================
+
+void UFPMCharacterCreationWidget::OnSubmitClicked() {
+  if (!NameInput)
+    return;
+  const FString Name = NameInput->GetText().ToString();
+  if (Name.IsEmpty() || Name.Len() < 3 || Name.Len() > 20) {
+    SetResultMessage(TEXT("Name must be 3-20 characters."), true);
+    return;
+  }
+
+  FFPMCharacterCreationRequest Req;
+  Req.CharacterName = Name;
+  Req.BodyType = bIsFemale ? 1 : 0;
+
+  if (SkinSliders.Num() >= 3)
+    Req.SkinTone =
+        FLinearColor(SkinSliders[0]->GetValue(), SkinSliders[1]->GetValue(),
+                     SkinSliders[2]->GetValue(), 1.f);
+  if (HairStyleComboBox)
+    Req.HairStyle = static_cast<uint8>(HairStyleComboBox->GetSelectedIndex());
+  if (HairColorSliders.Num() >= 3)
+    Req.HairColor = FLinearColor(HairColorSliders[0]->GetValue(),
+                                 HairColorSliders[1]->GetValue(),
+                                 HairColorSliders[2]->GetValue(), 1.f);
+
+  // Playstyle affinities
+  static const EFPMPlaystyleAffinity PSEnum[] = {
+      EFPMPlaystyleAffinity::Martial, EFPMPlaystyleAffinity::Ranged,
+      EFPMPlaystyleAffinity::Magic,   EFPMPlaystyleAffinity::Crafting,
+      EFPMPlaystyleAffinity::Social,  EFPMPlaystyleAffinity::Survival};
+  for (int i = 0; i < PlaystyleSliders.Num() && i < 6; ++i) {
+    FFPMPlaystyleAffinityEntry E;
+    E.Affinity = PSEnum[i];
+    E.Points = FMath::RoundToInt32(PlaystyleSliders[i]->GetValue());
+    Req.PlaystyleAffinities.Add(E);
+  }
+
+  // Magical affinities
+  static const EFPMMagicalAffinity MAEnum[] = {
+      EFPMMagicalAffinity::Fire,   EFPMMagicalAffinity::Water,
+      EFPMMagicalAffinity::Earth,  EFPMMagicalAffinity::Air,
+      EFPMMagicalAffinity::Light,  EFPMMagicalAffinity::Shadow,
+      EFPMMagicalAffinity::Nature, EFPMMagicalAffinity::Arcane};
+  for (int i = 0; i < MagicalSliders.Num() && i < 8; ++i) {
+    FFPMMagicalAffinityEntry E;
+    E.Affinity = MAEnum[i];
+    E.Points = FMath::RoundToInt32(MagicalSliders[i]->GetValue());
+    Req.MagicalAffinities.Add(E);
+  }
+
+  auto *PC = Cast<AFPMPlayerController>(GetOwningPlayer());
+  if (PC) {
+    PC->RequestCreateCharacter(Req);
+    SetResultMessage(TEXT("Creating character..."), false);
+  } else {
+    SetResultMessage(TEXT("Error: No player controller."), true);
   }
 }
 
-// -------------------------------------------------------------------
-// Camera Control Callbacks
-// -------------------------------------------------------------------
-
-void UFPMCharacterCreationWidget::OnRotateLeftClicked() {
-  bRotatingLeft = !bRotatingLeft;
-}
-void UFPMCharacterCreationWidget::OnRotateRightClicked() {
-  bRotatingRight = !bRotatingRight;
-}
-void UFPMCharacterCreationWidget::OnZoomInClicked() {
-  if (PreviewActor)
-    PreviewActor->AddZoom(-ButtonZoomStep);
-}
-void UFPMCharacterCreationWidget::OnZoomOutClicked() {
-  if (PreviewActor)
-    PreviewActor->AddZoom(ButtonZoomStep);
+void UFPMCharacterCreationWidget::OnBackClicked() {
+  auto *PC = Cast<AFPMPlayerController>(GetOwningPlayer());
+  if (PC)
+    PC->TransitionToCharacterSelect();
 }
 
-// -------------------------------------------------------------------
-// Mouse Input — Camera Orbit and Zoom
-// -------------------------------------------------------------------
+// =====================================================================
+// MOUSE INPUT: orbit, zoom, double-click reset
+// =====================================================================
 
-FReply UFPMCharacterCreationWidget::NativeOnMouseButtonDown(
-    const FGeometry &InGeometry, const FPointerEvent &InMouseEvent) {
-  if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton) {
+FReply
+UFPMCharacterCreationWidget::NativeOnMouseButtonDown(const FGeometry &G,
+                                                     const FPointerEvent &E) {
+  if (E.GetEffectingButton() == EKeys::RightMouseButton) {
     bIsOrbitDragging = true;
-    UE_LOG(LogFPMCharacterCreationWidget, Log,
-           TEXT("FPM CharCreate: Orbit drag started."));
     return FReply::Handled().CaptureMouse(TakeWidget());
   }
-  return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+  return Super::NativeOnMouseButtonDown(G, E);
 }
 
-FReply UFPMCharacterCreationWidget::NativeOnMouseButtonUp(
-    const FGeometry &InGeometry, const FPointerEvent &InMouseEvent) {
-  if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton) {
+FReply
+UFPMCharacterCreationWidget::NativeOnMouseButtonUp(const FGeometry &G,
+                                                   const FPointerEvent &E) {
+  if (E.GetEffectingButton() == EKeys::RightMouseButton) {
     bIsOrbitDragging = false;
     return FReply::Handled().ReleaseMouseCapture();
   }
-  return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+  return Super::NativeOnMouseButtonUp(G, E);
 }
 
-FReply UFPMCharacterCreationWidget::NativeOnMouseMove(
-    const FGeometry &InGeometry, const FPointerEvent &InMouseEvent) {
-  if (bIsOrbitDragging && PreviewActor) {
-    const FVector2D Delta = InMouseEvent.GetCursorDelta();
-    if (FMath::Abs(Delta.X) > 0.1f) {
-      UE_LOG(LogFPMCharacterCreationWidget, Log,
-             TEXT("FPM: MouseMove Delta=%.2f"), Delta.X);
-    }
-    PreviewActor->AddYawRotation(Delta.X * OrbitSensitivity);
-  }
-  return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
+FReply UFPMCharacterCreationWidget::NativeOnMouseMove(const FGeometry &G,
+                                                      const FPointerEvent &E) {
+  if (bIsOrbitDragging && PreviewActor)
+    PreviewActor->AddYawRotation(E.GetCursorDelta().X * OrbitSensitivity);
+  return Super::NativeOnMouseMove(G, E);
 }
 
-FReply UFPMCharacterCreationWidget::NativeOnMouseWheel(
-    const FGeometry &InGeometry, const FPointerEvent &InMouseEvent) {
+FReply UFPMCharacterCreationWidget::NativeOnMouseWheel(const FGeometry &G,
+                                                       const FPointerEvent &E) {
   if (PreviewActor) {
-    PreviewActor->AddZoom(-InMouseEvent.GetWheelDelta());
+    PreviewActor->AddZoom(-E.GetWheelDelta());
     return FReply::Handled();
   }
-  return Super::NativeOnMouseWheel(InGeometry, InMouseEvent);
+  return Super::NativeOnMouseWheel(G, E);
+}
+
+FReply UFPMCharacterCreationWidget::NativeOnMouseButtonDoubleClick(
+    const FGeometry &G, const FPointerEvent &E) {
+  if (PreviewActor) {
+    PreviewActor->ResetCameraToFront();
+    return FReply::Handled();
+  }
+  return Super::NativeOnMouseButtonDoubleClick(G, E);
 }

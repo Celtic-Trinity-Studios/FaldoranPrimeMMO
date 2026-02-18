@@ -3,35 +3,101 @@
 #include "World/FPMChunkData.h"
 
 // ===================================================================
-//  Coordinate Conversions
+//  Hexagonal Coordinate Conversions (Flat-Top Orientation)
+//
+//  Flat-top hex center in world space:
+//    X = OuterRadius * 1.5 * Q
+//    Y = InnerRadius * 2.0 * (R + Q * 0.5)
+//
+//  Ref: https://www.redblobgames.com/grids/hexagons/#coordinates-offset
 // ===================================================================
 
+FVector FPMChunkGenerator::ChunkToWorldCenter(const FFPMChunkCoord &Coord) {
+  const float X =
+      FPMChunkConstants::HexOuterRadius * 1.5f * static_cast<float>(Coord.Q);
+  const float Y =
+      FPMChunkConstants::HexInnerRadius * 2.0f *
+      (static_cast<float>(Coord.R) + static_cast<float>(Coord.Q) * 0.5f);
+  return FVector(X, Y, 0.0f);
+}
+
 FVector FPMChunkGenerator::ChunkToWorldOrigin(const FFPMChunkCoord &Coord) {
-  // Chunks are centered on the world origin for the starter island.
-  // The island grid goes from chunk (0,0) to (15,15) for a 16x16 grid.
-  // We center it so chunk (8,8) is roughly at world origin.
-  const float HalfIsland = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
-  const float WorldX = Coord.X * FPMChunkConstants::ChunkWorldSize - HalfIsland;
-  const float WorldY = Coord.Y * FPMChunkConstants::ChunkWorldSize - HalfIsland;
-  return FVector(WorldX, WorldY, 0.0f);
+  // Origin = center minus half the bounding box
+  const FVector Center = ChunkToWorldCenter(Coord);
+  return FVector(Center.X - FPMChunkConstants::HexOuterRadius,
+                 Center.Y - FPMChunkConstants::HexInnerRadius, 0.0f);
 }
 
 FFPMChunkCoord FPMChunkGenerator::WorldToChunkCoord(const FVector &WorldPos) {
-  const float HalfIsland = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
-  const int32 ChunkX = FMath::FloorToInt((WorldPos.X + HalfIsland) /
-                                         FPMChunkConstants::ChunkWorldSize);
-  const int32 ChunkY = FMath::FloorToInt((WorldPos.Y + HalfIsland) /
-                                         FPMChunkConstants::ChunkWorldSize);
-  return FFPMChunkCoord(ChunkX, ChunkY);
+  // Pixel to fractional hex (flat-top)
+  // Inverse of the center formula:
+  //   Q_frac = X / (OuterRadius * 1.5)
+  //   R_frac = (Y / (InnerRadius * 2.0)) - Q_frac * 0.5
+
+  const float Q_frac = WorldPos.X / (FPMChunkConstants::HexOuterRadius * 1.5f);
+  const float R_frac =
+      WorldPos.Y / (FPMChunkConstants::HexInnerRadius * 2.0f) - Q_frac * 0.5f;
+
+  // Cube coordinate rounding (Red Blob Games algorithm)
+  const float S_frac = -Q_frac - R_frac;
+
+  int32 RQ = FMath::RoundToInt(Q_frac);
+  int32 RR = FMath::RoundToInt(R_frac);
+  int32 RS = FMath::RoundToInt(S_frac);
+
+  const float DQ = FMath::Abs(static_cast<float>(RQ) - Q_frac);
+  const float DR = FMath::Abs(static_cast<float>(RR) - R_frac);
+  const float DS = FMath::Abs(static_cast<float>(RS) - S_frac);
+
+  // Adjust the coord with largest rounding error
+  if (DQ > DR && DQ > DS) {
+    RQ = -RR - RS;
+  } else if (DR > DS) {
+    RR = -RQ - RS;
+  }
+  // else RS = -RQ - RR (implicit, we don't store S)
+
+  return FFPMChunkCoord(RQ, RR);
 }
 
 void FPMChunkGenerator::WorldToIslandNorm(const FVector &WorldPos,
                                           float &OutNormX, float &OutNormY) {
+  // Normalize relative to island center (world origin)
+  // Range is roughly -IslandWorldSize/2 to +IslandWorldSize/2
   const float HalfIsland = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
   OutNormX =
       (WorldPos.X + HalfIsland) / FPMChunkConstants::StarterIslandWorldSize;
   OutNormY =
       (WorldPos.Y + HalfIsland) / FPMChunkConstants::StarterIslandWorldSize;
+}
+
+bool FPMChunkGenerator::IsInsideHex(float LocalX, float LocalY) {
+  // Flat-top hex test (point relative to hex CENTER).
+  // A flat-top regular hexagon with outer radius R has vertices at:
+  //   (R, 0), (R/2, R*sqrt3/2), (-R/2, R*sqrt3/2),
+  //   (-R, 0), (-R/2, -R*sqrt3/2), (R/2, -R*sqrt3/2)
+  //
+  // The hex is bounded by 3 constraint pairs:
+  //   |X| <= R
+  //   |Y| <= InnerRadius
+  //   |X| * InnerRadius + |Y| * R/2 <= R * InnerRadius  (the angled edges)
+  //
+  // Simplified: test each of the 3 axis pairs for a regular hexagon.
+
+  const float AX = FMath::Abs(LocalX);
+  const float AY = FMath::Abs(LocalY);
+  const float R = FPMChunkConstants::HexOuterRadius;
+  const float IR = FPMChunkConstants::HexInnerRadius;
+
+  // Quick reject
+  if (AX > R || AY > IR) {
+    return false;
+  }
+
+  // Angled edge test: the slanted sides
+  // For flat-top hex, the slanted edges satisfy:
+  //   AX * IR + AY * (R * 0.5) <= R * IR
+  return (AX * IR + AY * (R * 0.5f)) <= (R * IR);
 }
 
 // ===================================================================
@@ -84,6 +150,27 @@ float FPMChunkGenerator::FractalNoise(float X, float Y, int32 Seed,
   return Result / TotalAmplitude;
 }
 
+float FPMChunkGenerator::RidgeNoise(float X, float Y, int32 Seed,
+                                    int32 Octaves) {
+  float Result = 0.0f;
+  float Amplitude = 1.0f;
+  float Frequency = 1.0f;
+  float TotalAmplitude = 0.0f;
+
+  for (int32 i = 0; i < Octaves; ++i) {
+    float V = ValueNoise2D(X * Frequency, Y * Frequency, Seed + i * 7919);
+    V = 1.0f - FMath::Abs(2.0f * V - 1.0f);
+    V = V * V;
+
+    Result += V * Amplitude;
+    TotalAmplitude += Amplitude;
+    Amplitude *= 0.5f;
+    Frequency *= 2.0f;
+  }
+
+  return Result / TotalAmplitude;
+}
+
 // ===================================================================
 //  Island Shape Functions
 // ===================================================================
@@ -98,12 +185,13 @@ float FPMChunkGenerator::IslandMask(float NormX, float NormY) {
     return 0.0f;
   }
 
-  // Shore zone starts at 15% of radius — nearly the entire outer island
-  // is one long gentle slope. T^3 curve for an extremely gradual ramp.
-  constexpr float ShoreStart = 0.15f;
+  // Smooth shore transition: terrain is full-strength in the inner 30%,
+  // then falls off smoothly using quintic smoothstep to the edge.
+  constexpr float ShoreStart = 0.30f;
   if (Dist > ShoreStart) {
     const float T = (1.0f - Dist) / (1.0f - ShoreStart);
-    return T * T * T; // T^3 — very gradual, no steep faces
+    // Quintic smoothstep: 6t^5 - 15t^4 + 10t^3  (smoother than cubic)
+    return T * T * T * (T * (T * 6.0f - 15.0f) + 10.0f);
   }
 
   return 1.0f;
@@ -131,33 +219,55 @@ float FPMChunkGenerator::RiverFactor(float NormX, float NormY, int32 Seed) {
 EFPMBiome FPMChunkGenerator::AssignBiomeFromNoise(float NormX, float NormY,
                                                   int32 Seed,
                                                   float IslandMaskValue) {
-  // Ocean: outside the island entirely
   if (IslandMaskValue <= 0.01f) {
     return EFPMBiome::Ocean;
   }
 
-  // Coast: near the island edge
   if (IslandMaskValue < 0.20f) {
     return EFPMBiome::Coast;
   }
 
-  // Noise-based biome assignment for interior
   constexpr float BiomeScale1 = 3.5f;
   constexpr float BiomeScale2 = 5.0f;
+  constexpr float BiomeScale3 = 12.0f; // high-freq detail for jagged edges
   constexpr int32 BiomeSeedOffset = 99999;
 
-  const float N1 = FractalNoise(NormX * BiomeScale1, NormY * BiomeScale1,
+  // Domain warping: distort coordinates to break up smooth round boundaries
+  constexpr float WarpScale = 4.0f;
+  constexpr float WarpStrength = 0.08f; // how far to push (in normalized space)
+  const float WarpX =
+      FractalNoise(NormX * WarpScale, NormY * WarpScale, Seed + 55555, 3) *
+      WarpStrength;
+  const float WarpY =
+      FractalNoise(NormX * WarpScale + 100.0f, NormY * WarpScale + 100.0f,
+                   Seed + 66666, 3) *
+      WarpStrength;
+  const float WarpedX = NormX + WarpX;
+  const float WarpedY = NormY + WarpY;
+
+  const float N1 = FractalNoise(WarpedX * BiomeScale1, WarpedY * BiomeScale1,
                                 Seed + BiomeSeedOffset, 3);
-  const float N2 = FractalNoise(NormX * BiomeScale2, NormY * BiomeScale2,
+  const float N2 = FractalNoise(WarpedX * BiomeScale2, WarpedY * BiomeScale2,
                                 Seed + BiomeSeedOffset + 7777, 2);
+  // High-freq edge noise — adds fine-scale irregularity
+  const float N3 = FractalNoise(WarpedX * BiomeScale3, WarpedY * BiomeScale3,
+                                Seed + BiomeSeedOffset + 33333, 2);
 
-  const float BiomeValue = N1 * 0.6f + N2 * 0.4f;
+  const float BiomeValue = N1 * 0.50f + N2 * 0.30f + N3 * 0.20f;
 
-  if (BiomeValue < 0.40f) {
+  // Swamp: low-lying interior areas (low noise, deep inside the island)
+  if (BiomeValue < 0.25f && IslandMaskValue > 0.40f) {
+    return EFPMBiome::Swamp;
+  }
+  if (BiomeValue < 0.38f) {
     return EFPMBiome::Meadows;
   }
-  if (BiomeValue < 0.75f) {
+  if (BiomeValue < 0.58f) {
     return EFPMBiome::Forest;
+  }
+  // Snow: highest peaks (very high noise, well inside the island)
+  if (BiomeValue > 0.72f && IslandMaskValue > 0.50f) {
+    return EFPMBiome::Snow;
   }
   return EFPMBiome::Mountain;
 }
@@ -165,22 +275,40 @@ EFPMBiome FPMChunkGenerator::AssignBiomeFromNoise(float NormX, float NormY,
 float FPMChunkGenerator::BiomeElevationBias(EFPMBiome Biome) {
   switch (Biome) {
   case EFPMBiome::Mountain:
-    return 0.10f; // was 0.18 — gentler hills
+    return 0.28f; // Prominent peaks
   case EFPMBiome::Forest:
-    return 0.05f; // was 0.08
+    return 0.12f; // Rolling hills
   case EFPMBiome::Meadows:
-    return 0.03f;
+    return 0.06f; // Gentle undulation
   case EFPMBiome::Coast:
-    return 0.01f; // was -0.01 — slight positive so coast isn't below water
+    return 0.02f; // Near sea level
   case EFPMBiome::Swamp:
-    return 0.02f; // was 0.00
+    return 0.04f; // Low-lying
   case EFPMBiome::Snow:
-    return 0.15f; // was 0.25
+    return 0.38f; // Highest peaks
   case EFPMBiome::Ocean:
-    return -0.03f; // was -0.10 — less extreme ocean drop
+    return -0.05f; // Below sea level
   default:
-    return 0.04f; // was 0.05
+    return 0.08f;
   }
+}
+
+// ===================================================================
+//  Continuous elevation bias — smooth curve from biome noise value.
+//  Avoids discrete jumps at biome boundaries.
+// ===================================================================
+
+float FPMChunkGenerator::ContinuousElevationBias(float BiomeNoiseValue) {
+  const float T = FMath::Clamp(BiomeNoiseValue, 0.0f, 1.0f);
+  // Quadratic ramp: gentle at low values, steeper at high
+  // T=0.0 -> 0.02  (coast level)
+  // T=0.4 -> 0.08  (meadow)
+  // T=0.6 -> 0.16  (foothills)
+  // T=0.8 -> 0.28  (mountain)
+  // T=1.0 -> 0.40  (snow peak)
+  constexpr float MinBias = 0.02f;
+  constexpr float MaxBias = 0.40f;
+  return FMath::Lerp(MinBias, MaxBias, T * T);
 }
 
 // ===================================================================
@@ -194,22 +322,42 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
   OutData.Allocate();
 
   constexpr int32 Res = FPMChunkConstants::ChunkResolution;
-  constexpr float NoiseScale = 6.0f;
+  constexpr float NoiseScale = 2.5f;
 
-  // Pre-compute the world origin of this chunk
-  const FVector ChunkOrigin = ChunkToWorldOrigin(Coord);
+  // Get the world-space center of this hex chunk
+  const FVector ChunkCenter = ChunkToWorldCenter(Coord);
+
+  TArray<float> MaxSlopes;
+  MaxSlopes.SetNumZeroed(OutData.HeightValues.Num());
+
+  // The heightmap covers the hex's bounding box.
+  // We generate a square grid and mark vertices outside the hex as Ocean.
+  const float BBoxHalfW = FPMChunkConstants::HexOuterRadius;
+  const float BBoxHalfH = FPMChunkConstants::HexInnerRadius;
 
   for (int32 LocalY = 0; LocalY < Res; ++LocalY) {
     for (int32 LocalX = 0; LocalX < Res; ++LocalX) {
       const int32 Idx = LocalY * Res + LocalX;
 
+      // UV within the bounding box (0 to 1)
+      const float U = static_cast<float>(LocalX) / (Res - 1);
+      const float V = static_cast<float>(LocalY) / (Res - 1);
+
+      // Local position relative to hex center
+      const float HexLocalX = (U * 2.0f - 1.0f) * BBoxHalfW;
+      const float HexLocalY = (V * 2.0f - 1.0f) * BBoxHalfH;
+
       // World position of this vertex
-      const float VertexWorldX =
-          ChunkOrigin.X + (static_cast<float>(LocalX) / (Res - 1)) *
-                              FPMChunkConstants::ChunkWorldSize;
-      const float VertexWorldY =
-          ChunkOrigin.Y + (static_cast<float>(LocalY) / (Res - 1)) *
-                              FPMChunkConstants::ChunkWorldSize;
+      const float VertexWorldX = ChunkCenter.X + HexLocalX;
+      const float VertexWorldY = ChunkCenter.Y + HexLocalY;
+
+      // Check if inside hex
+      if (!IsInsideHex(HexLocalX, HexLocalY)) {
+        // Outside the hex boundary -- mark as Ocean with zero height
+        OutData.HeightValues[Idx] = 0.0f;
+        OutData.BiomeValues[Idx] = EFPMBiome::Ocean;
+        continue;
+      }
 
       // Convert to normalized island-space (0-1)
       float NormX, NormY;
@@ -219,69 +367,70 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
       // --- Island mask ---
       const float Mask = IslandMask(NormX, NormY);
 
-      // --- Biome assignment (noise-based, NOT elevation-locked) ---
+      // --- Biome assignment ---
       EFPMBiome Biome = AssignBiomeFromNoise(NormX, NormY, WorldSeed, Mask);
 
-      // --- Heightmap generation ---
-      const float Noise =
-          FractalNoise(NormX * NoiseScale, NormY * NoiseScale, WorldSeed, 6);
-      const float BiomeBias = BiomeElevationBias(Biome);
+      // --- Heightmap generation (continuous, no hard boundaries) ---
+      // Compute the same warped BiomeValue used for biome assignment so we can
+      // smoothly drive elevation bias and noise type blending.
+      constexpr float BiomeScale1 = 3.5f;
+      constexpr float BiomeScale2 = 5.0f;
+      constexpr float BiomeScale3 = 12.0f;
+      constexpr int32 BiomeSeedOffset = 99999;
+      constexpr float WarpScale = 4.0f;
+      constexpr float WarpStrength = 0.08f;
+      const float WarpX = FractalNoise(NormX * WarpScale, NormY * WarpScale,
+                                       WorldSeed + 55555, 3) *
+                          WarpStrength;
+      const float WarpY =
+          FractalNoise(NormX * WarpScale + 100.0f, NormY * WarpScale + 100.0f,
+                       WorldSeed + 66666, 3) *
+          WarpStrength;
+      const float WarpedX = NormX + WarpX;
+      const float WarpedY = NormY + WarpY;
+      const float BN1 =
+          FractalNoise(WarpedX * BiomeScale1, WarpedY * BiomeScale1,
+                       WorldSeed + BiomeSeedOffset, 3);
+      const float BN2 =
+          FractalNoise(WarpedX * BiomeScale2, WarpedY * BiomeScale2,
+                       WorldSeed + BiomeSeedOffset + 7777, 2);
+      const float BN3 =
+          FractalNoise(WarpedX * BiomeScale3, WarpedY * BiomeScale3,
+                       WorldSeed + BiomeSeedOffset + 33333, 2);
+      const float BiomeValue = BN1 * 0.50f + BN2 * 0.30f + BN3 * 0.20f;
 
-      float LandHeight = (Noise * 0.3f + BiomeBias * 0.5f) * Mask;
+      // Smooth noise blend: fractal (plains) → ridge (mountains)
+      // Blend factor rises smoothly from 0 at BiomeValue=0.3 to 1 at 0.7
+      const float RidgeBlend =
+          FMath::Clamp((BiomeValue - 0.30f) / 0.40f, 0.0f, 1.0f);
 
-      // Meadows flattening
-      if (Biome == EFPMBiome::Meadows && LandHeight > 0.02f) {
-        constexpr float MeadowTarget = 0.06f;
-        LandHeight = FMath::Lerp(LandHeight, MeadowTarget, 0.80f);
+      const float FlatNoise =
+          FractalNoise(NormX * NoiseScale, NormY * NoiseScale, WorldSeed, 5);
+      const float MtNoise =
+          RidgeNoise(NormX * NoiseScale, NormY * NoiseScale, WorldSeed, 6);
+      float LandHeight = FMath::Lerp(FlatNoise, MtNoise, RidgeBlend);
+
+      // Continuous elevation bias (smooth curve, no jumps)
+      const float BiomeBias = ContinuousElevationBias(BiomeValue);
+      LandHeight = (LandHeight * 0.6f + BiomeBias * 0.4f);
+      LandHeight *= Mask;
+
+      if (Biome == EFPMBiome::Ocean || Mask <= 0.05f) {
+        LandHeight = FMath::Lerp(LandHeight, 0.0f, 0.9f);
       }
 
-      // Mountain peak detail (subtle, not extreme)
-      if (Biome == EFPMBiome::Mountain) {
-        const float PeakNoise =
-            FractalNoise(NormX * NoiseScale * 2.0f, NormY * NoiseScale * 2.0f,
-                         WorldSeed + 12345, 4);
-        LandHeight += PeakNoise * 0.12f * Mask; // Was 0.3 — much gentler peaks
+      if (Biome == EFPMBiome::Meadows || Biome == EFPMBiome::Swamp) {
+        LandHeight = FMath::Lerp(LandHeight, 0.1f, 0.3f);
       }
 
-      // --- River: paint at surface level, don't carve a valley ---
-      const float River = RiverFactor(NormX, NormY, WorldSeed);
-      if (River > 0.02f && Mask > 0.15f) {
-        // Override biome to Coast — renders as water-colored terrain
-        Biome = EFPMBiome::Coast;
-        // Gently flatten the river bed so it's a smooth level strip
-        constexpr float RiverBedHeight = 0.05f;
-        LandHeight = FMath::Lerp(LandHeight, RiverBedHeight,
-                                 FMath::Clamp(River * 8.0f, 0.0f, 0.85f));
-      }
-
-      // Clamp to prevent extreme spikes regardless of seed
-      LandHeight = FMath::Clamp(LandHeight, 0.0f, 0.55f);
-
-      // --- Elevation-based biome overrides ---
-      // Snow: mountain terrain above snow line
-      if (Biome == EFPMBiome::Mountain && LandHeight > 0.40f) {
-        Biome = EFPMBiome::Snow;
-      }
-      // Swamp: low elevation interior (not on rivers or coast)
-      else if (LandHeight > 0.0f && LandHeight < 0.05f &&
-               Biome != EFPMBiome::Coast && Biome != EFPMBiome::Ocean) {
-        Biome = EFPMBiome::Swamp;
-      }
-
-      // Store results
-      OutData.HeightValues[Idx] = LandHeight;
+      OutData.HeightValues[Idx] = FMath::Clamp(LandHeight, 0.0f, 1.0f);
       OutData.BiomeValues[Idx] = Biome;
     }
   }
 
-  // =================================================================
-  //  Post-Generation Step 1: Heightmap smoothing
-  //  Average interior vertices with neighbors to soften transitions.
-  //  Edge vertices are preserved to match neighboring chunks.
-  // =================================================================
-  constexpr int32 SmoothPasses = 10;
-  constexpr float SmoothStrength = 0.65f;
-
+  // === Post-Generation: Smoothing ===
+  constexpr int32 SmoothPasses = 4;
+  constexpr float SmoothStrength = 0.4f;
   const int32 SmoothRes = FPMChunkConstants::ChunkResolution;
   TArray<float> Smoothed;
   Smoothed.SetNumUninitialized(OutData.HeightValues.Num());
@@ -306,15 +455,40 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
                     Smoothed.Num() * sizeof(float));
   }
 
-  // =================================================================
-  //  Post-Generation Step 2: Slope limiter
-  //  Cap the maximum height difference between adjacent vertices so
-  //  no slope is ever steep enough to show individual polygon edges.
-  //  This processes ALL vertices (including edges) because the limiter
-  //  is deterministic — both adjacent chunks reach the same edge values.
-  // =================================================================
-  constexpr int32 SlopePasses = 8;
-  constexpr float MaxSlope = 0.003f; // Max normalized height diff per vertex
+  // === Post-Generation: Biome Override ===
+  constexpr float SnowThreshold = 0.714f;
+  constexpr float RockSlopeThreshold = 0.0002f;
+
+  for (int32 Y = 1; Y < SmoothRes - 1; ++Y) {
+    for (int32 X = 1; X < SmoothRes - 1; ++X) {
+      const int32 Idx = Y * SmoothRes + X;
+      const float H = OutData.HeightValues[Idx];
+
+      float MaxDiff = 0.0f;
+      MaxDiff =
+          FMath::Max(MaxDiff, FMath::Abs(H - OutData.HeightValues[Idx - 1]));
+      MaxDiff =
+          FMath::Max(MaxDiff, FMath::Abs(H - OutData.HeightValues[Idx + 1]));
+      MaxDiff = FMath::Max(
+          MaxDiff, FMath::Abs(H - OutData.HeightValues[Idx - SmoothRes]));
+      MaxDiff = FMath::Max(
+          MaxDiff, FMath::Abs(H - OutData.HeightValues[Idx + SmoothRes]));
+
+      EFPMBiome &CurrentBiome = OutData.BiomeValues[Idx];
+
+      if (H > SnowThreshold) {
+        CurrentBiome = EFPMBiome::Snow;
+      }
+
+      if (MaxDiff > RockSlopeThreshold) {
+        CurrentBiome = EFPMBiome::Mountain;
+      }
+    }
+  }
+
+  // === Post-Generation: Slope Limiter ===
+  constexpr int32 SlopePasses = 4;
+  constexpr float MaxSlope = 0.02f;
 
   for (int32 Pass = 0; Pass < SlopePasses; ++Pass) {
     for (int32 Y = 0; Y < SmoothRes; ++Y) {
@@ -322,7 +496,6 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
         const int32 Idx = Y * SmoothRes + X;
         float H = OutData.HeightValues[Idx];
 
-        // Check each neighbor and pull this vertex toward it if too steep
         auto ClampToNeighbor = [&](int32 NIdx) {
           const float NH = OutData.HeightValues[NIdx];
           if (H - NH > MaxSlope) {
@@ -348,5 +521,6 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
 
   OutData.bIsValid = true;
 
-  UE_LOG(LogTemp, Verbose, TEXT("FPM: Generated chunk %s"), *Coord.ToString());
+  UE_LOG(LogTemp, Verbose, TEXT("FPM: Generated hex chunk %s"),
+         *Coord.ToString());
 }

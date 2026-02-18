@@ -1,0 +1,242 @@
+Total Morph Targets: 240
+
+A01_Brow_Inner_Up
+A02_Brow_Down_Left
+A03_Brow_Down_Right
+A04_Brow_Outer_Up_Left
+A05_Brow_Outer_Up_Right
+A06_Eye_Look_Up_Left
+A07_Eye_Look_Up_Right
+A08_Eye_Look_Down_Left
+A09_Eye_Look_Down_Right
+A10_Eye_Look_Out_Left
+A11_Eye_Look_In_Left
+A12_Eye_Look_In_Right
+A13_Eye_Look_Out_Right
+A14_Eye_Blink_Left
+A15_Eye_Blink_Right
+A16_Eye_Squint_Left
+A17_Eye_Squint_Right
+A18_Eye_Wide_Left
+A19_Eye_Wide_Right
+A20_Cheek_Puff
+A21_Cheek_Squint_Left
+A22_Cheek_Squint_Right
+A23_Nose_Sneer_Left
+A24_Nose_Sneer_Right
+A25_Jaw_Open
+A26_Jaw_Forward
+A27_Jaw_Left
+A28_Jaw_Right
+A29_Mouth_Funnel
+A30_Mouth_Pucker
+A31_Mouth_Left
+A32_Mouth_Right
+A33_Mouth_Roll_Upper
+A34_Mouth_Roll_Lower
+A35_Mouth_Shrug_Upper
+A36_Mouth_Shrug_Lower
+A37_Mouth_Close
+A38_Mouth_Smile_Left
+A39_Mouth_Smile_Right
+A40_Mouth_Frown_Left
+A41_Mouth_Frown_Right
+A42_Mouth_Dimple_Left
+A43_Mouth_Dimple_Right
+A44_Mouth_Upper_Up_Left
+A45_Mouth_Upper_Up_Right
+A46_Mouth_Lower_Down_Left
+A47_Mouth_Lower_Down_Right
+A48_Mouth_Press_Left
+A49_Mouth_Press_Right
+A50_Mouth_Stretch_Left
+A51_Mouth_Stretch_Right
+A52_Tongue_Out
+Brow_Drop_Left
+Brow_Drop_Right
+Brow_Raise_Inner_Left
+Brow_Raise_Inner_Right
+Brow_Raise_Left
+Brow_Raise_Outer_Left
+Brow_Raise_Outer_Right
+Brow_Raise_Right
+Cheek_Blow_L
+Cheek_Blow_R
+Cheek_Raise_L
+Cheek_Raise_R
+Cheeks_Suck
+EO Bulge L
+EO Bulge R
+EO Center Lower Depth L
+EO Center Lower Depth R
+EO Center Lower Height L
+EO Center Lower Height R
+EO Center Upper Depth L
+EO Center Upper Depth R
+EO Center Upper Height L
+EO Center Upper Height R
+EO Depth L
+EO Depth R
+EO Duct Depth L
+EO Duct Depth R
+EO Inner Depth L
+EO Inner Depth R
+EO Inner Height L
+EO Inner Height R
+EO Inner Lower Depth L
+EO Inner Lower Depth R
+EO Inner Lower Height L
+EO Inner Lower Height R
+EO Inner Upper Depth L
+EO Inner Upper Depth R
+EO Inner Upper Height L
+EO Inner Upper Height R
+EO Inner Width L
+EO Inner Width R
+EO Lower Depth L
+EO Lower Depth R
+EO Outer Depth L
+EO Outer Depth R
+EO Outer Height L
+EO Outer Height R
+EO Outer Lower Depth L
+EO Outer Lower Depth R
+EO Outer Lower Height L
+EO Outer Lower Height R
+EO Outer Upper Depth L
+EO Outer Upper Depth R
+EO Outer Upper Height L
+EO Outer Upper Height R
+EO Outer Width L
+EO Outer Width R
+EO Upper Depth L
+EO Upper Depth R
+Eye_Blink_L
+Eye_Blink_R
+Eye_Squint_L
+Eye_Squint_R
+Eye_Wide_L
+Eye_Wide_R
+Eyes_Blink
+Head_Tilt_L
+Head_Tilt_R
+Head_Turn_Down
+Head_Turn_L
+Head_Turn_R
+Head_Turn_Up
+Mouth_Blow
+Mouth_Bottom_Lip_Bite
+Mouth_Bottom_Lip_Down
+Mouth_Bottom_Lip_Trans
+Mouth_Bottom_Lip_Under
+Mouth_Dimple_L
+Mouth_Dimple_R
+Mouth_Down
+Mouth_Frown
+Mouth_Frown_L
+Mouth_Frown_R
+Mouth_L
+Mouth_Lips_Jaw_Adjust
+Mouth_Lips_Open
+Mouth_Lips_Part
+Mouth_Lips_Tight
+Mouth_Lips_Tuck
+Mouth_Open
+Mouth_Plosive
+Mouth_Pucker
+Mouth_Pucker_Open
+Mouth_R
+Mouth_Skewer
+Mouth_Smile
+Mouth_Smile_L
+Mouth_Smile_R
+Mouth_Snarl_Lower_L
+Mouth_Snarl_Lower_R
+Mouth_Snarl_Upper_L
+Mouth_Snarl_Upper_R
+Mouth_Top_Lip_Under
+Mouth_Top_Lip_Up
+Mouth_Up
+Mouth_Widen
+Mouth_Widen_Sides
+Move_Jaw_Down
+Move_Jaw_L
+Move_Jaw_R
+Nose_Flank_Raise_L
+Nose_Flank_Raise_R
+Nose_Flanks_Raise
+Nose_Nostrils_Flare
+Nose_Scrunch
+T01_Tongue_Up
+T02_Tongue_Down
+T03_Tongue_Left
+T04_Tongue_Right
+T05_Tongue_Roll
+T06_Tongue_Tip_Up
+T07_Tongue_Tip_Down
+T08_Tongue_Width
+T09_Tongue_Thickness
+T10_Tongue_Bulge_Left
+T11_Tongue_Bulge_Right
+TL Center Lower Depth L
+TL Center Lower Depth R
+TL Center Lower Height L
+TL Center Lower Height R
+TL Center Upper Depth L
+TL Center Upper Depth R
+TL Center Upper Height L
+TL Center Upper Height R
+TL Depth L
+TL Depth R
+TL Duct Depth L
+TL Duct Depth R
+TL Inner Depth L
+TL Inner Depth R
+TL Inner Height L
+TL Inner Height R
+TL Inner Lower Depth L
+TL Inner Lower Depth R
+TL Inner Lower Height L
+TL Inner Lower Height R
+TL Inner Upper Depth L
+TL Inner Upper Depth R
+TL Inner Upper Height L
+TL Inner Upper Height R
+TL Inner Width L
+TL Inner Width R
+TL Lower Depth L
+TL Lower Depth R
+TL Outer Depth L
+TL Outer Depth R
+TL Outer Height L
+TL Outer Height R
+TL Outer Lower Depth L
+TL Outer Lower Depth R
+TL Outer Lower Height L
+TL Outer Lower Height R
+TL Outer Upper Depth L
+TL Outer Upper Depth R
+TL Outer Upper Height L
+TL Outer Upper Height R
+TL Outer Width L
+TL Outer Width R
+TL Upper Depth L
+TL Upper Depth R
+Turn_Jaw_Down
+Turn_Jaw_L
+Turn_Jaw_R
+V_Affricate
+V_Dental_Lip
+V_Explosive
+V_Lip_Open
+V_Open
+V_Tight
+V_Tight_O
+V_Tongue_Curl_D
+V_Tongue_Curl_U
+V_Tongue_Lower
+V_Tongue_Narrow
+V_Tongue_Out
+V_Tongue_Raise
+V_Tongue_up
+V_Wide

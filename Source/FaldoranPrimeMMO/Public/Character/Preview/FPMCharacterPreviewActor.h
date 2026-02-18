@@ -10,27 +10,33 @@
 class UPointLightComponent;
 class USceneCaptureComponent2D;
 class USkeletalMeshComponent;
+class USkyLightComponent;
 class USpringArmComponent;
+class UAnimationAsset;
 class UTextureRenderTarget2D;
 
 /**
  * AFPMCharacterPreviewActor
  *
- * Client-only actor that renders a 3D mannequin preview during character
- * creation. Spawned by UFPMCharacterCreationWidget, destroyed when the
- * creation screen closes.
+ * Client-only actor that renders a 3D CC5 character preview during
+ * character creation. Spawned by UFPMCharacterCreationWidget,
+ * destroyed when the creation screen closes.
  *
  * NEVER replicated — this is purely a cosmetic client-side preview.
  * The server has zero knowledge of this actor.
  *
  * Features:
- *   - UE5 mannequin skeletal mesh (placeholder for Mutable/CC5)
- *   - UMaterialInstanceDynamic for real-time skin tone and hair color
- *   - Key + fill lighting for flattering preview rendering
+ *   - CC5 skeletal mesh with morph targets (240 facial blendshapes)
+ *   - Idle animation via CC5 Animation Blueprint
+ *   - SetMorphValue(FName, float) for any morph target
+ *   - UMaterialInstanceDynamic per slot (skin, eye, hair)
+ *   - SetSkinTone(), SetEyeColor(), SetHairColor() for materials
+ *   - SetHairStyle(int32) for hair mesh swaps
+ *   - Three-point lighting + ambient sky light
  *   - Scene capture for rendering to a UMG Image widget
- *   - Camera orbit (mouse drag) and zoom (mouse wheel)
+ *   - Camera orbit (drag), zoom (scroll), reset (double-click)
  *
- * See Character_Creation_System.md §4 — Client-Only (Preview) domain.
+ * See Pillar_04_CC5_Character_Creation.md §4 — Phase 4B.
  */
 UCLASS(NotPlaceable)
 class FALDORANPRIMEMMO_API AFPMCharacterPreviewActor : public AActor {
@@ -39,29 +45,52 @@ class FALDORANPRIMEMMO_API AFPMCharacterPreviewActor : public AActor {
 public:
   AFPMCharacterPreviewActor();
 
-  // --- Appearance Setters (called by widget when sliders change) ---
+  // --- Morph Target Control ---
 
-  /** Set the skin tone on the dynamic material instance. */
+  /**
+   * Set any morph target on the preview mesh by name.
+   * Value is clamped to [0.0, 1.0]. Works with all 240 CC5 morphs.
+   */
+  UFUNCTION(BlueprintCallable, Category = "FPM|Preview")
+  void SetMorphValue(FName MorphName, float Value);
+
+  // --- Material Color Setters ---
+
+  /** Set the skin tone on the skin dynamic material instance. */
   UFUNCTION(BlueprintCallable, Category = "FPM|Preview")
   void SetSkinTone(const FLinearColor &NewColor);
 
-  /** Set the hair style index (mesh swap placeholder). */
+  /** Set the eye (iris) color on the eye dynamic material instance. */
   UFUNCTION(BlueprintCallable, Category = "FPM|Preview")
-  void SetHairStyle(uint8 StyleIndex);
+  void SetEyeColor(const FLinearColor &NewColor);
 
-  /** Set the hair color on the dynamic material instance. */
+  /** Set the hair color on the hair dynamic material instance. */
   UFUNCTION(BlueprintCallable, Category = "FPM|Preview")
   void SetHairColor(const FLinearColor &NewColor);
 
-  /** Set the body type (morph target or mesh swap placeholder). */
+  // --- Hair Style ---
+
+  /**
+   * Set the hair style by index. Swaps the hair skeletal mesh
+   * attachment from the HairMeshes array.
+   */
   UFUNCTION(BlueprintCallable, Category = "FPM|Preview")
-  void SetBodyType(uint8 TypeIndex);
+  void SetHairStyle(int32 HairIndex);
+
+  // --- Gender Selection ---
+
+  /** Switch between male (false) and female (true) preview mesh. */
+  UFUNCTION(BlueprintCallable, Category = "FPM|Preview")
+  void SetIsFemale(bool bFemale);
+
+  /** Get current gender selection. */
+  bool GetIsFemale() const { return bIsFemale; }
 
   // --- Camera Orbit Controls ---
 
   /**
-   * Rotate the preview actor around the vertical axis.
-   * Called from mouse drag input. Positive = clockwise when viewed from above.
+   * Rotate the camera boom around the vertical axis.
+   * Called from mouse drag input. Positive = clockwise from above.
    */
   void AddYawRotation(float DeltaYaw);
 
@@ -70,6 +99,10 @@ public:
    * Called from mouse wheel input. Positive = zoom out.
    */
   void AddZoom(float DeltaZoom);
+
+  /** Reset the camera to the default front-facing view and zoom. */
+  UFUNCTION(BlueprintCallable, Category = "FPM|Preview")
+  void ResetCameraToFront();
 
   /** Get the render target that the scene capture writes to. */
   UFUNCTION(BlueprintCallable, Category = "FPM|Preview")
@@ -85,23 +118,31 @@ private:
   UPROPERTY(VisibleAnywhere, Category = "FPM|Preview")
   TObjectPtr<USceneComponent> PreviewRoot;
 
-  /** Mannequin skeletal mesh for the character preview. */
+  /** CC5 skeletal mesh for the character body preview. */
   UPROPERTY(VisibleAnywhere, Category = "FPM|Preview")
   TObjectPtr<USkeletalMeshComponent> PreviewMesh;
 
+  /** Separate skeletal mesh for interchangeable hair styles. */
+  UPROPERTY(VisibleAnywhere, Category = "FPM|Preview")
+  TObjectPtr<USkeletalMeshComponent> HairMeshComp;
+
   // --- Lighting ---
 
-  /** Primary key light — positioned front-right for main illumination. */
+  /** Primary key light — front-right, warm. */
   UPROPERTY(VisibleAnywhere, Category = "FPM|Preview|Lighting")
   TObjectPtr<UPointLightComponent> KeyLight;
 
-  /** Fill light — positioned front-left for softer shadow fill. */
+  /** Fill light — front-left, cool, softer. */
   UPROPERTY(VisibleAnywhere, Category = "FPM|Preview|Lighting")
   TObjectPtr<UPointLightComponent> FillLight;
 
-  /** Rim/back light — positioned behind for edge definition. */
+  /** Rim/back light — behind, for edge definition. */
   UPROPERTY(VisibleAnywhere, Category = "FPM|Preview|Lighting")
   TObjectPtr<UPointLightComponent> RimLight;
+
+  /** Ambient sky light for soft global illumination fill. */
+  UPROPERTY(VisibleAnywhere, Category = "FPM|Preview|Lighting")
+  TObjectPtr<USkyLightComponent> AmbientLight;
 
   // --- Scene Capture ---
 
@@ -113,38 +154,70 @@ private:
   UPROPERTY(VisibleAnywhere, Category = "FPM|Preview|Camera")
   TObjectPtr<USceneCaptureComponent2D> SceneCapture;
 
-  // --- Material ---
+  // --- Dynamic Materials (one per CC5 material slot) ---
 
-  /** Dynamic material instance created at runtime for color changes. */
+  /** Skin material instance (slot 0 on CC5 body mesh). */
   UPROPERTY()
-  TObjectPtr<UMaterialInstanceDynamic> DynamicMaterial;
+  TObjectPtr<UMaterialInstanceDynamic> SkinMID;
 
-  /** Create the dynamic material instance from the mesh's base material. */
-  void CreateDynamicMaterial();
+  /** Eye material instance (identified by slot name). */
+  UPROPERTY()
+  TObjectPtr<UMaterialInstanceDynamic> EyeMID;
 
-  // --- Constants ---
+  /** Hair material instance (slot 0 on hair mesh). */
+  UPROPERTY()
+  TObjectPtr<UMaterialInstanceDynamic> HairMID;
 
-  /** Material parameter name for the skin tone color. */
-  static const FName SkinToneParamName;
+  // --- Internal Helpers ---
 
-  /** Material parameter name for the hair color. */
-  static const FName HairColorParamName;
+  /** Create per-slot dynamic material instances from the CC5 mesh. */
+  void CreateDynamicMaterials();
 
-  /** Minimum spring arm length (closest zoom). */
-  static constexpr float MinZoomDistance = 80.0f;
+  /**
+   * Find a material slot by searching slot names for a keyword.
+   * Returns INDEX_NONE if no match found.
+   */
+  int32 FindMaterialSlotByKeyword(const FString &Keyword) const;
 
-  /** Maximum spring arm length (farthest zoom). */
-  static constexpr float MaxZoomDistance = 400.0f;
+  // --- Hair Mesh Data ---
 
-  /** Default spring arm length. */
-  static constexpr float DefaultZoomDistance = 150.0f;
-
-  /** Zoom speed multiplier per mouse wheel tick. */
-  static constexpr float ZoomSpeed = 20.0f;
-
-  /** Current active body type index. */
-  uint8 CurrentBodyType = 0;
+  /**
+   * Array of hair skeletal meshes loaded at construction.
+   * Index 0 = bald (nullptr), subsequent indices are hair styles.
+   */
+  UPROPERTY()
+  TArray<TObjectPtr<USkeletalMesh>> HairMeshes;
 
   /** Current active hair style index. */
-  uint8 CurrentHairStyle = 0;
+  int32 CurrentHairIndex = 0;
+
+  /** Current gender: false = male, true = female. */
+  bool bIsFemale = false;
+
+  /** Cached skeletal meshes for gender swap. */
+  UPROPERTY()
+  TObjectPtr<USkeletalMesh> MaleMesh;
+  UPROPERTY()
+  TObjectPtr<USkeletalMesh> FemaleMesh;
+
+  /** Idle animation played in a loop on the preview mesh. */
+  UPROPERTY()
+  TObjectPtr<UAnimationAsset> IdleAnimation;
+
+  /** Apply current body mesh, restart animation, rebuild materials. */
+  void ApplyCurrentBody();
+
+  // --- Material Parameter Names ---
+
+  static const FName SkinColorParamName;
+  static const FName IrisColorParamName;
+  static const FName HairColorParamName;
+
+  // --- Camera Constants ---
+
+  static constexpr float MinZoomDistance = 80.0f;
+  static constexpr float MaxZoomDistance = 400.0f;
+  static constexpr float DefaultZoomDistance = 150.0f;
+  static constexpr float ZoomSpeed = 20.0f;
+  static constexpr float DefaultCameraPitch = -10.0f;
 };

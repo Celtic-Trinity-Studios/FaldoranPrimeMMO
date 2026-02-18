@@ -11,6 +11,11 @@
  *
  * Custom GameInstance for Faldoran Prime. Persists across map transitions.
  * Houses game-wide subsystems (Database, Account, etc.) in later phases.
+ *
+ * Networking:
+ *   Reads [FPM.Server] from DefaultGame.ini. When bAutoConnect is true
+ *   AND the game is running as a Client target (not editor/standalone),
+ *   automatically performs ClientTravel to the configured server IP.
  */
 UCLASS()
 class FALDORANPRIMEMMO_API UFPMGameInstance : public UGameInstance {
@@ -19,4 +24,25 @@ class FALDORANPRIMEMMO_API UFPMGameInstance : public UGameInstance {
 public:
   /** Called when the GameInstance is created. Logs initialization. */
   virtual void Init() override;
+
+  // --- Server Connection Settings (read from DefaultGame.ini) ---
+
+  /** Target dedicated server IP address */
+  UPROPERTY(BlueprintReadOnly, Category = "FPM|Network")
+  FString ServerIP = TEXT("152.86.63.18");
+
+  /** Target dedicated server port */
+  UPROPERTY(BlueprintReadOnly, Category = "FPM|Network")
+  int32 ServerPort = 7777;
+
+  /** Whether to auto-connect to the dedicated server on startup.
+   *  Set to true for packaged client builds, false for PIE/editor. */
+  UPROPERTY(BlueprintReadWrite, Category = "FPM|Network")
+  bool bAutoConnect = false;
+
+  /** Manually trigger connection to the dedicated server.
+   *  Called automatically if bAutoConnect is true, or can be called
+   *  from a UI "Connect" button. */
+  UFUNCTION(BlueprintCallable, Category = "FPM|Network")
+  void ConnectToDedicatedServer();
 };

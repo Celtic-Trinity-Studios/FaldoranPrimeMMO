@@ -124,16 +124,24 @@ void AFPMPlayerCharacter::Tick(float DeltaTime) {
           -1, 0.f, FColor::Cyan,
           FString::Printf(TEXT("Compass: %s"), *YawToCompass(Yaw)));
 
-      // Line 2: World position
+      // Line 2: Chunk coordinate
       GEngine->AddOnScreenDebugMessage(
-          -2, 0.f, FColor::Yellow,
+          -2, 0.f, FColor::Green,
+          FString::Printf(TEXT("Chunk: (%d, %d)"), Chunk.Q, Chunk.R));
+
+      // Line 3: World position
+      GEngine->AddOnScreenDebugMessage(
+          -3, 0.f, FColor::Yellow,
           FString::Printf(TEXT("Pos: X=%.0f  Y=%.0f  Z=%.0f"), Pos.X, Pos.Y,
                           Pos.Z));
 
-      // Line 3: Chunk coordinate
-      GEngine->AddOnScreenDebugMessage(
-          -3, 0.f, FColor::Green,
-          FString::Printf(TEXT("Chunk: (%d, %d)"), Chunk.X, Chunk.Y));
+      // Line 4: FPS
+      const float FPS = (DeltaTime > 0.0f) ? (1.0f / DeltaTime) : 0.0f;
+      const FColor FPSColor = (FPS >= 60.0f)   ? FColor::Green
+                              : (FPS >= 30.0f) ? FColor::Yellow
+                                               : FColor::Red;
+      GEngine->AddOnScreenDebugMessage(-4, 0.f, FPSColor,
+                                       FString::Printf(TEXT("FPS: %.0f"), FPS));
     }
   }
 

@@ -1,9 +1,11 @@
 // Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #include "Character/Preview/FPMCharacterPreviewActor.h"
+#include "Animation/AnimationAsset.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/SkyLightComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -12,8 +14,9 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPMCharacterPreview, Log, All);
 
-// Material parameter names — must match the MID parameter names
-const FName AFPMCharacterPreviewActor::SkinToneParamName(TEXT("SkinTone"));
+// Material parameter names — must match the CC5 HQ shader parameter names
+const FName AFPMCharacterPreviewActor::SkinColorParamName(TEXT("SkinColor"));
+const FName AFPMCharacterPreviewActor::IrisColorParamName(TEXT("IrisColor"));
 const FName AFPMCharacterPreviewActor::HairColorParamName(TEXT("HairColor"));
 
 // -------------------------------------------------------------------
@@ -30,26 +33,68 @@ AFPMCharacterPreviewActor::AFPMCharacterPreviewActor() {
   PreviewRoot = CreateDefaultSubobject<USceneComponent>(TEXT("PreviewRoot"));
   SetRootComponent(PreviewRoot);
 
-  // Skeletal mesh — UE5 mannequin placeholder
+  // --- CC5 Skeletal Mesh ---
   PreviewMesh =
       CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("PreviewMesh"));
   PreviewMesh->SetupAttachment(PreviewRoot);
+  // Offset down so the character's feet are near the pivot origin
   PreviewMesh->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
 
-  // UE 5.7.1 Third Person content pack uses SKM_Manny_Simple
-  static ConstructorHelpers::FObjectFinder<USkeletalMesh> MannyMesh(
-      TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple"));
-  if (MannyMesh.Succeeded()) {
-    PreviewMesh->SetSkeletalMeshAsset(MannyMesh.Object);
-  } else {
-    UE_LOG(
-        LogFPMCharacterPreview, Warning,
-        TEXT("FPM: Failed to load SKM_Manny_Simple. Preview will be empty."));
+  // Force animation to always tick even when off-screen.
+  // The preview actor is spawned far off-world (-50000,-50000,-5000) where
+  // the player camera can't see it. UE5's visibility-based anim tick
+  // optimization would suppress animation since SceneCaptureComponent2D
+  // does NOT count as a "camera" for visibility checks.
+  PreviewMesh->VisibilityBasedAnimTickOption =
+      EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
+  // --- Load both male and female CC5 meshes ---
+  static ConstructorHelpers::FObjectFinder<USkeletalMesh> CC5MaleMeshObj(
+      TEXT("SkeletalMesh'/Game/Characters/CC5/CC5_Base_Male.CC5_Base_Male'"));
+  if (CC5MaleMeshObj.Succeeded()) {
+    MaleMesh = CC5MaleMeshObj.Object;
+    UE_LOG(LogFPMCharacterPreview, Log, TEXT("FPM: CC5_Base_Male loaded."));
   }
 
-  // --- Lighting ---
-  // High intensity required because point lights compete with no ambient.
-  // Preview is isolated far from the world, so these only affect our mesh.
+  static ConstructorHelpers::FObjectFinder<USkeletalMesh> CC5FemaleMeshObj(TEXT(
+      "SkeletalMesh'/Game/Characters/CC5/CC5_Base_Female.CC5_Base_Female'"));
+  if (CC5FemaleMeshObj.Succeeded()) {
+    FemaleMesh = CC5FemaleMeshObj.Object;
+    UE_LOG(LogFPMCharacterPreview, Log, TEXT("FPM: CC5_Base_Female loaded."));
+  }
+
+  // Default to male mesh
+  if (MaleMesh) {
+    PreviewMesh->SetSkeletalMeshAsset(MaleMesh);
+  } else {
+    static ConstructorHelpers::FObjectFinder<USkeletalMesh> FallbackMesh(
+        TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple"));
+    if (FallbackMesh.Succeeded())
+      PreviewMesh->SetSkeletalMeshAsset(FallbackMesh.Object);
+    UE_LOG(LogFPMCharacterPreview, Warning,
+           TEXT("FPM: CC5_Base_Male not found, using fallback."));
+  }
+
+  // Load idle animation for direct looping playback
+  static ConstructorHelpers::FObjectFinder<UAnimationAsset> IdleAnimObj(
+      TEXT("/Game/Characters/CC5/Motion/idle-378963_idle-378963"));
+  if (IdleAnimObj.Succeeded()) {
+    IdleAnimation = IdleAnimObj.Object;
+    UE_LOG(LogFPMCharacterPreview, Log, TEXT("FPM: Idle animation loaded."));
+  }
+
+  // Use single-animation mode for seamless loop control
+  PreviewMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+
+  // --- Hair Mesh Component ---
+  HairMeshComp =
+      CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("HairMesh"));
+  HairMeshComp->SetupAttachment(PreviewMesh);
+  // Hair attaches to head bone; relative transform handled by the mesh
+
+  // --- Three-Point Lighting ---
+  // High intensity because the preview scene is isolated with no global
+  // lighting. These point lights only affect our mesh.
 
   // Key light: front-right, warm, strong primary illumination
   KeyLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("KeyLight"));
@@ -78,6 +123,13 @@ AFPMCharacterPreviewActor::AFPMCharacterPreviewActor() {
   RimLight->SetAttenuationRadius(500.0f);
   RimLight->SetCastShadows(false);
 
+  // Ambient light: soft global fill to prevent pitch-black shadows
+  AmbientLight =
+      CreateDefaultSubobject<USkyLightComponent>(TEXT("AmbientLight"));
+  AmbientLight->SetupAttachment(PreviewRoot);
+  AmbientLight->SetIntensity(0.8f);
+  AmbientLight->SetLightColor(FLinearColor(0.15f, 0.15f, 0.2f));
+
   // --- Camera / Scene Capture ---
 
   CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
@@ -85,7 +137,7 @@ AFPMCharacterPreviewActor::AFPMCharacterPreviewActor() {
   CameraBoom->TargetArmLength = DefaultZoomDistance;
   // Position at chest height, aim slightly downward to frame the character
   CameraBoom->SetRelativeLocation(FVector(0.0f, 0.0f, 10.0f));
-  CameraBoom->SetRelativeRotation(FRotator(-10.0f, 0.0f, 0.0f));
+  CameraBoom->SetRelativeRotation(FRotator(DefaultCameraPitch, 0.0f, 0.0f));
   CameraBoom->bDoCollisionTest = false;
   CameraBoom->bUsePawnControlRotation = false;
 
@@ -94,8 +146,7 @@ AFPMCharacterPreviewActor::AFPMCharacterPreviewActor() {
   SceneCapture->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
   SceneCapture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
 
-  // Disable sky, atmosphere, and fog so we get a clean dark background.
-  // The mannequin is lit only by our three point lights.
+  // Dark background: disable sky/atmosphere so only our lights are visible
   SceneCapture->ShowFlags.SetAtmosphere(false);
   SceneCapture->ShowFlags.SetFog(false);
   SceneCapture->ShowFlags.SetVolumetricFog(false);
@@ -113,55 +164,102 @@ void AFPMCharacterPreviewActor::BeginPlay() {
   // Create a render target for the scene capture
   UTextureRenderTarget2D *RT = NewObject<UTextureRenderTarget2D>(this);
   if (RT) {
-    static constexpr int32 RenderTargetWidth = 512;
-    static constexpr int32 RenderTargetHeight = 768;
+    static constexpr int32 RenderTargetWidth = 768;
+    static constexpr int32 RenderTargetHeight = 1024;
     RT->InitAutoFormat(RenderTargetWidth, RenderTargetHeight);
     RT->ClearColor = FLinearColor(0.05f, 0.05f, 0.08f, 1.0f);
     SceneCapture->TextureTarget = RT;
   }
 
-  CreateDynamicMaterial();
+  CreateDynamicMaterials();
+
+  // Start the idle animation with looping enabled
+  if (IdleAnimation && PreviewMesh) {
+    PreviewMesh->PlayAnimation(IdleAnimation, true);
+  }
 
   UE_LOG(LogFPMCharacterPreview, Log,
-         TEXT("FPM: CharacterPreviewActor spawned."));
+         TEXT("FPM: CharacterPreviewActor spawned with CC5 mesh."));
 }
 
 // -------------------------------------------------------------------
-// Appearance Setters
+// Morph Target Control
+// -------------------------------------------------------------------
+
+void AFPMCharacterPreviewActor::SetMorphValue(FName MorphName, float Value) {
+  if (!PreviewMesh) {
+    return;
+  }
+
+  const float ClampedValue = FMath::Clamp(Value, 0.0f, 1.0f);
+  PreviewMesh->SetMorphTarget(MorphName, ClampedValue);
+
+  UE_LOG(LogFPMCharacterPreview, Verbose,
+         TEXT("FPM: Preview Morph '%s' = %.3f"), *MorphName.ToString(),
+         ClampedValue);
+}
+
+// -------------------------------------------------------------------
+// Material Color Setters
 // -------------------------------------------------------------------
 
 void AFPMCharacterPreviewActor::SetSkinTone(const FLinearColor &NewColor) {
-  if (DynamicMaterial) {
-    DynamicMaterial->SetVectorParameterValue(SkinToneParamName, NewColor);
+  if (SkinMID) {
+    SkinMID->SetVectorParameterValue(SkinColorParamName, NewColor);
   }
   UE_LOG(LogFPMCharacterPreview, Verbose,
          TEXT("FPM: Preview SkinTone=(%.2f,%.2f,%.2f)"), NewColor.R, NewColor.G,
          NewColor.B);
 }
 
-void AFPMCharacterPreviewActor::SetHairStyle(uint8 StyleIndex) {
-  // PROTOTYPE: Log the change. Full mesh-swap pipeline deferred until
-  // Mutable/CC5 integration. The mannequin doesn't have hair meshes.
-  CurrentHairStyle = StyleIndex;
-  UE_LOG(LogFPMCharacterPreview, Verbose, TEXT("FPM: Preview HairStyle=%d"),
-         StyleIndex);
+void AFPMCharacterPreviewActor::SetEyeColor(const FLinearColor &NewColor) {
+  if (EyeMID) {
+    EyeMID->SetVectorParameterValue(IrisColorParamName, NewColor);
+  }
+  UE_LOG(LogFPMCharacterPreview, Verbose,
+         TEXT("FPM: Preview EyeColor=(%.2f,%.2f,%.2f)"), NewColor.R, NewColor.G,
+         NewColor.B);
 }
 
 void AFPMCharacterPreviewActor::SetHairColor(const FLinearColor &NewColor) {
-  if (DynamicMaterial) {
-    DynamicMaterial->SetVectorParameterValue(HairColorParamName, NewColor);
+  if (HairMID) {
+    HairMID->SetVectorParameterValue(HairColorParamName, NewColor);
   }
   UE_LOG(LogFPMCharacterPreview, Verbose,
          TEXT("FPM: Preview HairColor=(%.2f,%.2f,%.2f)"), NewColor.R,
          NewColor.G, NewColor.B);
 }
 
-void AFPMCharacterPreviewActor::SetBodyType(uint8 TypeIndex) {
-  // PROTOTYPE: Log the change. Full body-type morph-target pipeline
-  // deferred until Mutable/CC5 integration.
-  CurrentBodyType = TypeIndex;
-  UE_LOG(LogFPMCharacterPreview, Verbose, TEXT("FPM: Preview BodyType=%d"),
-         TypeIndex);
+// -------------------------------------------------------------------
+// Hair Style
+// -------------------------------------------------------------------
+
+void AFPMCharacterPreviewActor::SetHairStyle(int32 HairIndex) {
+  if (!HairMeshComp) {
+    return;
+  }
+
+  CurrentHairIndex = HairIndex;
+
+  // Index 0 = bald (clear the mesh)
+  if (HairIndex <= 0 || HairMeshes.Num() == 0) {
+    HairMeshComp->SetSkeletalMesh(nullptr);
+    UE_LOG(LogFPMCharacterPreview, Verbose,
+           TEXT("FPM: Preview HairStyle = Bald"));
+    return;
+  }
+
+  // Valid index check (offset by 1 since index 0 is bald)
+  const int32 MeshIndex = HairIndex - 1;
+  if (MeshIndex < HairMeshes.Num() && HairMeshes[MeshIndex]) {
+    HairMeshComp->SetSkeletalMesh(HairMeshes[MeshIndex]);
+    UE_LOG(LogFPMCharacterPreview, Verbose, TEXT("FPM: Preview HairStyle=%d"),
+           HairIndex);
+  } else {
+    UE_LOG(LogFPMCharacterPreview, Warning,
+           TEXT("FPM: HairStyle index %d out of range (max %d)."), HairIndex,
+           HairMeshes.Num());
+  }
 }
 
 // -------------------------------------------------------------------
@@ -169,13 +267,12 @@ void AFPMCharacterPreviewActor::SetBodyType(uint8 TypeIndex) {
 // -------------------------------------------------------------------
 
 void AFPMCharacterPreviewActor::AddYawRotation(float DeltaYaw) {
-  if (CameraBoom) {
-    FRotator Current = CameraBoom->GetRelativeRotation();
-    Current.Yaw += DeltaYaw;
-    CameraBoom->SetRelativeRotation(Current);
-    UE_LOG(LogFPMCharacterPreview, Log, TEXT("FPM: CameraBoom Yaw = %.2f"),
-           Current.Yaw);
+  if (!CameraBoom) {
+    return;
   }
+  FRotator Current = CameraBoom->GetRelativeRotation();
+  Current.Yaw += DeltaYaw;
+  CameraBoom->SetRelativeRotation(Current);
 }
 
 void AFPMCharacterPreviewActor::AddZoom(float DeltaZoom) {
@@ -185,6 +282,50 @@ void AFPMCharacterPreviewActor::AddZoom(float DeltaZoom) {
   float NewLength = CameraBoom->TargetArmLength + (DeltaZoom * ZoomSpeed);
   CameraBoom->TargetArmLength =
       FMath::Clamp(NewLength, MinZoomDistance, MaxZoomDistance);
+}
+
+void AFPMCharacterPreviewActor::ResetCameraToFront() {
+  if (!CameraBoom) {
+    return;
+  }
+  CameraBoom->SetRelativeRotation(FRotator(DefaultCameraPitch, 0.0f, 0.0f));
+  CameraBoom->TargetArmLength = DefaultZoomDistance;
+  UE_LOG(LogFPMCharacterPreview, Log, TEXT("FPM: Camera reset to front view."));
+}
+
+// -------------------------------------------------------------------
+// Gender Swap
+// -------------------------------------------------------------------
+
+void AFPMCharacterPreviewActor::SetIsFemale(bool bFemale) {
+  if (bIsFemale == bFemale)
+    return;
+  bIsFemale = bFemale;
+  ApplyCurrentBody();
+}
+
+void AFPMCharacterPreviewActor::ApplyCurrentBody() {
+  if (!PreviewMesh)
+    return;
+
+  USkeletalMesh *NewMesh = bIsFemale ? FemaleMesh.Get() : MaleMesh.Get();
+  if (!NewMesh) {
+    UE_LOG(LogFPMCharacterPreview, Warning, TEXT("FPM: %s mesh not available."),
+           bIsFemale ? TEXT("Female") : TEXT("Male"));
+    return;
+  }
+
+  PreviewMesh->SetSkeletalMeshAsset(NewMesh);
+
+  // Direct playback with looping for seamless idle animation
+  PreviewMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+  if (IdleAnimation) {
+    PreviewMesh->PlayAnimation(IdleAnimation, true);
+  }
+  CreateDynamicMaterials();
+
+  UE_LOG(LogFPMCharacterPreview, Log, TEXT("FPM: Switched to %s body."),
+         bIsFemale ? TEXT("Female") : TEXT("Male"));
 }
 
 // -------------------------------------------------------------------
@@ -202,23 +343,35 @@ UTextureRenderTarget2D *AFPMCharacterPreviewActor::GetRenderTarget() const {
 // Internal Helpers
 // -------------------------------------------------------------------
 
-void AFPMCharacterPreviewActor::CreateDynamicMaterial() {
-  if (!PreviewMesh) {
-    return;
+void AFPMCharacterPreviewActor::CreateDynamicMaterials() {
+  // DISABLED for Phase 4B — CC5 Reallusion HQ shader materials use
+  // subsurface scattering profiles and custom shader graphs that do NOT
+  // expose simple "SkinColor"/"IrisColor"/"HairColor" vector parameters.
+  // Creating MIDs from these materials strips the SSS profile, causing the
+  // head to render blue/gray while the body keeps its original materials.
+  //
+  // Phase 4D will add custom color tint parameters (or material functions)
+  // to the CC5 materials, at which point this function will be re-enabled
+  // with the correct parameter names.
+
+  UE_LOG(LogFPMCharacterPreview, Log,
+         TEXT("FPM: CreateDynamicMaterials skipped — CC5 materials do not yet "
+              "support runtime color parameters. (Phase 4D)"));
+}
+
+int32 AFPMCharacterPreviewActor::FindMaterialSlotByKeyword(
+    const FString &Keyword) const {
+  if (!PreviewMesh || !PreviewMesh->GetSkeletalMeshAsset()) {
+    return INDEX_NONE;
   }
 
-  // Create a dynamic material instance from the mesh's first material slot
-  UMaterialInterface *BaseMat = PreviewMesh->GetMaterial(0);
-  if (BaseMat) {
-    DynamicMaterial =
-        UMaterialInstanceDynamic::Create(BaseMat, this, TEXT("PreviewMID"));
-    if (DynamicMaterial) {
-      PreviewMesh->SetMaterial(0, DynamicMaterial);
-      UE_LOG(LogFPMCharacterPreview, Log,
-             TEXT("FPM: Preview dynamic material created."));
+  const TArray<FSkeletalMaterial> &Materials =
+      PreviewMesh->GetSkeletalMeshAsset()->GetMaterials();
+  for (int32 Index = 0; Index < Materials.Num(); ++Index) {
+    const FName SlotName = Materials[Index].MaterialSlotName;
+    if (SlotName.ToString().Contains(Keyword)) {
+      return Index;
     }
-  } else {
-    UE_LOG(LogFPMCharacterPreview, Warning,
-           TEXT("FPM: No base material on preview mesh slot 0."));
   }
+  return INDEX_NONE;
 }

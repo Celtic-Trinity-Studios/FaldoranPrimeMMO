@@ -8,7 +8,6 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 
-
 // ===================================================================
 //  Static Members
 // ===================================================================
@@ -39,7 +38,7 @@ void FPMChunkOverlayManager::Initialize(const FString &SaveDirectory) {
 FString
 FPMChunkOverlayManager::GetOverlayFilePath(const FFPMChunkCoord &Coord) {
   return FPaths::Combine(
-      SaveDir, FString::Printf(TEXT("Chunk_%d_%d.json"), Coord.X, Coord.Y));
+      SaveDir, FString::Printf(TEXT("Chunk_%d_%d.json"), Coord.Q, Coord.R));
 }
 
 // ===================================================================
@@ -107,8 +106,8 @@ bool FPMChunkOverlayManager::SaveOverlay(const FFPMChunkOverlay &Overlay) {
   TSharedPtr<FJsonObject> RootObject = MakeShareable(new FJsonObject());
 
   // Chunk coordinate metadata
-  RootObject->SetNumberField(TEXT("chunkX"), Overlay.Coord.X);
-  RootObject->SetNumberField(TEXT("chunkY"), Overlay.Coord.Y);
+  RootObject->SetNumberField(TEXT("chunkQ"), Overlay.Coord.Q);
+  RootObject->SetNumberField(TEXT("chunkR"), Overlay.Coord.R);
 
   // Modifications array
   TArray<TSharedPtr<FJsonValue>> ModsArray;

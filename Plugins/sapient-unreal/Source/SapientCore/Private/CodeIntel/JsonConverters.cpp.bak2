@@ -1,0 +1,293 @@
+// Copyright © 2024 - 2025 Sapient Technology, Inc.
+// SPDX-License-Identifier: Proprietary
+
+#include "CodeIntel/JsonConverters.h"
+#include "CodeIntel/CodeIntelLogging.h"
+#include "CodeIntel/TypeBridge.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonWriter.h"
+#include "Serialization/JsonSerializer.h"
+
+namespace Sapient {
+namespace CodeIntel {
+
+// ===== Generic Helper Functions =====
+
+TSharedPtr<FJsonArray> StringVectorToJsonArray(const std::vector<std::string>& Vector) {
+    TSharedPtr<FJsonArray> JsonArray = MakeShared<FJsonArray>();
+    for (const std::string& Str : Vector) {
+        JsonArray->Add(MakeShared<FJsonValueString>(ToFString(Str)));
+    }
+    return JsonArray;
+}
+
+TSharedPtr<FJsonObject> StringCountMapToJson(const std::unordered_map<std::string, std::size_t>& Map) {
+    TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
+    for (const auto& Pair : Map) {
+        FString Key = ToFString(Pair.first);
+        JsonObj->SetNumberField(Key, static_cast<double>(Pair.second));
+    }
+    return JsonObj;
+}
+
+// ===== Helper Converters for Nested Types =====
+
+TSharedPtr<FJsonObject> SymbolHitToJson(const AgentTools::SymbolHit& Hit) {
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetStringField(TEXT("name"), ToFString(Hit.name));
+    Json->SetStringField(TEXT("kind"), ToFString(Hit.kind));
+    Json->SetStringField(TEXT("file"), ToFString(Hit.file));
+    Json->SetNumberField(TEXT("line"), Hit.line);
+
+    // Optional fields
+    if (!Hit.sid.empty()) {
+        Json->SetStringField(TEXT("sid"), ToFString(Hit.sid));
+    }
+
+    if (!Hit.snippet.empty()) {
+        Json->SetStringField(TEXT("snippet"), ToFString(Hit.snippet));
+    }
+
+    return Json;
+}
+
+TSharedPtr<FJsonArray> SymbolHitsToJsonArray(const std::vector<AgentTools::SymbolHit>& Hits) {
+    TSharedPtr<FJsonArray> JsonArray = MakeShared<FJsonArray>();
+    for (const auto& Hit : Hits) {
+        JsonArray->Add(MakeShared<FJsonValueObject>(SymbolHitToJson(Hit)));
+    }
+    return JsonArray;
+}
+
+TSharedPtr<FJsonObject> RefHitToJson(const AgentTools::RefHit& Hit) {
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetNumberField(TEXT("line"), Hit.line);
+    Json->SetStringField(TEXT("kind"), ToFString(Hit.kind));
+
+    // Optional snippet
+    if (!Hit.snippet.empty()) {
+        Json->SetStringField(TEXT("snippet"), ToFString(Hit.snippet));
+    }
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> FileRefsToJson(const AgentTools::FileRefs& FileRefs) {
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetStringField(TEXT("file"), ToFString(FileRefs.file));
+    Json->SetNumberField(TEXT("count"), static_cast<double>(FileRefs.count));
+
+    // Hits array
+    TSharedPtr<FJsonArray> HitsArray = MakeShared<FJsonArray>();
+    for (const auto& Hit : FileRefs.hits) {
+        HitsArray->Add(MakeShared<FJsonValueObject>(RefHitToJson(Hit)));
+    }
+    Json->SetArrayField(TEXT("hits"), *HitsArray);
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> LocationToJson(const AgentTools::Location& Location) {
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetStringField(TEXT("file"), ToFString(Location.file));
+    Json->SetNumberField(TEXT("line"), Location.line);
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> RangeToJson(const AgentTools::Range& Range) {
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetNumberField(TEXT("lineStart"), Range.lineStart);
+    Json->SetNumberField(TEXT("lineEnd"), Range.lineEnd);
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> FileSymbolEntryToJson(const AgentTools::FileSymbolEntry& Entry) {
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetStringField(TEXT("name"), ToFString(Entry.name));
+    Json->SetStringField(TEXT("kind"), ToFString(Entry.kind));
+    Json->SetNumberField(TEXT("line"), Entry.line);
+
+    // Optional bases array
+    if (!Entry.bases.empty()) {
+        Json->SetArrayField(TEXT("bases"), StringVectorToJsonArray(Entry.bases));
+    }
+
+    // Optional baseQualified array
+    if (!Entry.baseQualified.empty()) {
+        Json->SetArrayField(TEXT("baseQualified"), StringVectorToJsonArray(Entry.baseQualified));
+    }
+
+    // Optional snippet
+    if (!Entry.snippet.empty()) {
+        Json->SetStringField(TEXT("snippet"), ToFString(Entry.snippet));
+    }
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> FileOverviewSummaryToJson(const AgentTools::FileOverviewSummary& Summary) {
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetNumberField(TEXT("Classes"), static_cast<double>(Summary.Classes));
+    Json->SetNumberField(TEXT("Methods"), static_cast<double>(Summary.Methods));
+    Json->SetNumberField(TEXT("Enums"), static_cast<double>(Summary.Enums));
+    Json->SetNumberField(TEXT("Delegates"), static_cast<double>(Summary.Delegates));
+
+    // Macros map
+    Json->SetObjectField(TEXT("Macros"), StringCountMapToJson(Summary.Macros));
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> CompanionInfoToJson(const AgentTools::CompanionInfo& Info) {
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetBoolField(TEXT("found"), Info.found);
+    Json->SetStringField(TEXT("path"), ToFString(Info.path));
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> GraphNodeToJson(const AgentTools::GraphNode& Node) {
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetStringField(TEXT("id"), ToFString(Node.id));
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> GraphEdgeToJson(const AgentTools::GraphEdge& Edge) {
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetStringField(TEXT("from"), ToFString(Edge.from));
+    Json->SetStringField(TEXT("to"), ToFString(Edge.to));
+
+    return Json;
+}
+
+// ===== Main Response Converters =====
+
+TSharedPtr<FJsonObject> CodeSearchToJson(const AgentTools::CodeSearchResponse& Response) {
+    UE_LOG(LogCodeIntel, VeryVerbose,
+           TEXT("Converting CodeSearchResponse: %llu kinds, %llu examples"),
+           static_cast<uint64>(Response.countsByKind.size()),
+           static_cast<uint64>(Response.examples.size()));
+
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    // Counts by kind
+    Json->SetObjectField(TEXT("countsByKind"), StringCountMapToJson(Response.countsByKind));
+
+    // Examples array
+    Json->SetArrayField(TEXT("examples"), SymbolHitsToJsonArray(Response.examples));
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> FindReferencesToJson(const AgentTools::FindReferencesResponse& Response) {
+    UE_LOG(LogCodeIntel, VeryVerbose,
+           TEXT("Converting FindReferencesResponse: %llu total, %llu files, truncated=%d"),
+           static_cast<uint64>(Response.totalCount),
+           static_cast<uint64>(Response.files.size()),
+           Response.truncated);
+
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetNumberField(TEXT("totalCount"), static_cast<double>(Response.totalCount));
+    Json->SetBoolField(TEXT("truncated"), Response.truncated);
+
+    // Files array
+    TSharedPtr<FJsonArray> FilesArray = MakeShared<FJsonArray>();
+    for (const auto& FileRef : Response.files) {
+        FilesArray->Add(MakeShared<FJsonValueObject>(FileRefsToJson(FileRef)));
+    }
+    Json->SetArrayField(TEXT("files"), *FilesArray);
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> GoToDefinitionToJson(const AgentTools::GoToDefinitionResponse& Response) {
+    UE_LOG(LogCodeIntel, VeryVerbose,
+           TEXT("Converting GoToDefinitionResponse: found=%d, kind=%s"),
+           Response.found,
+           *ToFString(Response.kind));
+
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetBoolField(TEXT("found"), Response.found);
+    Json->SetStringField(TEXT("kind"), ToFString(Response.kind));
+    Json->SetObjectField(TEXT("location"), LocationToJson(Response.location));
+    Json->SetObjectField(TEXT("range"), RangeToJson(Response.range));
+    Json->SetStringField(TEXT("signature"), ToFString(Response.signature));
+    Json->SetBoolField(TEXT("isDefinition"), Response.isDefinition);
+    Json->SetStringField(TEXT("text"), ToFString(Response.text));
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> FileOverviewToJson(const AgentTools::FileOverviewResponse& Response) {
+    UE_LOG(LogCodeIntel, VeryVerbose,
+           TEXT("Converting FileOverviewResponse: %llu symbols"),
+           static_cast<uint64>(Response.symbols.size()));
+
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    // Symbols array
+    TSharedPtr<FJsonArray> SymbolsArray = MakeShared<FJsonArray>();
+    for (const auto& Symbol : Response.symbols) {
+        SymbolsArray->Add(MakeShared<FJsonValueObject>(FileSymbolEntryToJson(Symbol)));
+    }
+    Json->SetArrayField(TEXT("symbols"), *SymbolsArray);
+
+    // Summary
+    Json->SetObjectField(TEXT("summary"), FileOverviewSummaryToJson(Response.summary));
+
+    // Companion info
+    Json->SetObjectField(TEXT("companion"), CompanionInfoToJson(Response.companion));
+
+    // String arrays
+    Json->SetArrayField(TEXT("includedBy"), StringVectorToJsonArray(Response.includedBy));
+    Json->SetArrayField(TEXT("includes"), StringVectorToJsonArray(Response.includes));
+    Json->SetArrayField(TEXT("delegates"), StringVectorToJsonArray(Response.delegates));
+
+    return Json;
+}
+
+TSharedPtr<FJsonObject> ExploreGraphToJson(const AgentTools::ExploreCodeGraphResponse& Response) {
+    UE_LOG(LogCodeIntel, VeryVerbose,
+           TEXT("Converting ExploreCodeGraphResponse: supported=%d, %llu nodes, %llu edges"),
+           Response.supported,
+           static_cast<uint64>(Response.nodes.size()),
+           static_cast<uint64>(Response.edges.size()));
+
+    TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+
+    Json->SetBoolField(TEXT("supported"), Response.supported);
+
+    // Nodes array
+    TSharedPtr<FJsonArray> NodesArray = MakeShared<FJsonArray>();
+    for (const auto& Node : Response.nodes) {
+        NodesArray->Add(MakeShared<FJsonValueObject>(GraphNodeToJson(Node)));
+    }
+    Json->SetArrayField(TEXT("nodes"), *NodesArray);
+
+    // Edges array
+    TSharedPtr<FJsonArray> EdgesArray = MakeShared<FJsonArray>();
+    for (const auto& Edge : Response.edges) {
+        EdgesArray->Add(MakeShared<FJsonValueObject>(GraphEdgeToJson(Edge)));
+    }
+    Json->SetArrayField(TEXT("edges"), *EdgesArray);
+
+    return Json;
+}
+
+} // namespace CodeIntel
+} // namespace Sapient

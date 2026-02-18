@@ -8,37 +8,28 @@
 #include "FPMCharacterCreationWidget.generated.h"
 
 class AFPMCharacterPreviewActor;
+class UBorder;
 class UButton;
 class UComboBoxString;
 class UEditableTextBox;
 class UImage;
 class USlider;
 class UTextBlock;
+class UVerticalBox;
 
 /**
  * UFPMCharacterCreationWidget
  *
- * C++ backing class for the WBP_CharacterCreation Widget Blueprint.
- * Provides BindWidget links to UI elements and forwards the submit
- * action to the owning AFPMPlayerController, which sends a Server RPC.
+ * Programmatically builds the character creation UI with the
+ * "Glass & Gold" theme (matching login and character select).
  *
- * Manages a client-only AFPMCharacterPreviewActor that renders a 3D
- * mannequin preview. Slider changes call the preview actor's setters
- * in real-time. Mouse drag orbits the preview; mouse wheel zooms.
+ * Three-column layout:
+ *   Left   — Physical attributes (name, gender, appearance sliders)
+ *   Center — 3D character preview (scene capture render target)
+ *   Right  — Affinities (playstyle & magical point pools)
  *
- * Required widgets (BindWidget):
- *   - NameInput, BodyTypeSlider, SkinRedSlider, SkinGreenSlider,
- *     SkinBlueSlider, HairStyleComboBox, HairColorRedSlider,
- *     HairColorGreenSlider, HairColorBlueSlider, SubmitButton,
- *     BackButton, ResultText, PreviewImage
- *   - Affinity sliders: MartialSlider, RangedSlider, MagicSlider,
- *     CraftingSlider, SocialSlider, SurvivalSlider
- *   - Magical affinity sliders: FireSlider, WaterSlider, EarthSlider,
- *     AirSlider, LightSlider, ShadowSlider, NatureSlider, ArcaneSlider
- *   - PlaystyleTotalText, MagicalTotalText
- *
- * Optional widgets (BindWidgetOptional):
- *   - RotateLeftButton, RotateRightButton, ZoomInButton, ZoomOutButton
+ * The Widget Blueprint only needs an empty root CanvasPanel.
+ * Everything else is created in BuildUI().
  */
 UCLASS()
 class FALDORANPRIMEMMO_API UFPMCharacterCreationWidget : public UUserWidget {
@@ -47,7 +38,6 @@ class FALDORANPRIMEMMO_API UFPMCharacterCreationWidget : public UUserWidget {
 public:
   UFPMCharacterCreationWidget(const FObjectInitializer &ObjectInitializer);
 
-  /** Update the result text shown to the user (e.g., error or success). */
   UFUNCTION(BlueprintCallable, Category = "FPM|UI")
   void SetResultMessage(const FString &Message, bool bIsError);
 
@@ -57,7 +47,6 @@ protected:
   virtual void NativeTick(const FGeometry &MyGeometry,
                           float DeltaTime) override;
 
-  // Mouse input for orbit/zoom over the preview
   virtual FReply
   NativeOnMouseButtonDown(const FGeometry &InGeometry,
                           const FPointerEvent &InMouseEvent) override;
@@ -68,134 +57,81 @@ protected:
                                    const FPointerEvent &InMouseEvent) override;
   virtual FReply NativeOnMouseWheel(const FGeometry &InGeometry,
                                     const FPointerEvent &InMouseEvent) override;
-
-  // --- Required Bound Widgets: Appearance ---
-
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<UEditableTextBox> NameInput;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<USlider> BodyTypeSlider;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<USlider> SkinRedSlider;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<USlider> SkinGreenSlider;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<USlider> SkinBlueSlider;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<UComboBoxString> HairStyleComboBox;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<USlider> HairColorRedSlider;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<USlider> HairColorGreenSlider;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<USlider> HairColorBlueSlider;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<UButton> SubmitButton;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<UButton> BackButton;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<UTextBlock> ResultText;
-  UPROPERTY(meta = (BindWidget))
-  TObjectPtr<UImage> PreviewImage;
-
-  // --- Optional Bound Widgets: Playstyle Affinities (pool of 600) ---
-
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> MartialSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> RangedSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> MagicSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> CraftingSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> SocialSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> SurvivalSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<UTextBlock> PlaystyleTotalText;
-
-  // --- Optional Bound Widgets: Magical Affinities (pool of 800) ---
-
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> FireSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> WaterSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> EarthSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> AirSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> LightSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> ShadowSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> NatureSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<USlider> ArcaneSlider;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<UTextBlock> MagicalTotalText;
-
-  // --- Optional Camera Control Buttons ---
-
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<UButton> RotateLeftButton;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<UButton> RotateRightButton;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<UButton> ZoomInButton;
-  UPROPERTY(meta = (BindWidgetOptional))
-  TObjectPtr<UButton> ZoomOutButton;
+  virtual FReply
+  NativeOnMouseButtonDoubleClick(const FGeometry &InGeometry,
+                                 const FPointerEvent &InMouseEvent) override;
 
 private:
-  UFUNCTION()
-  void OnSubmitClicked();
-  UFUNCTION()
-  void OnBackClicked();
+  // --- UI Construction ---
+  void BuildUI();
 
-  void PopulateHairStyles();
+  /** Helper: add a gold section header label to a vertical box. */
+  void AddSectionLabel(UVerticalBox *Parent, const FString &Text);
+  /** Helper: add a muted sub-label to a vertical box. */
+  void AddSubLabel(UVerticalBox *Parent, const FString &Text);
+  /** Helper: create a slider row (label + slider) and return the slider. */
+  USlider *AddSliderRow(UVerticalBox *Parent, const FString &Label, float Min,
+                        float Max, float Default);
+  /** Helper: create an affinity slider row with a value readout. */
+  USlider *AddAffinityRow(UVerticalBox *Parent, const FString &Label, float Max,
+                          float Default, UTextBlock *&OutValueText);
+  /** Helper: create a styled button (gold filled or ghost outline). */
+  UButton *MakeButton(const FString &Label, bool bGoldFilled);
 
-  // --- Preview Actor Management ---
-  void SpawnPreviewActor();
-  void DestroyPreviewActor();
-  void UpdatePreviewFromSliders();
+  // --- Core Widgets ---
+  UPROPERTY() TObjectPtr<UImage> BackgroundImage;
+  UPROPERTY() TObjectPtr<UEditableTextBox> NameInput;
+  UPROPERTY() TObjectPtr<UButton> GenderMaleBtn;
+  UPROPERTY() TObjectPtr<UButton> GenderFemaleBtn;
+  UPROPERTY() TObjectPtr<USlider> BodyTypeSlider;
+  UPROPERTY() TObjectPtr<UComboBoxString> HairStyleComboBox;
+  UPROPERTY() TObjectPtr<UImage> PreviewImage;
+  UPROPERTY() TObjectPtr<UTextBlock> ResultText;
+  UPROPERTY() TObjectPtr<UButton> SubmitButton;
+  UPROPERTY() TObjectPtr<UButton> BackButton;
 
-  // --- Slider Callbacks ---
-  UFUNCTION()
-  void OnBodyTypeSliderChanged(float Value);
-  UFUNCTION()
-  void OnSkinSliderChanged(float Value);
-  UFUNCTION()
-  void OnHairColorSliderChanged(float Value);
+  // Color sliders: each array is [R, G, B]
+  UPROPERTY() TArray<TObjectPtr<USlider>> SkinSliders;
+  UPROPERTY() TArray<TObjectPtr<USlider>> EyeSliders;
+  UPROPERTY() TArray<TObjectPtr<USlider>> HairColorSliders;
+
+  // Morph sliders: [Jaw, Nose, Brow, Lips]
+  UPROPERTY() TArray<TObjectPtr<USlider>> MorphSliders;
+
+  // Playstyle affinity sliders & value labels (pool of 600)
+  UPROPERTY() TArray<TObjectPtr<USlider>> PlaystyleSliders;
+  UPROPERTY() TArray<TObjectPtr<UTextBlock>> PlaystyleValues;
+  UPROPERTY() TObjectPtr<UTextBlock> PlaystyleTotalText;
+
+  // Magical affinity sliders & value labels (pool of 800)
+  UPROPERTY() TArray<TObjectPtr<USlider>> MagicalSliders;
+  UPROPERTY() TArray<TObjectPtr<UTextBlock>> MagicalValues;
+  UPROPERTY() TObjectPtr<UTextBlock> MagicalTotalText;
+
+  // --- Callbacks ---
+  UFUNCTION() void OnSubmitClicked();
+  UFUNCTION() void OnBackClicked();
+  UFUNCTION() void OnGenderMaleClicked();
+  UFUNCTION() void OnGenderFemaleClicked();
+  UFUNCTION() void OnAppearanceChanged(float Value);
   UFUNCTION()
   void OnHairStyleChanged(FString SelectedItem,
                           ESelectInfo::Type SelectionType);
+  UFUNCTION() void OnPlaystyleChanged(float Value);
+  UFUNCTION() void OnMagicalChanged(float Value);
 
-  // --- Affinity Slider Callbacks ---
-  UFUNCTION()
-  void OnPlaystyleAffinityChanged(float Value);
-  UFUNCTION()
-  void OnMagicalAffinityChanged(float Value);
-
-  /** Recalculate and display the playstyle points total. */
+  // --- Preview Actor ---
+  void SpawnPreviewActor();
+  void DestroyPreviewActor();
+  void UpdatePreviewFromSliders();
+  void UpdateGenderButtons();
   void UpdatePlaystyleTotal();
-  /** Recalculate and display the magical points total. */
   void UpdateMagicalTotal();
+  void PopulateHairStyles();
 
-  // --- Camera Control Callbacks ---
-  UFUNCTION()
-  void OnRotateLeftClicked();
-  UFUNCTION()
-  void OnRotateRightClicked();
-  UFUNCTION()
-  void OnZoomInClicked();
-  UFUNCTION()
-  void OnZoomOutClicked();
+  UPROPERTY() TObjectPtr<AFPMCharacterPreviewActor> PreviewActor;
 
-  /** The client-only 3D character preview actor. */
-  UPROPERTY()
-  TObjectPtr<AFPMCharacterPreviewActor> PreviewActor;
-
+  bool bIsFemale = false;
   bool bIsOrbitDragging = false;
   bool bRotatingLeft = false;
   bool bRotatingRight = false;
@@ -203,6 +139,8 @@ private:
   static constexpr float OrbitSensitivity = 0.5f;
   static constexpr float ButtonRotateSpeed = 90.0f;
   static constexpr float ButtonZoomStep = 2.0f;
-
   static const FVector PreviewSpawnOffset;
+
+  // CC5 morph target names
+  static const FName MorphNames[4];
 };
