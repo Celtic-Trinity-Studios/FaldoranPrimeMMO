@@ -10,7 +10,9 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "EngineUtils.h"
 #include "World/FPMChunkData.h"
+#include "World/FPMWorldChunkManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPMPlayerCharacter, Log, All);
 
@@ -165,6 +167,13 @@ void AFPMPlayerCharacter::Tick(float DeltaTime) {
     constexpr float FallThroughThreshold = -2000.0f;
 
     if (Loc.Z < FallThroughThreshold) {
+      // Cooldown: avoid repeated triggers each frame
+      const double Now = FPlatformTime::Seconds();
+      if (Now - LastFallRecoveryTime < 5.0) {
+        return; // Already recovered recently, wait for terrain to load
+      }
+      LastFallRecoveryTime = Now;
+
       // Trace from high above to find terrain
       const FVector TraceStart(Loc.X, Loc.Y, 50000.0f);
       const FVector TraceEnd(Loc.X, Loc.Y, -10000.0f);
@@ -184,28 +193,52 @@ void AFPMPlayerCharacter::Tick(float DeltaTime) {
         SafePos = FVector(Hit.ImpactPoint.X, Hit.ImpactPoint.Y,
                           Hit.ImpactPoint.Z + CapsuleHalf + 50.0f);
       } else {
-        // No terrain found — emergency teleport to safe origin
-        SafePos = FVector(0.0f, 0.0f, 5000.0f);
+        // No terrain found -- teleport to origin and force-load chunks there
+        SafePos = FVector(0.0f, 0.0f, 500.0f);
+      }
+
+      // Force-load chunks at the recovery destination
+      UWorld *W = GetWorld();
+      if (W) {
+        for (TActorIterator<AFPMWorldChunkManager> It(W); It; ++It) {
+          It->EnsureChunkLoadedAtWorldPos(SafePos);
+          It->ForceChunkUpdate();
+          break;
+        }
       }
 
       // Stop all movement BEFORE teleporting
       if (UCharacterMovementComponent *CMC = GetCharacterMovement()) {
         CMC->StopMovementImmediately();
-        CMC->SetMovementMode(MOVE_Falling);
+        CMC->SetMovementMode(MOVE_Flying);
+        CMC->GravityScale = 0.0f;
       }
 
       // TeleportTo resets physics state so CMC won't override the position
       TeleportTo(SafePos, GetActorRotation());
 
-      // Switch back to Walking after teleport
-      if (UCharacterMovementComponent *CMC = GetCharacterMovement()) {
-        CMC->SetMovementMode(MOVE_Walking);
+      // Re-enable gravity after a short delay to let collision cook
+      TWeakObjectPtr<AFPMPlayerCharacter> WeakSelf = this;
+      if (W) {
+        FTimerHandle TH;
+        W->GetTimerManager().SetTimer(
+            TH,
+            [WeakSelf]() {
+              if (AFPMPlayerCharacter *C = WeakSelf.Get()) {
+                if (UCharacterMovementComponent *MC =
+                        C->GetCharacterMovement()) {
+                  MC->GravityScale = 1.0f;
+                  MC->SetMovementMode(MOVE_Walking);
+                }
+              }
+            },
+            1.0f, false);
       }
 
       UE_LOG(LogFPMPlayerCharacter, Warning,
-             TEXT("FPM: Fall-through recovery — teleported from Z=%.0f to "
+             TEXT("FPM: Fall-through recovery -- teleported from Z=%.0f to "
                   "Z=%.0f at XY=(%.0f, %.0f)"),
-             Loc.Z, SafePos.Z, Loc.X, Loc.Y);
+             Loc.Z, SafePos.Z, SafePos.X, SafePos.Y);
     }
   }
 }

@@ -47,3 +47,22 @@ CREATE INDEX IF NOT EXISTS idx_characters_account_id ON characters (account_id);
 
 -- Index for checking character name uniqueness quickly
 CREATE INDEX IF NOT EXISTS idx_characters_name ON characters (character_name);
+
+-- -------------------------------------------------------------------
+-- Character Affinities Table
+-- -------------------------------------------------------------------
+-- Stores both playstyle and magical affinity point distributions.
+-- affinity_type = 'playstyle' or 'magical'
+-- affinity_name = enum name (e.g. 'Martial', 'Fire', etc.)
+-- points = allocated point value
+CREATE TABLE IF NOT EXISTS character_affinities (
+    character_id    UUID NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
+    affinity_type   VARCHAR(20) NOT NULL,    -- 'playstyle' or 'magical'
+    affinity_name   VARCHAR(20) NOT NULL,    -- e.g. 'Martial', 'Fire'
+    points          INTEGER NOT NULL DEFAULT 100,
+    PRIMARY KEY (character_id, affinity_type, affinity_name)
+);
+
+-- Index for retrieving all affinities for a character
+CREATE INDEX IF NOT EXISTS idx_affinities_character_id ON character_affinities (character_id);
+

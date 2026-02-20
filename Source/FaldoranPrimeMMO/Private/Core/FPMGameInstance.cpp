@@ -5,6 +5,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Misc/ConfigCacheIni.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogFPMGameInstance, Log, All);
+
 void UFPMGameInstance::Init() {
   Super::Init();
 
@@ -17,37 +19,80 @@ void UFPMGameInstance::Init() {
     if (CVar) {
       CVar->Set(1);
       UE_LOG(
-          LogTemp, Log,
+          LogFPMGameInstance, Log,
           TEXT("FPM: Set net.SkipMissingLevelDisconnect=1 (dedicated server)"));
     }
   }
 
-  // --- Read server connection settings from DefaultGame.ini ---
-  FString IniPath =
-      FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("DefaultGame.ini"));
-  FConfigCacheIni::NormalizeConfigIniPath(IniPath);
+  // --- Read server connection settings ---
+  // Priority: Environment variables > ServerSecrets.ini > DefaultGame.ini
 
+  // Priority 1: Environment variables
+  FString EnvIP = FPlatformMisc::GetEnvironmentVariable(TEXT("FPM_SERVER_IP"));
+  FString EnvPort =
+      FPlatformMisc::GetEnvironmentVariable(TEXT("FPM_SERVER_PORT"));
+
+  if (!EnvIP.IsEmpty()) {
+    ServerIP = EnvIP;
+  }
+  if (!EnvPort.IsEmpty()) {
+    ServerPort = FCString::Atoi(*EnvPort);
+  }
+
+  // Priority 2: ServerSecrets.ini (gitignored)
+  FString SecretsPath =
+      FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("ServerSecrets.ini"));
+  if (FPaths::FileExists(SecretsPath)) {
+    FConfigFile SecretsConfig;
+    SecretsConfig.Read(SecretsPath);
+
+    FString Val;
+    if (EnvIP.IsEmpty()) {
+      if (SecretsConfig.GetString(TEXT("FPM.Server"), TEXT("ServerIP"), Val))
+        ServerIP = Val;
+    }
+    int32 IniPort;
+    if (EnvPort.IsEmpty()) {
+      if (SecretsConfig.GetString(TEXT("FPM.Server"), TEXT("ServerPort"),
+                                  Val)) {
+        IniPort = FCString::Atoi(*Val);
+        if (IniPort > 0)
+          ServerPort = IniPort;
+      }
+    }
+    bool IniAutoConnect = bAutoConnect;
+    if (SecretsConfig.GetString(TEXT("FPM.Server"), TEXT("bAutoConnect"),
+                                Val)) {
+      bAutoConnect = Val.ToBool();
+    }
+  }
+
+  // Priority 3: DefaultGame.ini via UE config layering (GGameIni)
   if (GConfig) {
     FString IniIP;
-    if (GConfig->GetString(TEXT("FPM.Server"), TEXT("ServerIP"), IniIP,
-                           IniPath)) {
-      ServerIP = IniIP;
+    if (EnvIP.IsEmpty() && ServerIP == TEXT("127.0.0.1")) {
+      if (GConfig->GetString(TEXT("FPM.Server"), TEXT("ServerIP"), IniIP,
+                             GGameIni)) {
+        ServerIP = IniIP;
+      }
     }
 
     int32 IniPort = ServerPort;
-    if (GConfig->GetInt(TEXT("FPM.Server"), TEXT("ServerPort"), IniPort,
-                        IniPath)) {
-      ServerPort = IniPort;
+    if (EnvPort.IsEmpty()) {
+      if (GConfig->GetInt(TEXT("FPM.Server"), TEXT("ServerPort"), IniPort,
+                          GGameIni)) {
+        ServerPort = IniPort;
+      }
     }
 
     bool IniAutoConnect = bAutoConnect;
     if (GConfig->GetBool(TEXT("FPM.Server"), TEXT("bAutoConnect"),
-                         IniAutoConnect, IniPath)) {
+                         IniAutoConnect, GGameIni)) {
       bAutoConnect = IniAutoConnect;
     }
   }
 
-  UE_LOG(LogTemp, Log,
+  UE_LOG(LogFPMGameInstance, Log,
          TEXT("FPM: GameInstance initialized  |  Server=%s:%d  AutoConnect=%s"),
          *ServerIP, ServerPort, bAutoConnect ? TEXT("YES") : TEXT("NO"));
 
@@ -67,7 +112,7 @@ void UFPMGameInstance::ConnectToDedicatedServer() {
   const FString TravelURL =
       FString::Printf(TEXT("%s:%d"), *ServerIP, ServerPort);
 
-  UE_LOG(LogTemp, Warning,
+  UE_LOG(LogFPMGameInstance, Warning,
          TEXT("FPM: Connecting to dedicated server at %s ..."), *TravelURL);
 
   // Get the first local player controller and travel to the server
@@ -75,7 +120,7 @@ void UFPMGameInstance::ConnectToDedicatedServer() {
   if (PC) {
     PC->ClientTravel(TravelURL, TRAVEL_Absolute);
   } else {
-    UE_LOG(LogTemp, Error,
+    UE_LOG(LogFPMGameInstance, Error,
            TEXT("FPM: Cannot connect — no local PlayerController found!"));
   }
 }

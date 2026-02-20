@@ -12,6 +12,38 @@ Saved/
 *.uasset
 *.umap
 
+# --- Raw file assets (source art, models, audio) ---
+RawAssets/
+RawTextures/
+
+# Raw image formats
+*.psd
+*.tga
+*.bmp
+*.tif
+*.tiff
+*.exr
+*.hdr
+*.r16
+*.r32
+
+# Raw 3D model formats
+*.fbx
+*.obj
+*.blend
+*.blend1
+*.ma
+*.mb
+*.max
+*.3ds
+*.dae
+
+# Raw audio formats
+*.wav
+*.flac
+*.aiff
+*.aif
+
 # IDE files
 .vs/
 .vscode/
@@ -43,3 +75,17 @@ PackagedClient/
 
 # PostgreSQL installer (temp)
 postgresql-*.exe
+
+# --- Server Secrets (NEVER commit) ---
+Config/ServerSecrets.ini
+Config/ServerSecrets*.ini
+!Config/ServerSecrets.ini.template
+*.env
+.env.*
+ServerConfig/
+
+# --- Credential and key files ---
+*.pem
+*.key
+*.p12
+*.pfx

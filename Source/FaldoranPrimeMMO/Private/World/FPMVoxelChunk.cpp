@@ -390,6 +390,8 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
   // Chunk world origin (bottom-left corner)
   const FVector ChunkOrigin = FPMChunkGenerator::ChunkToWorldOrigin(Coord);
   const float VS = VoxelSizeCm;
+  // Overlap margin: grid starts OverlapMargin voxels BEFORE the chunk origin
+  const float OverlapOff = OverlapOffsetCm;
 
   // --- 1. Build density grid ---
   TArray<float> Density;
@@ -398,9 +400,9 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
   for (int32 Z = 0; Z < GridZ; ++Z) {
     const float WorldZ = WorldZBase + Z * VS;
     for (int32 Y = 0; Y < GridY; ++Y) {
-      const float WorldY = ChunkOrigin.Y + Y * VS;
+      const float WorldY = ChunkOrigin.Y - OverlapOff + Y * VS;
       for (int32 X = 0; X < GridX; ++X) {
-        const float WorldX = ChunkOrigin.X + X * VS;
+        const float WorldX = ChunkOrigin.X - OverlapOff + X * VS;
         const int32 Idx = Z * GridX * GridY + Y * GridX + X;
 
         // Density > 0 = solid (below surface), < 0 = air (above surface)
@@ -421,8 +423,8 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
 
   // --- 2. Marching Cubes ---
   for (int32 Z = 0; Z < ChunkVoxelsZ; ++Z) {
-    for (int32 Y = 0; Y < ChunkVoxelsXY; ++Y) {
-      for (int32 X = 0; X < ChunkVoxelsXY; ++X) {
+    for (int32 Y = 0; Y < ChunkVoxelsXY_Total; ++Y) {
+      for (int32 X = 0; X < ChunkVoxelsXY_Total; ++X) {
         // 8 corner densities and positions
         float CornerDensity[8];
         FVector CornerPos[8];
@@ -434,7 +436,7 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
           const int32 Idx = CZ * GridX * GridY + CY * GridX + CX;
           CornerDensity[C] = Density[Idx];
 
-          CornerPos[C] = FVector(CX * VS, CY * VS, WorldZBase + CZ * VS);
+          CornerPos[C] = FVector(CX * VS - OverlapOff, CY * VS - OverlapOff, WorldZBase + CZ * VS);
         }
 
         // Determine cube configuration index

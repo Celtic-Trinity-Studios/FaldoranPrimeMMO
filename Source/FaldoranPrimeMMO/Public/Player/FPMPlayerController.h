@@ -164,4 +164,43 @@ private:
    * Server-side only. Used for disconnect cleanup.
    */
   FGuid ActiveCharacterId;
+
+  // --- Rate Limiting & Auth Lockout ---
+
+  /** Maximum allowed string length for RPC string inputs. */
+  static constexpr int32 MaxRPCStringLength = 256;
+
+  /** Maximum login attempts before lockout. */
+  static constexpr int32 MaxLoginAttempts = 10;
+
+  /** Login rate limit: max attempts per window. */
+  static constexpr int32 MaxLoginAttemptsPerWindow = 5;
+
+  /** Account creation rate limit: max per window. */
+  static constexpr int32 MaxCreateAccountPerWindow = 3;
+
+  /** Rate limit window duration in seconds. */
+  static constexpr double RateLimitWindowSeconds = 60.0;
+
+  /** Failed login counter for lockout. */
+  int32 FailedLoginAttempts = 0;
+
+  /** Whether this connection is locked out from login. */
+  bool bIsLockedOut = false;
+
+  /** Timestamps of recent login attempts for rate limiting. */
+  TArray<double> LoginAttemptTimestamps;
+
+  /** Timestamps of recent account creation attempts. */
+  TArray<double> CreateAccountTimestamps;
+
+  /**
+   * Check if an action is rate limited based on the given timestamps.
+   * Prunes old timestamps and returns true if limit exceeded.
+   */
+  static bool IsRateLimited(TArray<double> &Timestamps, int32 MaxPerWindow,
+                            double WindowSeconds);
+
+  /** Clamp an FString to MaxLen characters. */
+  static FString ClampString(const FString &Input, int32 MaxLen);
 };

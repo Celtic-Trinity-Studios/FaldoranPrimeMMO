@@ -151,8 +151,8 @@ static void SnapPointsToGrid(TArray<FTransform> &Points,
 static bool SampleHeightmapZ(const FFPMChunkHeightmapData &Data, float LocalX,
                              float LocalY, float &OutZ) {
   // Hex bounding box dimensions — heightmap covers this area
-  constexpr float SizeX = FPMChunkConstants::HexOuterRadius * 2.0f;
-  constexpr float SizeY = FPMChunkConstants::HexInnerRadius * 2.0f;
+  constexpr float SizeX = FPMChunkConstants::ChunkWorldSize;
+  constexpr float SizeY = FPMChunkConstants::ChunkWorldSize;
   constexpr int32 Res = FPMChunkConstants::ChunkResolution;
   // Normalized 0-1 min/max vertical range
   constexpr float WorldMinZ = FPMChunkConstants::MinWorldZ;
@@ -228,9 +228,9 @@ void FPMBiomePCGSpawner::GenerateScatterPoints(const FFPMChunkCoord &ChunkCoord,
 
   OutPoints.Reserve(Count);
 
-  // Hex bounding box dimensions for scatter area
-  const float BBoxSizeX = FPMChunkConstants::HexOuterRadius * 2.0f;
-  const float BBoxSizeY = FPMChunkConstants::HexInnerRadius * 2.0f;
+  // Square chunk dimensions for scatter area
+  const float BBoxSizeX = FPMChunkConstants::ChunkWorldSize;
+  const float BBoxSizeY = FPMChunkConstants::ChunkWorldSize;
   const FVector ChunkOrigin = FPMChunkGenerator::ChunkToWorldOrigin(ChunkCoord);
   FRandomStream RNG(ChunkSeed + static_cast<int32>(TargetBiome) * 7919);
 
@@ -247,14 +247,7 @@ void FPMBiomePCGSpawner::GenerateScatterPoints(const FFPMChunkCoord &ChunkCoord,
     const float WorldX = ChunkOrigin.X + LocalX;
     const float WorldY = ChunkOrigin.Y + LocalY;
 
-    // Reject points outside the hexagonal chunk boundary.
-    // LocalX/LocalY are relative to the bounding box origin,
-    // convert to hex-center-relative for the hex test.
-    const float HexRelX = LocalX - FPMChunkConstants::HexOuterRadius;
-    const float HexRelY = LocalY - FPMChunkConstants::HexInnerRadius;
-    if (!FPMChunkGenerator::IsInsideHex(HexRelX, HexRelY)) {
-      continue;
-    }
+    // Square chunk: no hex boundary rejection needed
 
     // Get terrain surface Z from the analytical function.
     // This is used for biome/slope checks and as initial Z placement.
@@ -422,6 +415,13 @@ void FPMBiomePCGSpawner::PopulateChunk(
   }
 
   int32 TotalSpawned = 0;
+
+  UE_LOG(LogTemp, Warning,
+         TEXT("FPM PCG: Chunk %s ForestDens=%d ForestMeshes=%d MeadowDens=%d MtnDens=%d HasMesh=%d"),
+         *ChunkCoord.ToString(),
+         Config->ForestTreeDensity, Config->ForestTreeMeshes.Num(),
+         Config->MeadowTreeDensity, Config->MountainRockDensity,
+         MeshData != nullptr);
 
   // ---- Forest Trees (canopy + trunk) ----
   if (Config->ForestTreeDensity > 0 && Config->ForestTreeMeshes.Num() > 0) {

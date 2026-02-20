@@ -97,6 +97,10 @@ protected:
   /** Biome configuration data asset (set by WorldChunkManager) */
   const UFPMBiomePCGConfig *BiomePCGConfig = nullptr;
 
+  /** Terrain material (loaded from M_ChunkTerrain asset). */
+  UPROPERTY()
+  UMaterialInterface *TerrainMaterial = nullptr;
+
   /** Cached world seed for deterministic placement */
   int32 CachedWorldSeed = 0;
 

@@ -29,7 +29,7 @@ public:
 
   /** Target dedicated server IP address */
   UPROPERTY(BlueprintReadOnly, Category = "FPM|Network")
-  FString ServerIP = TEXT("152.86.63.18");
+  FString ServerIP = TEXT("127.0.0.1");
 
   /** Target dedicated server port */
   UPROPERTY(BlueprintReadOnly, Category = "FPM|Network")

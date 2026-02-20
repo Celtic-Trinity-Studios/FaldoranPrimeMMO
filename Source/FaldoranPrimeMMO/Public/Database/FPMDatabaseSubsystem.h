@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "HAL/CriticalSection.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "TimerManager.h"
 
@@ -122,8 +123,13 @@ private:
   FString ConfigUsername;
   FString ConfigPassword;
 
-  /** Read database connection settings from DefaultGame.ini [FPM.Database]. */
+  /** Read database connection settings.
+   *  Priority: env vars > ServerSecrets.ini > DefaultGame.ini [FPM.Database].
+   */
   void LoadConfigFromIni();
+
+  /** Critical section for thread-safe database access. */
+  FCriticalSection DbCriticalSection;
 
   /** Returns true only if running on a dedicated server. All DB ops check this.
    */

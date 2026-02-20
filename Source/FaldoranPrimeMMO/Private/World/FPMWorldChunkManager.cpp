@@ -169,16 +169,21 @@ void AFPMWorldChunkManager::BeginPlay() {
          TEXT("FPM: ========================================"));
   UE_LOG(LogTemp, Warning, TEXT("FPM: Chunk-based world system initialized"));
   UE_LOG(LogTemp, Warning,
-         TEXT("FPM: Seed=%d, HexRadius=%.0fm, Island=%d rings (hex)"),
-         WorldSeed, FPMChunkConstants::HexOuterRadius / 100.0f,
+         TEXT("FPM: Seed=%d, ChunkSize=%.0fm, Island=%d rings"),
+         WorldSeed, FPMChunkConstants::ChunkWorldSize / 100.0f,
          FPMChunkConstants::StarterIslandRings);
   UE_LOG(LogTemp, Warning,
-         TEXT("FPM: LOD ranges: Full=%d, Medium=%d, Low=%d hex rings"),
+         TEXT("FPM: LOD ranges: Full=%d, Medium=%d, Low=%d rings"),
          FPMChunkConstants::FullDetailRange,
          FPMChunkConstants::MediumDetailRange,
          FPMChunkConstants::LowDetailRange);
   UE_LOG(LogTemp, Warning,
          TEXT("FPM: ========================================"));
+
+  // Diagnostic: verify editor-configured assets
+  UE_LOG(LogTemp, Warning, TEXT("FPM: BiomePCGConfig=%s, TerrainMaterial=%s"),
+         BiomePCGConfig ? *BiomePCGConfig->GetName() : TEXT("NULL"),
+         TerrainMaterial ? *TerrainMaterial->GetName() : TEXT("NULL"));
 
   // Spawn the water plane at sea level
   SpawnWaterPlane();
@@ -212,6 +217,19 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
     const FFPMChunkCoord PlayerChunk =
         FPMChunkGenerator::WorldToChunkCoord(PlayerPos);
 
+    // Track movement direction for anticipatory loading
+    // (computed BEFORE LastPlayerChunk is updated)
+    const FFPMChunkCoord MoveDelta(PlayerChunk.Q - LastPlayerChunk.Q,
+                                   PlayerChunk.R - LastPlayerChunk.R);
+
+    // Diagnostic: log current state
+    UE_LOG(LogTemp, Verbose,
+           TEXT("FPM Tick: PlayerChunk=%s LastChunk=%s bInitialLoad=%d "
+                "LoadQ=%d UnloadQ=%d Loaded=%d"),
+           *PlayerChunk.ToString(), *LastPlayerChunk.ToString(),
+           bInitialLoadDone ? 1 : 0, ChunkLoadQueue.Num(),
+           ChunkUnloadQueue.Num(), LoadedChunks.Num());
+
     // Only do a full update if the player moved to a new chunk or it's the
     // first load
     if (PlayerChunk != LastPlayerChunk || !bInitialLoadDone) {
@@ -238,9 +256,11 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
 
       // Queue chunks to load (desired but not yet loaded)
       // Also check for LOD changes on already-loaded chunks
+      int32 NewlyQueued = 0;
       for (const FFPMChunkCoord &Coord : DesiredChunks) {
         if (!LoadedChunks.Contains(Coord)) {
           ChunkLoadQueue.AddUnique(Coord);
+          NewlyQueued++;
         } else {
           // Update LOD if needed
           AFPMChunkActor *Existing = LoadedChunks[Coord];
@@ -253,15 +273,34 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
         }
       }
 
+      UE_LOG(LogTemp, Warning,
+             TEXT("FPM: Chunk update at %s — Desired=%d, NewlyQueued=%d, "
+                  "LoadQ=%d, Loaded=%d"),
+             *PlayerChunk.ToString(), DesiredChunks.Num(), NewlyQueued,
+             ChunkLoadQueue.Num(), LoadedChunks.Num());
+
       // Sort load queue by hex distance DESCENDING (farthest first)
       // so that Pop() — which removes from the back — returns the
-      // closest chunk each time.  No Reverse needed in ProcessQueues.
-      ChunkLoadQueue.Sort(
-          [&PlayerChunk](const FFPMChunkCoord &A, const FFPMChunkCoord &B) {
-            const int32 DistA = FFPMChunkCoord::HexDistance(A, PlayerChunk);
-            const int32 DistB = FFPMChunkCoord::HexDistance(B, PlayerChunk);
-            return DistA > DistB; // descending — farthest at front
-          });
+      // closest chunk each time.  Chunks in the movement direction
+      // get a small distance bonus so they load first.
+      ChunkLoadQueue.Sort([&PlayerChunk, &MoveDelta](const FFPMChunkCoord &A,
+                                                     const FFPMChunkCoord &B) {
+        int32 DistA = FFPMChunkCoord::HexDistance(A, PlayerChunk);
+        int32 DistB = FFPMChunkCoord::HexDistance(B, PlayerChunk);
+        // Movement-direction bonus: chunks "ahead" of the player
+        // get a -3 distance bonus so they sort closer.
+        if (MoveDelta.Q != 0 || MoveDelta.R != 0) {
+          const int32 DotA = (A.Q - PlayerChunk.Q) * MoveDelta.Q +
+                             (A.R - PlayerChunk.R) * MoveDelta.R;
+          const int32 DotB = (B.Q - PlayerChunk.Q) * MoveDelta.Q +
+                             (B.R - PlayerChunk.R) * MoveDelta.R;
+          if (DotA > 0)
+            DistA -= 3;
+          if (DotB > 0)
+            DistB -= 3;
+        }
+        return DistA > DistB; // descending — farthest at front
+      });
     }
   }
 
@@ -283,17 +322,12 @@ void AFPMWorldChunkManager::GatherDesiredChunks(
     TSet<FFPMChunkCoord> &OutDesiredChunks) const {
   const int32 Range = FPMChunkConstants::LowDetailRange;
 
-  // Hex spiral: iterate over all hexes within Range hex rings of PlayerChunk.
-  // Ring 0 = center. Ring N has 6*N hexes.
-  // We use cube coordinate iteration for correctness.
+  // Square grid: iterate over all chunks within Range of PlayerChunk.
   for (int32 DQ = -Range; DQ <= Range; ++DQ) {
-    const int32 RMin = FMath::Max(-Range, -DQ - Range);
-    const int32 RMax = FMath::Min(Range, -DQ + Range);
-    for (int32 DR = RMin; DR <= RMax; ++DR) {
+    for (int32 DR = -Range; DR <= Range; ++DR) {
       const FFPMChunkCoord Coord(PlayerChunk.Q + DQ, PlayerChunk.R + DR);
 
-      // Optional: skip chunks outside starter island bounds
-      // (hex distance from origin > StarterIslandRings)
+      // Skip chunks outside starter island bounds
       if (FFPMChunkCoord::HexDistance(Coord, FFPMChunkCoord(0, 0)) >
           FPMChunkConstants::StarterIslandRings) {
         continue;
@@ -369,8 +403,15 @@ void AFPMWorldChunkManager::LoadChunk(const FFPMChunkCoord &Coord,
 
     LoadedChunks.Add(Coord, ChunkActor);
 
-    UE_LOG(LogTemp, Verbose, TEXT("FPM: Loaded voxel chunk %s (%d verts)"),
-           *Coord.ToString(), MeshData.Vertices.Num());
+    // Diagnostic: warn about empty chunks that will be invisible
+    if (MeshData.Vertices.Num() == 0) {
+      UE_LOG(LogTemp, Warning,
+             TEXT("FPM: ⚠ Chunk %s generated 0 vertices (invisible gap)!"),
+             *Coord.ToString());
+    } else {
+      UE_LOG(LogTemp, Log, TEXT("FPM: Loaded voxel chunk %s (%d verts)"),
+             *Coord.ToString(), MeshData.Vertices.Num());
+    }
   }
 }
 
@@ -399,29 +440,47 @@ void AFPMWorldChunkManager::UnloadChunk(const FFPMChunkCoord &Coord) {
 void AFPMWorldChunkManager::ProcessQueues() {
   int32 ChunksProcessed = 0;
 
-  // Throttle unloads too — don't destroy everything at once
+  // Throttle unloads -- max 4 per frame
   int32 UnloadsProcessed = 0;
-  while (ChunkUnloadQueue.Num() > 0 && UnloadsProcessed < MaxChunksPerFrame) {
+  while (ChunkUnloadQueue.Num() > 0 && UnloadsProcessed < 4) {
     const FFPMChunkCoord Coord = ChunkUnloadQueue.Pop();
     UnloadChunk(Coord);
     UnloadsProcessed++;
   }
 
-  // Loads are expensive — throttle per frame.
-  // Queue is sorted farthest-first so Pop() gives closest.
-  while (ChunkLoadQueue.Num() > 0 && ChunksProcessed < MaxChunksPerFrame) {
-    const FFPMChunkCoord Coord = ChunkLoadQueue.Pop();
+  // TIME-BASED budget: each voxel chunk takes 25-40ms to generate.
+  // A fixed chunk count (e.g. 16) caused 400-600ms frames (2 FPS).
+  // Instead, allow chunk loading to consume at most N milliseconds
+  // per frame, ensuring consistent frame rate.
+  //
+  // Budget:  40ms steady-state (2 chunks, ~25fps target during loading)
+  //         80ms during initial/heavy load (3+ chunks, brief stutter OK)
+  //         Each voxel chunk takes ~35ms to generate via Marching Cubes.
+  const double BudgetMs = (ChunkLoadQueue.Num() > 50) ? 80.0 : 40.0;
+  const double StartTime = FPlatformTime::Seconds();
+  const double Deadline = StartTime + BudgetMs / 1000.0;
 
+  // Loads -- time-throttled per frame.
+  // Queue is sorted farthest-first so Pop() gives closest.
+  while (ChunkLoadQueue.Num() > 0) {
+    // Check time budget (always do at least 1 chunk per frame)
+    if (ChunksProcessed > 0 && FPlatformTime::Seconds() >= Deadline) {
+      break;
+    }
+
+    const FFPMChunkCoord Coord = ChunkLoadQueue.Pop();
     const EFPMChunkLOD LOD = DetermineLOD(Coord, LastPlayerChunk);
     LoadChunk(Coord, LOD);
     ChunksProcessed++;
   }
 
-  // Log queue status if there are pending loads
-  if (ChunkLoadQueue.Num() > 0 && ChunksProcessed > 0) {
-    UE_LOG(LogTemp, Verbose,
-           TEXT("FPM: Processed %d chunks, %d remaining in queue"),
-           ChunksProcessed, ChunkLoadQueue.Num());
+  // Log queue progress
+  if (ChunksProcessed > 0) {
+    const double ElapsedMs = (FPlatformTime::Seconds() - StartTime) * 1000.0;
+    UE_LOG(LogTemp, Log,
+           TEXT("FPM: Loaded %d chunks (%.1fms), %d remaining, %d total"),
+           ChunksProcessed, ElapsedMs, ChunkLoadQueue.Num(),
+           LoadedChunks.Num());
   }
 }
 
@@ -458,11 +517,11 @@ EFPMBiome AFPMWorldChunkManager::GetBiomeAtWorldPos(FVector WorldPos) {
       // Find the closest vertex in the chunk (hex bounding box UV)
       const FVector HexCenter = FPMChunkGenerator::ChunkToWorldCenter(Coord);
       const float LocalX =
-          ((WorldPos.X - HexCenter.X) / FPMChunkConstants::HexOuterRadius +
+          ((WorldPos.X - HexCenter.X) / (FPMChunkConstants::ChunkWorldSize * 0.5f) +
            1.0f) *
           0.5f;
       const float LocalY =
-          ((WorldPos.Y - HexCenter.Y) / FPMChunkConstants::HexInnerRadius +
+          ((WorldPos.Y - HexCenter.Y) / (FPMChunkConstants::ChunkWorldSize * 0.5f) +
            1.0f) *
           0.5f;
 
@@ -518,12 +577,12 @@ void AFPMWorldChunkManager::EnsureChunkLoadedAtWorldPos(FVector WorldPos) {
   LoadOrUpgradeChunk(Center);
 
   // Ring 1: all 6 neighbors
-  for (int32 Dir = 0; Dir < 6; ++Dir) {
+  for (int32 Dir = 0; Dir < 8; ++Dir) {
     LoadOrUpgradeChunk(Center.Neighbor(Dir));
   }
 
   UE_LOG(LogTemp, Log,
-         TEXT("FPM: Force-loaded hex ring around (%d,%d) for player spawn"),
+         TEXT("FPM: Force-loaded grid ring around (%d,%d) for player spawn"),
          Center.Q, Center.R);
 }
 
@@ -597,10 +656,10 @@ void AFPMWorldChunkManager::DrawDebugChunks() const {
     }
 
     // Draw hexagonal boundary (6 edges)
-    const float R = FPMChunkConstants::HexOuterRadius;
+    const float R = FPMChunkConstants::ChunkWorldSize * 0.5f;
     const float DebugZ = 1000.0f;
     // Flat-top hex vertices (angle offset = 0 degrees for first vertex)
-    for (int32 i = 0; i < 6; ++i) {
+    for (int32 i = 0; i < 8; ++i) {
       const float Angle0 = FMath::DegreesToRadians(60.0f * i);
       const float Angle1 = FMath::DegreesToRadians(60.0f * (i + 1));
       const FVector P0 = HexCenter + FVector(R * FMath::Cos(Angle0),

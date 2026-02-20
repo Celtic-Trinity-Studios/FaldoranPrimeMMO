@@ -5,8 +5,15 @@
 #include "Database/FPMDatabaseSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
-#include "Hash/Blake3.h"
-#include "Math/UnrealMathUtility.h"
+#include "Misc/SecureHash.h"
+
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include "Windows/HideWindowsPlatformTypes.h"
+#include <bcrypt.h>
+
+#pragma comment(lib, "bcrypt.lib")
+#endif
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPMAccount, Log, All);
 
@@ -289,29 +296,102 @@ bool UFPMAccountSubsystem::ValidatePassword(const FString &Password,
 // -------------------------------------------------------------------
 
 FString UFPMAccountSubsystem::GenerateSalt() {
-  // 16 random bytes = 128-bit salt
-  static constexpr int32 SaltBytes = 16;
+  // 32 random bytes = 256-bit salt (upgraded from 128-bit)
+  static constexpr int32 SaltBytes = 32;
   TArray<uint8> SaltData;
   SaltData.SetNumUninitialized(SaltBytes);
 
-  for (int32 i = 0; i < SaltBytes; ++i) {
-    SaltData[i] = static_cast<uint8>(FMath::RandRange(0, 255));
+#if PLATFORM_WINDOWS
+  // Use Windows CNG cryptographic RNG (FIPS-compliant)
+  NTSTATUS Status = BCryptGenRandom(nullptr, SaltData.GetData(), SaltBytes,
+                                    BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+  if (!BCRYPT_SUCCESS(Status)) {
+    UE_LOG(LogFPMAccount, Error,
+           TEXT("FPM Account: BCryptGenRandom failed (status=0x%08X). "
+                "Falling back to FGuid-based salt."),
+           Status);
+    // Fallback: Use FGuid which is platform-generated (still better than
+    // FMath::Rand)
+    const FGuid G1 = FGuid::NewGuid();
+    const FGuid G2 = FGuid::NewGuid();
+    FMemory::Memcpy(SaltData.GetData(), &G1, 16);
+    FMemory::Memcpy(SaltData.GetData() + 16, &G2, 16);
+  }
+#else
+  // On non-Windows: FGuid::NewGuid() uses /dev/urandom or platform crypto
+  const FGuid G1 = FGuid::NewGuid();
+  const FGuid G2 = FGuid::NewGuid();
+  FMemory::Memcpy(SaltData.GetData(), &G1, 16);
+  FMemory::Memcpy(SaltData.GetData() + 16, &G2, 16);
+#endif
+
+  return BytesToHex(SaltData.GetData(), SaltData.Num());
+}
+
+/** Helper: SHA-256 hash using Windows BCrypt API.
+ *  Writes a 32-byte digest into OutHash. Returns true on success. */
+static bool BCryptSHA256(const uint8 *Data, int32 DataLen, uint8 OutHash[32]) {
+#if PLATFORM_WINDOWS
+  BCRYPT_ALG_HANDLE hAlg = nullptr;
+  if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) !=
+      0) {
+    return false;
   }
 
-  // Convert raw bytes to hex string (32 chars)
-  return BytesToHex(SaltData.GetData(), SaltData.Num());
+  BCRYPT_HASH_HANDLE hHash = nullptr;
+  bool bSuccess = false;
+  if (BCryptCreateHash(hAlg, &hHash, nullptr, 0, nullptr, 0, 0) == 0) {
+    if (BCryptHashData(hHash, const_cast<uint8 *>(Data), DataLen, 0) == 0) {
+      if (BCryptFinishHash(hHash, OutHash, 32, 0) == 0) {
+        bSuccess = true;
+      }
+    }
+    BCryptDestroyHash(hHash);
+  }
+  BCryptCloseAlgorithmProvider(hAlg, 0);
+  return bSuccess;
+#else
+  // Non-Windows fallback: use FSHA1 double-pass (less ideal, but functional).
+  // Production builds should integrate libsodium for cross-platform SHA-256.
+  FSHA1 Sha;
+  Sha.Update(Data, DataLen);
+  Sha.Final();
+  uint8 Sha1Hash[20];
+  Sha.GetHash(Sha1Hash);
+  FMemory::Memzero(OutHash, 32);
+  FMemory::Memcpy(OutHash, Sha1Hash, 20);
+  return true;
+#endif
 }
 
 FString UFPMAccountSubsystem::HashPassword(const FString &Password,
                                            const FString &Salt) {
-  // Concatenate salt + password, then BLAKE3 hash (256-bit)
+  // PBKDF2-like key stretching using iterated SHA-256.
+  // This is significantly more resistant to brute force than single-pass
+  // hashing.
+  //
+  // Production TODO: Replace with Argon2id once a vetted C library is
+  //                  integrated (e.g. libsodium crypto_pwhash).
+  static constexpr int32 Iterations = 10000;
+
   const FString Combined = Salt + Password;
   const FTCHARToUTF8 UTF8Combined(*Combined);
 
-  const FBlake3Hash Hash = FBlake3::HashBuffer(
-      UTF8Combined.Get(), static_cast<uint64>(UTF8Combined.Length()));
+  // Initial hash — 32-byte SHA-256 digest
+  uint8 Hash[32];
+  if (!BCryptSHA256(reinterpret_cast<const uint8 *>(UTF8Combined.Get()),
+                    UTF8Combined.Length(), Hash)) {
+    UE_LOG(LogFPMAccount, Error,
+           TEXT("FPM Account: SHA-256 hash failed! Returning empty hash."));
+    return FString();
+  }
 
-  return LexToString(Hash);
+  // Iterate to stretch
+  for (int32 i = 1; i < Iterations; ++i) {
+    BCryptSHA256(Hash, 32, Hash);
+  }
+
+  return BytesToHex(Hash, 32);
 }
 
 bool UFPMAccountSubsystem::VerifyPassword(const FString &Password,

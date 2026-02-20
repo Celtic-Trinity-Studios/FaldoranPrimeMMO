@@ -105,4 +105,7 @@ private:
 
   /** Process WASD movement input. */
   void HandleMovementInput(float DeltaTime);
+
+  /** Cooldown for fall-through recovery (prevents frame-spam). */
+  double LastFallRecoveryTime = 0.0;
 };

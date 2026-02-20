@@ -1,6 +1,7 @@
 // Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #include "World/FPMChunkActor.h"
+#include "UObject/ConstructorHelpers.h"
 #include "World/FPMBiomePCGConfig.h"
 #include "World/FPMBiomePCGSpawner.h"
 #include "World/FPMChunkData.h"
@@ -31,6 +32,13 @@ AFPMChunkActor::AFPMChunkActor() {
   TerrainMesh->SetCastShadow(true);
   TerrainMesh->SetCollisionProfileName(TEXT("BlockAll"));
   TerrainMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+  // Load the terrain material (uses vertex colors for biome splatting)
+  static ConstructorHelpers::FObjectFinder<UMaterialInterface> TerrainMatFinder(
+      TEXT("/Game/Materials/Landscape/M_ChunkTerrain"));
+  if (TerrainMatFinder.Succeeded()) {
+    TerrainMaterial = TerrainMatFinder.Object;
+  }
 }
 
 // =====================================================================
@@ -170,6 +178,10 @@ void AFPMChunkActor::PopulateBiome() {
   const FFPMChunkHeightmapData *HeightPtr =
       (ChunkData.bIsValid && ChunkData.HeightValues.Num() > 0) ? &ChunkData
                                                                : nullptr;
+  UE_LOG(LogTemp, Warning,
+         TEXT("FPM PCG: PopulateBiome for chunk %s (VoxelVerts=%d, NetMode=%d)"),
+         *ChunkData.Coord.ToString(), CachedVoxelMesh.Vertices.Num(),
+         GetWorld() ? static_cast<int32>(GetWorld()->GetNetMode()) : -1);
   FPMBiomePCGSpawner::PopulateChunk(
       this, BiomePCGConfig, ChunkData.Coord, CachedWorldSeed,
       CachedVoxelMesh.Vertices.Num() > 0 ? &CachedVoxelMesh : nullptr,
@@ -208,8 +220,8 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
   constexpr int32 FullRes = FPMChunkConstants::ChunkResolution;
   const int32 Res = (FullRes - 1) / LODStep + 1;
   // Hex bounding box: width = 2*OuterRadius, height = 2*InnerRadius
-  constexpr float SizeX = FPMChunkConstants::HexOuterRadius * 2.0f; // 3200
-  constexpr float SizeY = FPMChunkConstants::HexInnerRadius * 2.0f; // ~2771
+  constexpr float SizeX = FPMChunkConstants::ChunkWorldSize;
+  constexpr float SizeY = FPMChunkConstants::ChunkWorldSize;
 
   if (Res <= 1) {
     return;
@@ -408,6 +420,11 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
   TerrainMesh->CreateMeshSection(0, Verts, Tris, Normals, UVs, VColors,
                                  Tangents, bCollision);
 
+  // Apply terrain material (vertex color biome splatting)
+  if (TerrainMaterial) {
+    TerrainMesh->SetMaterial(0, TerrainMaterial);
+  }
+
   TerrainMesh->SetCollisionEnabled(bCollision
                                        ? ECollisionEnabled::QueryAndPhysics
                                        : ECollisionEnabled::NoCollision);
@@ -437,6 +454,11 @@ void AFPMChunkActor::InitializeVoxelChunk(const FFPMVoxelMeshData &MeshData,
   TerrainMesh->CreateMeshSection(0, MeshData.Vertices, MeshData.Triangles,
                                  MeshData.Normals, MeshData.UVs,
                                  MeshData.Colors, Tangents, true);
+
+  // Apply terrain material (vertex color biome splatting)
+  if (TerrainMaterial) {
+    TerrainMesh->SetMaterial(0, TerrainMaterial);
+  }
 
   TerrainMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 

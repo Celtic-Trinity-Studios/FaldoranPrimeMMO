@@ -3,6 +3,8 @@
 #include "Core/FPMGameMode.h"
 #include "Player/FPMPlayerController.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogFPMGameMode, Log, All);
+
 AFPMGameMode::AFPMGameMode() {
   // No default pawn — players start in UI mode (login screen).
   // The server spawns AFPMPlayerCharacter when a character is selected.
@@ -16,7 +18,8 @@ void AFPMGameMode::InitGame(const FString &MapName, const FString &Options,
                             FString &ErrorMessage) {
   Super::InitGame(MapName, Options, ErrorMessage);
 
-  UE_LOG(LogTemp, Log, TEXT("FPM: Server started, waiting for connections"));
+  UE_LOG(LogFPMGameMode, Log,
+         TEXT("FPM: Server started, waiting for connections"));
 }
 
 void AFPMGameMode::PostLogin(APlayerController *NewPlayer) {
@@ -24,7 +27,7 @@ void AFPMGameMode::PostLogin(APlayerController *NewPlayer) {
   // The player stays in UI mode until they select a character.
   Super::PostLogin(NewPlayer);
 
-  UE_LOG(LogTemp, Log,
+  UE_LOG(LogFPMGameMode, Log,
          TEXT("FPM: Player logged in — awaiting character select "
               "(no pawn spawned)."));
 }

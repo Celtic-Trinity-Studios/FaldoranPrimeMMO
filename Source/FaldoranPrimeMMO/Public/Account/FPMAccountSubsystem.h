@@ -7,12 +7,14 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "FPMAccountSubsystem.generated.h"
 
+
 /**
  * UFPMAccountSubsystem
  *
  * Server-authoritative subsystem that handles account creation and login.
  * All operations run exclusively on the dedicated server:
- *   - Password hashing with SHA-256 + random salt
+ *   - Password hashing with iterated SHA-256 key stretching + crypto-random
+ * salt
  *   - Username validation (3-20 chars, alphanumeric only)
  *   - Database reads/writes via UFPMDatabaseSubsystem
  *
@@ -88,19 +90,20 @@ private:
   // --- Password Hashing ---
 
   /**
-   * Generate a cryptographically random 16-byte salt, returned as a
-   * 32-character hex string.
+   * Generate a cryptographically random 32-byte salt using platform crypto RNG,
+   * returned as a 64-character hex string.
    */
   static FString GenerateSalt();
 
   /**
-   * Hash a password with the given salt using SHA-256.
-   * Format: SHA256(Salt + Password), returned as a 64-character hex string.
+   * Hash a password with the given salt using iterated SHA-256 key stretching.
+   * Format: SHA256^N(Salt + Password) with N=10000 iterations.
    * The salt is prepended to prevent rainbow table attacks.
+   * Production TODO: Replace with Argon2id.
    *
    * @param Password  The plaintext password.
    * @param Salt      The hex-encoded salt string.
-   * @return          The SHA-256 hash as a 64-character hex string.
+   * @return          The stretched hash as a 64-character hex string.
    */
   static FString HashPassword(const FString &Password, const FString &Salt);
 
@@ -108,7 +111,7 @@ private:
    * Verify a plaintext password against a stored hash and salt.
    *
    * @param Password    The plaintext password to verify.
-   * @param StoredHash  The stored SHA-256 hash to compare against.
+   * @param StoredHash  The stored iterated SHA-256 hash to compare against.
    * @param StoredSalt  The stored salt that was used for hashing.
    * @return            true if the password matches.
    */

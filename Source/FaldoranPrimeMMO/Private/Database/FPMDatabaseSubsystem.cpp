@@ -208,6 +208,9 @@ UFPMDatabaseSubsystem::ExecuteQuery(const FString &SQL,
                                     const TArray<FString> &Params) {
   FFPMDatabaseQueryResult Result;
 
+  // Thread-safe: serialize all DB access through this critical section
+  FScopeLock Lock(&DbCriticalSection);
+
   if (!IsDedicatedServerContext()) {
     Result.ErrorMessage = TEXT("Database queries are server-only.");
     UE_LOG(LogFPMDatabase, Warning, TEXT("FPM Database: %s"),
@@ -307,20 +310,122 @@ UFPMDatabaseSubsystem::ExecuteQuery(const FString &SQL,
 void UFPMDatabaseSubsystem::LoadConfigFromIni() {
   const FString Section = TEXT("FPM.Database");
 
-  GConfig->GetString(*Section, TEXT("Host"), ConfigHost, GGameIni);
-  GConfig->GetString(*Section, TEXT("Port"), ConfigPort, GGameIni);
-  GConfig->GetString(*Section, TEXT("DatabaseName"), ConfigDatabaseName,
-                     GGameIni);
-  GConfig->GetString(*Section, TEXT("Username"), ConfigUsername, GGameIni);
-  GConfig->GetString(*Section, TEXT("Password"), ConfigPassword, GGameIni);
+  // --- Priority 1: Environment variables (highest priority) ---
+  FString EnvHost = FPlatformMisc::GetEnvironmentVariable(TEXT("FPM_DB_HOST"));
+  FString EnvPort = FPlatformMisc::GetEnvironmentVariable(TEXT("FPM_DB_PORT"));
+  FString EnvDBName =
+      FPlatformMisc::GetEnvironmentVariable(TEXT("FPM_DB_NAME"));
+  FString EnvUser = FPlatformMisc::GetEnvironmentVariable(TEXT("FPM_DB_USER"));
+  FString EnvPass =
+      FPlatformMisc::GetEnvironmentVariable(TEXT("FPM_DB_PASSWORD"));
 
-  // Provide sensible defaults if config is missing
+  if (!EnvHost.IsEmpty())
+    ConfigHost = EnvHost;
+  if (!EnvPort.IsEmpty())
+    ConfigPort = EnvPort;
+  if (!EnvDBName.IsEmpty())
+    ConfigDatabaseName = EnvDBName;
+  if (!EnvUser.IsEmpty())
+    ConfigUsername = EnvUser;
+  if (!EnvPass.IsEmpty())
+    ConfigPassword = EnvPass;
+
+  // --- Priority 2: ServerSecrets.ini (gitignored, server-only) ---
+  {
+    FString SecretsPath =
+        FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("ServerSecrets.ini"));
+
+    if (FPaths::FileExists(SecretsPath)) {
+      UE_LOG(LogFPMDatabase, Log,
+             TEXT("FPM Database: Loading credentials from ServerSecrets.ini "
+                  "(%s)"),
+             *SecretsPath);
+
+      // Manual line-by-line parsing — FConfigFile::GetString can be unreliable
+      // with section names containing dots (e.g. "FPM.Database")
+      FString FileContents;
+      if (FFileHelper::LoadFileToString(FileContents, *SecretsPath)) {
+        bool bInSection = false;
+        TArray<FString> Lines;
+        FileContents.ParseIntoArrayLines(Lines);
+
+        for (const FString &Line : Lines) {
+          FString Trimmed = Line.TrimStartAndEnd();
+          if (Trimmed.IsEmpty() || Trimmed.StartsWith(TEXT(";")))
+            continue;
+
+          // Check for section header
+          if (Trimmed.StartsWith(TEXT("["))) {
+            bInSection =
+                Trimmed.Equals(TEXT("[FPM.Database]"), ESearchCase::IgnoreCase);
+            continue;
+          }
+
+          if (!bInSection)
+            continue;
+
+          // Parse Key=Value
+          FString Key, Value;
+          if (Trimmed.Split(TEXT("="), &Key, &Value)) {
+            Key = Key.TrimStartAndEnd();
+            Value = Value.TrimStartAndEnd();
+
+            if (ConfigHost.IsEmpty() &&
+                Key.Equals(TEXT("Host"), ESearchCase::IgnoreCase))
+              ConfigHost = Value;
+            else if (ConfigPort.IsEmpty() &&
+                     Key.Equals(TEXT("Port"), ESearchCase::IgnoreCase))
+              ConfigPort = Value;
+            else if (ConfigDatabaseName.IsEmpty() &&
+                     Key.Equals(TEXT("DatabaseName"), ESearchCase::IgnoreCase))
+              ConfigDatabaseName = Value;
+            else if (ConfigUsername.IsEmpty() &&
+                     Key.Equals(TEXT("Username"), ESearchCase::IgnoreCase))
+              ConfigUsername = Value;
+            else if (ConfigPassword.IsEmpty() &&
+                     Key.Equals(TEXT("Password"), ESearchCase::IgnoreCase))
+              ConfigPassword = Value;
+          }
+        }
+      } else {
+        UE_LOG(LogFPMDatabase, Warning,
+               TEXT("FPM Database: ServerSecrets.ini exists but could not be "
+                    "read."));
+      }
+    } else {
+      UE_LOG(LogFPMDatabase, Log,
+             TEXT("FPM Database: No ServerSecrets.ini found at %s"),
+             *SecretsPath);
+    }
+  }
+
+  // --- Priority 3: DefaultGame.ini via UE config layering (lowest) ---
+  if (ConfigHost.IsEmpty())
+    GConfig->GetString(*Section, TEXT("Host"), ConfigHost, GGameIni);
+  if (ConfigPort.IsEmpty())
+    GConfig->GetString(*Section, TEXT("Port"), ConfigPort, GGameIni);
+  if (ConfigDatabaseName.IsEmpty())
+    GConfig->GetString(*Section, TEXT("DatabaseName"), ConfigDatabaseName,
+                       GGameIni);
+  if (ConfigUsername.IsEmpty())
+    GConfig->GetString(*Section, TEXT("Username"), ConfigUsername, GGameIni);
+  if (ConfigPassword.IsEmpty())
+    GConfig->GetString(*Section, TEXT("Password"), ConfigPassword, GGameIni);
+
+  // --- Sensible defaults ---
   if (ConfigHost.IsEmpty()) {
     ConfigHost = TEXT("localhost");
   }
   if (ConfigPort.IsEmpty()) {
     ConfigPort = TEXT("5432");
   }
+
+  // --- Log config source (without password) ---
+  UE_LOG(LogFPMDatabase, Log,
+         TEXT("FPM Database: Config loaded — Host=%s, Port=%s, DB=%s, User=%s, "
+              "Password=%s"),
+         *ConfigHost, *ConfigPort, *ConfigDatabaseName, *ConfigUsername,
+         ConfigPassword.IsEmpty() ? TEXT("<empty>") : TEXT("<set>"));
 }
 
 bool UFPMDatabaseSubsystem::IsDedicatedServerContext() const {

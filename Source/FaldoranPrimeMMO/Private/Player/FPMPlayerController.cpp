@@ -195,6 +195,27 @@ void AFPMPlayerController::TransitionToCharacterSelect() {
 
 void AFPMPlayerController::ServerRequestLogin_Implementation(
     FFPMLoginRequest Request) {
+  // --- Lockout check ---
+  if (bIsLockedOut) {
+    FFPMLoginResult F;
+    F.ErrorMessage = TEXT("Account locked. Too many failed attempts.");
+    ClientReceiveLoginResult(F);
+    return;
+  }
+
+  // --- Rate limit check ---
+  if (IsRateLimited(LoginAttemptTimestamps, MaxLoginAttemptsPerWindow,
+                    RateLimitWindowSeconds)) {
+    FFPMLoginResult F;
+    F.ErrorMessage = TEXT("Too many login attempts. Please wait.");
+    ClientReceiveLoginResult(F);
+    return;
+  }
+
+  // --- Input sanitization: clamp string lengths at RPC boundary ---
+  Request.Username = ClampString(Request.Username, MaxRPCStringLength);
+  Request.Password = ClampString(Request.Password, MaxRPCStringLength);
+
   UGameInstance *GI = GetGameInstance();
   UFPMAccountSubsystem *Acc =
       GI ? GI->GetSubsystem<UFPMAccountSubsystem>() : nullptr;
@@ -209,14 +230,37 @@ void AFPMPlayerController::ServerRequestLogin_Implementation(
   if (Result.bSuccess) {
     AuthenticatedAccountId = Result.AccountId;
     bIsAuthenticated = true;
+    FailedLoginAttempts = 0; // Reset on success
     UE_LOG(LogFPMPlayerController, Log, TEXT("FPM Server: Authenticated — %s"),
            *AuthenticatedAccountId.ToString());
+  } else {
+    ++FailedLoginAttempts;
+    if (FailedLoginAttempts >= MaxLoginAttempts) {
+      bIsLockedOut = true;
+      UE_LOG(LogFPMPlayerController, Warning,
+             TEXT("FPM Server: Connection locked out after %d failed login "
+                  "attempts."),
+             FailedLoginAttempts);
+    }
   }
   ClientReceiveLoginResult(Result);
 }
 
 void AFPMPlayerController::ServerRequestCreateAccount_Implementation(
     FFPMLoginRequest Request) {
+  // --- Rate limit check ---
+  if (IsRateLimited(CreateAccountTimestamps, MaxCreateAccountPerWindow,
+                    RateLimitWindowSeconds)) {
+    FFPMLoginResult F;
+    F.ErrorMessage = TEXT("Too many account creation attempts. Please wait.");
+    ClientReceiveCreateAccountResult(F);
+    return;
+  }
+
+  // --- Input sanitization ---
+  Request.Username = ClampString(Request.Username, MaxRPCStringLength);
+  Request.Password = ClampString(Request.Password, MaxRPCStringLength);
+
   UGameInstance *GI = GetGameInstance();
   UFPMAccountSubsystem *Acc =
       GI ? GI->GetSubsystem<UFPMAccountSubsystem>() : nullptr;
@@ -364,95 +408,62 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     return;
   }
 
-  // --- Random spawn on terrain ---
-  // Pick a random land position on the starter island using the VOXEL
-  // system's TerrainSurfaceZ() so the Z matches the actual mesh surface.
+  // --- Spawn near island center, searching for a suitable biome ---
+  // Start at (0,0) and spiral outward to find a Forest or Meadows
+  // location at a reasonable elevation.  Avoids Snow/Mountain peaks.
   FVector SpawnLoc(0.0f, 0.0f, 500.0f); // Overwritten below
-  FRotator SpawnRot = FRotator::ZeroRotator;
+  FRotator SpawnRot = FRotator(0.0f, FMath::FRandRange(0.0f, 360.0f), 0.0f);
 
   {
-    const float HalfIsland = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
-    const float InnerMargin =
-        HalfIsland * 0.3f; // Stay away from edges (coast/ocean)
-    bool bFoundLand = false;
-
-    // Get the world seed from the chunk manager
     int32 ActualWorldSeed = 42;
     for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
       ActualWorldSeed = It->WorldSeed;
       break;
     }
 
-    for (int32 Attempt = 0; Attempt < 50; ++Attempt) {
-      // Random X,Y within the inner portion of the island
-      const float RandX = FMath::FRandRange(-HalfIsland + InnerMargin,
-                                            HalfIsland - InnerMargin);
-      const float RandY = FMath::FRandRange(-HalfIsland + InnerMargin,
-                                            HalfIsland - InnerMargin);
+    bool bFoundSpawn = false;
+    const float SearchStep = 1600.0f; // ~1 hex chunk width
+    constexpr int32 MaxSearchDist = 80; // covers most of the island
 
-      // Get terrain surface Z from the VOXEL system (matches actual mesh)
-      const float TerrainZ =
-          FPMVoxelGenerator::TerrainSurfaceZ(RandX, RandY, ActualWorldSeed);
+    for (int32 Ring = 0; Ring <= MaxSearchDist && !bFoundSpawn; ++Ring) {
+      const int32 Samples = FMath::Max(1, Ring * 6);
+      for (int32 S = 0; S < Samples && !bFoundSpawn; ++S) {
+        const float Angle = (static_cast<float>(S) / Samples) * 2.0f * PI;
+        const float TestX = Ring * SearchStep * FMath::Cos(Angle);
+        const float TestY = Ring * SearchStep * FMath::Sin(Angle);
 
-      // Skip locations outside the voxel volume (no terrain)
-      if (TerrainZ < FPMVoxelConstants::WorldZBase ||
-          TerrainZ > FPMVoxelConstants::WorldZTop) {
-        continue;
-      }
+        const float SurfaceZ =
+            FPMVoxelGenerator::TerrainSurfaceZ(TestX, TestY, ActualWorldSeed);
 
-      // Skip below sea level
-      if (TerrainZ < -50.0f) {
-        continue;
-      }
-
-      // Get biome at this location (uses same voxel system)
-      const float NormH = (TerrainZ - (-400.0f)) / 5000.0f;
-      const EFPMBiome Biome = FPMVoxelGenerator::BiomeAtWorldXY(
-          RandX, RandY, ActualWorldSeed, NormH);
-
-      // Skip ocean and coast — we want solid land
-      if (Biome == EFPMBiome::Ocean || Biome == EFPMBiome::Coast)
-        continue;
-
-      // Biome selection strategy:
-      //   Attempts 0-14:  Meadows only (ideal open spawn)
-      //   Attempts 15-29: Meadows, Forest, or Mountain
-      //   Attempts 30-49: ANY non-ocean land biome
-      if (Attempt < 15) {
-        if (Biome != EFPMBiome::Meadows)
+        if (SurfaceZ < 0.0f || SurfaceZ > 4000.0f) {
           continue;
-      } else if (Attempt < 30) {
-        if (Biome != EFPMBiome::Meadows && Biome != EFPMBiome::Forest &&
-            Biome != EFPMBiome::Mountain)
-          continue;
+        }
+
+        const float NormH = (SurfaceZ - (-400.0f)) / 5000.0f;
+        const EFPMBiome Biome = FPMVoxelGenerator::BiomeAtWorldXY(
+            TestX, TestY, ActualWorldSeed, NormH);
+
+        if (Biome == EFPMBiome::Forest || Biome == EFPMBiome::Meadows) {
+          SpawnLoc = FVector(TestX, TestY, SurfaceZ);
+          bFoundSpawn = true;
+          UE_LOG(LogFPMPlayerController, Log,
+                 TEXT("FPM: Spawn found at (%.0f, %.0f, %.0f) Biome=%d Ring=%d"),
+                 TestX, TestY, SurfaceZ, static_cast<int32>(Biome), Ring);
+        }
       }
-      // Attempts 30+: accept anything that passed ocean/coast check
-
-      SpawnLoc = FVector(RandX, RandY, TerrainZ);
-      SpawnRot = FRotator(0.0f, FMath::FRandRange(0.0f, 360.0f), 0.0f);
-      bFoundLand = true;
-
-      UE_LOG(LogFPMPlayerController, Log,
-             TEXT("FPM: Random spawn at (%.0f, %.0f, %.0f) — Biome=%d, "
-                  "Attempt=%d"),
-             SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z, static_cast<int32>(Biome),
-             Attempt + 1);
-      break;
     }
 
-    if (!bFoundLand) {
-      // Fallback: use center of island with CORRECT terrain Z
-      const float FallbackZ =
+    if (!bFoundSpawn) {
+      const float TerrainZ =
           FPMVoxelGenerator::TerrainSurfaceZ(0.0f, 0.0f, ActualWorldSeed);
-      SpawnLoc = FVector(0.0f, 0.0f, FallbackZ);
+      SpawnLoc = FVector(0.0f, 0.0f, TerrainZ);
       UE_LOG(LogFPMPlayerController, Warning,
-             TEXT("FPM: Could not find land spawn after 50 attempts, using "
-                  "fallback at Z=%.1f"),
-             FallbackZ);
+             TEXT("FPM: No suitable spawn biome found, using origin (0,0,%.0f)"),
+             SpawnLoc.Z);
     }
   }
 
-  // Force-load chunks at spawn position BEFORE spawning the player
+    // Force-load chunks at spawn position BEFORE spawning the player
   // This prevents falling through the world while chunks async-load
   for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
     It->EnsureChunkLoadedAtWorldPos(SpawnLoc);
@@ -469,10 +480,9 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     }
   }
 
-  // Spawn well above the voxel terrain surface. The generous 200cm buffer
-  // prevents any visible "falling" during the brief frame before terrain
-  // renders. Gravity handles the short drop.
-  SpawnLoc.Z += CapsuleHalfHeight + 200.0f;
+  // Spawn just above the terrain. The gravity-disable system handles
+  // the gap while collision cooks.
+  SpawnLoc.Z += CapsuleHalfHeight + 50.0f;
 
   UE_LOG(LogFPMPlayerController, Log,
          TEXT("FPM: Spawn Z adjusted to %.1f (capsuleHalf=%.1f, buffer=50)"),
@@ -536,7 +546,7 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
           if (UCharacterMovementComponent *MC = C->GetCharacterMovement()) {
             MC->GravityScale = 1.0f;
             MC->SetMovementMode(MOVE_Walking);
-            UE_LOG(LogTemp, Log,
+            UE_LOG(LogFPMPlayerController, Log,
                    TEXT("FPM: Gravity re-enabled after %d polls "
                         "(collision %s)"),
                    *PollCount, bHit ? TEXT("confirmed") : TEXT("timeout"));
@@ -651,4 +661,33 @@ void AFPMPlayerController::ClientEnterWorldFailed_Implementation(
          TEXT("FPM Client: Enter world failed — %s"), *ErrorMessage);
   if (CharacterSelectWidget)
     CharacterSelectWidget->SetStatusMessage(ErrorMessage, true);
+}
+
+// -------------------------------------------------------------------
+// Utility Methods
+// -------------------------------------------------------------------
+
+bool AFPMPlayerController::IsRateLimited(TArray<double> &Timestamps,
+                                         int32 MaxPerWindow,
+                                         double WindowSeconds) {
+  const double Now = FPlatformTime::Seconds();
+  const double Cutoff = Now - WindowSeconds;
+
+  // Prune expired entries
+  Timestamps.RemoveAll(
+      [Cutoff](double Timestamp) { return Timestamp < Cutoff; });
+
+  if (Timestamps.Num() >= MaxPerWindow) {
+    return true; // Rate limited
+  }
+
+  Timestamps.Add(Now);
+  return false;
+}
+
+FString AFPMPlayerController::ClampString(const FString &Input, int32 MaxLen) {
+  if (Input.Len() <= MaxLen) {
+    return Input;
+  }
+  return Input.Left(MaxLen);
 }

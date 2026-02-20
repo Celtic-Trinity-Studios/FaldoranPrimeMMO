@@ -240,4 +240,13 @@ This is an MMO. Security is not a feature — it is **existential**.
 
 ---
 
+## 11. Debugging & Logs
+
+- **Log Directory:** `E:\FaldoranPrimeMMO\Saved\Logs`
+- Unreal Engine logs (editor, client, and dedicated server) are written here automatically.
+- Review these logs when diagnosing crashes, startup failures, replication issues, or subsystem errors.
+- The most recent session log is `FaldoranPrimeMMO.log`; previous sessions are timestamped backups.
+
+---
+
 *Copyright Celtic Trinity Studios, 2026. All Rights Reserved.*

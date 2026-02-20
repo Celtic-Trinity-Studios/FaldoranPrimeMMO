@@ -13,51 +13,26 @@
 // ===================================================================
 
 FVector FPMChunkGenerator::ChunkToWorldCenter(const FFPMChunkCoord &Coord) {
-  const float X =
-      FPMChunkConstants::HexOuterRadius * 1.5f * static_cast<float>(Coord.Q);
-  const float Y =
-      FPMChunkConstants::HexInnerRadius * 2.0f *
-      (static_cast<float>(Coord.R) + static_cast<float>(Coord.Q) * 0.5f);
+  // Square grid: center = (Q * ChunkSize + half, R * ChunkSize + half)
+  const float CS = FPMChunkConstants::ChunkWorldSize;
+  const float X = static_cast<float>(Coord.Q) * CS + CS * 0.5f;
+  const float Y = static_cast<float>(Coord.R) * CS + CS * 0.5f;
   return FVector(X, Y, 0.0f);
 }
 
 FVector FPMChunkGenerator::ChunkToWorldOrigin(const FFPMChunkCoord &Coord) {
-  // Origin = center minus half the bounding box
-  const FVector Center = ChunkToWorldCenter(Coord);
-  return FVector(Center.X - FPMChunkConstants::HexOuterRadius,
-                 Center.Y - FPMChunkConstants::HexInnerRadius, 0.0f);
+  // Square grid: origin = (Q * ChunkSize, R * ChunkSize)
+  const float CS = FPMChunkConstants::ChunkWorldSize;
+  return FVector(static_cast<float>(Coord.Q) * CS,
+                 static_cast<float>(Coord.R) * CS, 0.0f);
 }
 
 FFPMChunkCoord FPMChunkGenerator::WorldToChunkCoord(const FVector &WorldPos) {
-  // Pixel to fractional hex (flat-top)
-  // Inverse of the center formula:
-  //   Q_frac = X / (OuterRadius * 1.5)
-  //   R_frac = (Y / (InnerRadius * 2.0)) - Q_frac * 0.5
-
-  const float Q_frac = WorldPos.X / (FPMChunkConstants::HexOuterRadius * 1.5f);
-  const float R_frac =
-      WorldPos.Y / (FPMChunkConstants::HexInnerRadius * 2.0f) - Q_frac * 0.5f;
-
-  // Cube coordinate rounding (Red Blob Games algorithm)
-  const float S_frac = -Q_frac - R_frac;
-
-  int32 RQ = FMath::RoundToInt(Q_frac);
-  int32 RR = FMath::RoundToInt(R_frac);
-  int32 RS = FMath::RoundToInt(S_frac);
-
-  const float DQ = FMath::Abs(static_cast<float>(RQ) - Q_frac);
-  const float DR = FMath::Abs(static_cast<float>(RR) - R_frac);
-  const float DS = FMath::Abs(static_cast<float>(RS) - S_frac);
-
-  // Adjust the coord with largest rounding error
-  if (DQ > DR && DQ > DS) {
-    RQ = -RR - RS;
-  } else if (DR > DS) {
-    RR = -RQ - RS;
-  }
-  // else RS = -RQ - RR (implicit, we don't store S)
-
-  return FFPMChunkCoord(RQ, RR);
+  // Square grid: simple floor division
+  const float CS = FPMChunkConstants::ChunkWorldSize;
+  const int32 Q = FMath::FloorToInt(WorldPos.X / CS);
+  const int32 R = FMath::FloorToInt(WorldPos.Y / CS);
+  return FFPMChunkCoord(Q, R);
 }
 
 void FPMChunkGenerator::WorldToIslandNorm(const FVector &WorldPos,
@@ -332,8 +307,8 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
 
   // The heightmap covers the hex's bounding box.
   // We generate a square grid and mark vertices outside the hex as Ocean.
-  const float BBoxHalfW = FPMChunkConstants::HexOuterRadius;
-  const float BBoxHalfH = FPMChunkConstants::HexInnerRadius;
+  const float BBoxHalfW = FPMChunkConstants::ChunkWorldSize * 0.5f;
+  const float BBoxHalfH = FPMChunkConstants::ChunkWorldSize * 0.5f;
 
   for (int32 LocalY = 0; LocalY < Res; ++LocalY) {
     for (int32 LocalX = 0; LocalX < Res; ++LocalX) {
@@ -351,13 +326,7 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
       const float VertexWorldX = ChunkCenter.X + HexLocalX;
       const float VertexWorldY = ChunkCenter.Y + HexLocalY;
 
-      // Check if inside hex
-      if (!IsInsideHex(HexLocalX, HexLocalY)) {
-        // Outside the hex boundary -- mark as Ocean with zero height
-        OutData.HeightValues[Idx] = 0.0f;
-        OutData.BiomeValues[Idx] = EFPMBiome::Ocean;
-        continue;
-      }
+      // Square grid: no hex boundary rejection needed
 
       // Convert to normalized island-space (0-1)
       float NormX, NormY;
