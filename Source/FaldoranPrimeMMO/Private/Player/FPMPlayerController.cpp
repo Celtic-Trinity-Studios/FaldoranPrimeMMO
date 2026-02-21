@@ -416,13 +416,13 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
 
   {
     int32 ActualWorldSeed = 42;
-    for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
-      ActualWorldSeed = It->WorldSeed;
-      break;
+    if (AFPMWorldChunkManager *WCM =
+            AFPMWorldChunkManager::GetOrCreate(World)) {
+      ActualWorldSeed = WCM->WorldSeed;
     }
 
     bool bFoundSpawn = false;
-    const float SearchStep = 1600.0f; // ~1 hex chunk width
+    const float SearchStep = 1600.0f;   // ~1 hex chunk width
     constexpr int32 MaxSearchDist = 80; // covers most of the island
 
     for (int32 Ring = 0; Ring <= MaxSearchDist && !bFoundSpawn; ++Ring) {
@@ -446,9 +446,10 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
         if (Biome == EFPMBiome::Forest || Biome == EFPMBiome::Meadows) {
           SpawnLoc = FVector(TestX, TestY, SurfaceZ);
           bFoundSpawn = true;
-          UE_LOG(LogFPMPlayerController, Log,
-                 TEXT("FPM: Spawn found at (%.0f, %.0f, %.0f) Biome=%d Ring=%d"),
-                 TestX, TestY, SurfaceZ, static_cast<int32>(Biome), Ring);
+          UE_LOG(
+              LogFPMPlayerController, Log,
+              TEXT("FPM: Spawn found at (%.0f, %.0f, %.0f) Biome=%d Ring=%d"),
+              TestX, TestY, SurfaceZ, static_cast<int32>(Biome), Ring);
         }
       }
     }
@@ -457,17 +458,17 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
       const float TerrainZ =
           FPMVoxelGenerator::TerrainSurfaceZ(0.0f, 0.0f, ActualWorldSeed);
       SpawnLoc = FVector(0.0f, 0.0f, TerrainZ);
-      UE_LOG(LogFPMPlayerController, Warning,
-             TEXT("FPM: No suitable spawn biome found, using origin (0,0,%.0f)"),
-             SpawnLoc.Z);
+      UE_LOG(
+          LogFPMPlayerController, Warning,
+          TEXT("FPM: No suitable spawn biome found, using origin (0,0,%.0f)"),
+          SpawnLoc.Z);
     }
   }
 
-    // Force-load chunks at spawn position BEFORE spawning the player
+  // Force-load chunks at spawn position BEFORE spawning the player
   // This prevents falling through the world while chunks async-load
-  for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
-    It->EnsureChunkLoadedAtWorldPos(SpawnLoc);
-    break;
+  if (AFPMWorldChunkManager *WCM = AFPMWorldChunkManager::GetOrCreate(World)) {
+    WCM->EnsureChunkLoadedAtWorldPos(SpawnLoc);
   }
 
   // Compute a safe vertical offset based on the character capsule (from the
@@ -624,37 +625,74 @@ void AFPMPlayerController::ClientReceiveCharacterList_Implementation(
 void AFPMPlayerController::ClientEnterWorldSuccess_Implementation(
     const FVector &InSpawnLocation) {
   // CRITICAL: Force-load the chunk at the spawn location on the CLIENT.
-  // The server has already ensured it's loaded, but the client needs to assume
-  // it too. This prevents falling through the world if the client's chunk
-  // manager ticks late.
   UWorld *World = GetWorld();
   if (World) {
-    for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
+    if (AFPMWorldChunkManager *WCM =
+            AFPMWorldChunkManager::GetOrCreate(World)) {
       UE_LOG(LogFPMPlayerController, Log,
              TEXT("FPM Client: Force-loading spawn chunk at %.0f, %.0f, %.0f"),
              InSpawnLocation.X, InSpawnLocation.Y, InSpawnLocation.Z);
-      It->ForceChunkUpdate(); // Reset internal timers
-      It->EnsureChunkLoadedAtWorldPos(InSpawnLocation);
-      break;
+      WCM->ForceChunkUpdate();
+      WCM->EnsureChunkLoadedAtWorldPos(InSpawnLocation);
     }
   }
 
-  // Teleport the pawn to the spawn location AFTER chunks are loaded.
-  // The replicated pawn may have started falling before the client's
-  // terrain collision was ready. This resets its position above the
-  // now-loaded terrain so gravity can land it correctly.
   if (APawn *MyPawn = GetPawn()) {
     MyPawn->SetActorLocation(InSpawnLocation);
-    UE_LOG(
-        LogFPMPlayerController, Log,
-        TEXT(
-            "FPM Client: Teleported pawn to spawn location (%.0f, %.0f, %.0f)"),
-        InSpawnLocation.X, InSpawnLocation.Y, InSpawnLocation.Z);
+    UE_LOG(LogFPMPlayerController, Log,
+           TEXT("FPM Client: Teleported pawn to (%.0f, %.0f, %.0f)"),
+           InSpawnLocation.X, InSpawnLocation.Y, InSpawnLocation.Z);
+
+    // CRITICAL: Disable gravity on the CLIENT too.
+    // The server already did this, but the replicated movement mode may not
+    // arrive in time. Without this the client falls through collision-cooking
+    // terrain.
+    if (ACharacter *Char = Cast<ACharacter>(MyPawn)) {
+      if (UCharacterMovementComponent *MoveComp =
+              Char->GetCharacterMovement()) {
+        MoveComp->SetMovementMode(MOVE_Flying);
+        MoveComp->GravityScale = 0.0f;
+        MoveComp->Velocity = FVector::ZeroVector;
+        UE_LOG(LogFPMPlayerController, Log,
+               TEXT("FPM Client: Gravity disabled, Flying mode set"));
+      }
+
+      // Poll for terrain collision readiness, then re-enable gravity.
+      TWeakObjectPtr<ACharacter> WeakChar = Char;
+      TWeakObjectPtr<UWorld> WeakWorld = World;
+      FTimerHandle GravityPollHandle;
+
+      World->GetTimerManager().SetTimer(
+          GravityPollHandle,
+          [WeakChar, WeakWorld]() {
+            if (!WeakChar.IsValid() || !WeakWorld.IsValid())
+              return;
+            ACharacter *C = WeakChar.Get();
+            UCharacterMovementComponent *MC = C->GetCharacterMovement();
+            if (!MC || MC->MovementMode != MOVE_Flying)
+              return;
+
+            FHitResult Hit;
+            const FVector Start = C->GetActorLocation();
+            const FVector End = Start - FVector(0, 0, 500.0f);
+            FCollisionQueryParams QParams;
+            QParams.AddIgnoredActor(C);
+
+            if (WeakWorld->LineTraceSingleByChannel(Hit, Start, End,
+                                                    ECC_WorldStatic, QParams)) {
+              MC->SetMovementMode(MOVE_Walking);
+              MC->GravityScale = 1.0f;
+              UE_LOG(LogTemp, Log,
+                     TEXT("FPM Client: Terrain collision ready, gravity on"));
+              WeakWorld->GetTimerManager().ClearAllTimersForObject(C);
+            }
+          },
+          0.25f, true);
+    }
   }
 
   HideAllUIAndEnterGame();
 }
-
 void AFPMPlayerController::ClientEnterWorldFailed_Implementation(
     const FString &ErrorMessage) {
   UE_LOG(LogFPMPlayerController, Warning,

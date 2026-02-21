@@ -100,7 +100,7 @@ void AFPMChunkActor::InitializeChunk(const FFPMChunkHeightmapData &InData,
     BuildMesh(2, true);
     break;
   case EFPMChunkLOD::Low:
-    BuildMesh(4, false);
+    BuildMesh(4, true);
     break;
   case EFPMChunkLOD::Unloaded:
     TerrainMesh->ClearAllMeshSections();
@@ -122,10 +122,22 @@ void AFPMChunkActor::SetChunkLOD(EFPMChunkLOD NewLOD) {
   if (NewLOD == CurrentLOD)
     return;
 
-  // Only clear biome when dropping to Low or Unloaded.
-  // Trees/rocks stay visible on both Full AND Medium LOD chunks.
-  if ((NewLOD == EFPMChunkLOD::Low || NewLOD == EFPMChunkLOD::Unloaded) &&
-      bBiomePopulated) {
+  // Voxel chunks: the Marching Cubes mesh cannot be rebuilt by BuildMesh
+  // (it requires HeightValues which voxel chunks don't have).
+  // Keep the original mesh for all LODs; only truly destroy on Unloaded.
+  if (bIsVoxelChunk) {
+    if (NewLOD == EFPMChunkLOD::Unloaded) {
+      TerrainMesh->ClearAllMeshSections();
+      ClearBiome();
+    }
+    // Keep trees/rocks visible on Low + Medium LOD (HISM handles distance)
+    CurrentLOD = NewLOD;
+    return;
+  }
+
+  // Heightmap chunks: rebuild mesh at appropriate resolution
+  // Only clear biome when fully unloading. Trees stay on Full/Medium/Low.
+  if (NewLOD == EFPMChunkLOD::Unloaded && bBiomePopulated) {
     ClearBiome();
   }
 
@@ -141,7 +153,7 @@ void AFPMChunkActor::SetChunkLOD(EFPMChunkLOD NewLOD) {
     PopulateBiome(); // Keep trees alive on Medium LOD too
     break;
   case EFPMChunkLOD::Low:
-    BuildMesh(4, false);
+    BuildMesh(4, true);
     break;
   case EFPMChunkLOD::Unloaded:
     TerrainMesh->ClearAllMeshSections();
@@ -178,10 +190,11 @@ void AFPMChunkActor::PopulateBiome() {
   const FFPMChunkHeightmapData *HeightPtr =
       (ChunkData.bIsValid && ChunkData.HeightValues.Num() > 0) ? &ChunkData
                                                                : nullptr;
-  UE_LOG(LogTemp, Warning,
-         TEXT("FPM PCG: PopulateBiome for chunk %s (VoxelVerts=%d, NetMode=%d)"),
-         *ChunkData.Coord.ToString(), CachedVoxelMesh.Vertices.Num(),
-         GetWorld() ? static_cast<int32>(GetWorld()->GetNetMode()) : -1);
+  UE_LOG(
+      LogTemp, Warning,
+      TEXT("FPM PCG: PopulateBiome for chunk %s (VoxelVerts=%d, NetMode=%d)"),
+      *ChunkData.Coord.ToString(), CachedVoxelMesh.Vertices.Num(),
+      GetWorld() ? static_cast<int32>(GetWorld()->GetNetMode()) : -1);
   FPMBiomePCGSpawner::PopulateChunk(
       this, BiomePCGConfig, ChunkData.Coord, CachedWorldSeed,
       CachedVoxelMesh.Vertices.Num() > 0 ? &CachedVoxelMesh : nullptr,
@@ -438,6 +451,7 @@ void AFPMChunkActor::InitializeVoxelChunk(const FFPMVoxelMeshData &MeshData,
                                           const FFPMChunkCoord &Coord) {
   ChunkData.Coord = Coord;
   CurrentLOD = EFPMChunkLOD::Full;
+  bIsVoxelChunk = true;
 
   if (MeshData.Vertices.Num() == 0) {
     return;

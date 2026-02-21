@@ -2,6 +2,7 @@
 
 #include "Core/FPMGameMode.h"
 #include "Player/FPMPlayerController.h"
+#include "World/FPMWorldChunkManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPMGameMode, Log, All);
 
@@ -20,6 +21,11 @@ void AFPMGameMode::InitGame(const FString &MapName, const FString &Options,
 
   UE_LOG(LogFPMGameMode, Log,
          TEXT("FPM: Server started, waiting for connections"));
+
+  // Spawn the WorldChunkManager for the server world.
+  // This is the single authoritative instance. Clients spawn their own copy
+  // independently via PlayerController::ClientEnterWorldSuccess.
+  AFPMWorldChunkManager::GetOrCreate(GetWorld());
 }
 
 void AFPMGameMode::PostLogin(APlayerController *NewPlayer) {

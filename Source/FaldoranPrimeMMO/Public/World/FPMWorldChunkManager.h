@@ -37,6 +37,10 @@ class FALDORANPRIMEMMO_API AFPMWorldChunkManager : public AActor {
 public:
   AFPMWorldChunkManager();
 
+  /** Find or spawn the WorldChunkManager for the given world.
+   *  Guarantees exactly one per UWorld. Assets loaded from known paths. */
+  static AFPMWorldChunkManager *GetOrCreate(UWorld *World);
+
   virtual void BeginPlay() override;
   virtual void Tick(float DeltaTime) override;
 

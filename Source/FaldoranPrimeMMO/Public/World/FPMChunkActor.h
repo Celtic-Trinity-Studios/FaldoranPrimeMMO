@@ -56,6 +56,9 @@ public:
   /** Get current LOD. */
   EFPMChunkLOD GetCurrentLOD() const { return CurrentLOD; }
 
+  /** True if this chunk was built with voxel (Marching Cubes) mesh. */
+  bool IsVoxelChunk() const { return bIsVoxelChunk; }
+
   /** Get stored heightmap data (read-only). */
   const FFPMChunkHeightmapData &GetChunkData() const { return ChunkData; }
 
@@ -106,6 +109,11 @@ protected:
 
   /** Whether biome instances have been spawned for this chunk */
   bool bBiomePopulated = false;
+
+  /** True if chunk was initialized via InitializeVoxelChunk (Marching Cubes).
+   *  Voxel chunks cannot be rebuilt by BuildMesh, so LOD transitions must
+   *  keep the original mesh instead of clearing and regenerating. */
+  bool bIsVoxelChunk = false;
 
   /** Cached voxel mesh data for accurate object placement Z lookup */
   FFPMVoxelMeshData CachedVoxelMesh;

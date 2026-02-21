@@ -60,14 +60,50 @@ AFPMWorldChunkManager::AFPMWorldChunkManager() {
   PrimaryActorTick.bCanEverTick = true;
   PrimaryActorTick.TickInterval =
       0.0f; // Tick every frame, but we throttle internally
-  bReplicates = true;
-  bAlwaysRelevant = true;
+  bReplicates = false;
+  bAlwaysRelevant = false;
 }
 
 void AFPMWorldChunkManager::GetLifetimeReplicatedProps(
     TArray<FLifetimeProperty> &OutLifetimeProps) const {
   Super::GetLifetimeReplicatedProps(OutLifetimeProps);
   DOREPLIFETIME(AFPMWorldChunkManager, WorldSeed);
+}
+
+AFPMWorldChunkManager *AFPMWorldChunkManager::GetOrCreate(UWorld *World) {
+  if (!World) return nullptr;
+
+  // If one already exists, return it
+  for (TActorIterator<AFPMWorldChunkManager> It(World); It; ++It) {
+    return *It;
+  }
+
+  // Spawn a new one
+  FActorSpawnParameters Params;
+  Params.Name = FName(TEXT("FPMWorldChunkManager_0"));
+  AFPMWorldChunkManager *WCM = World->SpawnActor<AFPMWorldChunkManager>(
+      AFPMWorldChunkManager::StaticClass(), FVector::ZeroVector,
+      FRotator::ZeroRotator, Params);
+
+  if (WCM) {
+    // Load assets from known content paths
+    UMaterialInterface *Mat = Cast<UMaterialInterface>(
+        StaticLoadObject(UMaterialInterface::StaticClass(), nullptr,
+                         TEXT("/Game/Materials/Landscape/M_ChunkTerrain")));
+    if (Mat) WCM->TerrainMaterial = Mat;
+
+    UFPMBiomePCGConfig *PCGConf = Cast<UFPMBiomePCGConfig>(
+        StaticLoadObject(UFPMBiomePCGConfig::StaticClass(), nullptr,
+                         TEXT("/Game/DA_BiomePCGConfig")));
+    if (PCGConf) WCM->BiomePCGConfig = PCGConf;
+
+    UE_LOG(LogTemp, Warning,
+           TEXT("FPM: Spawned WorldChunkManager from code (Mat=%s, PCG=%s)"),
+           Mat ? *Mat->GetName() : TEXT("NULL"),
+           PCGConf ? *PCGConf->GetName() : TEXT("NULL"));
+  }
+
+  return WCM;
 }
 
 // ===================================================================
@@ -453,10 +489,10 @@ void AFPMWorldChunkManager::ProcessQueues() {
   // Instead, allow chunk loading to consume at most N milliseconds
   // per frame, ensuring consistent frame rate.
   //
-  // Budget:  40ms steady-state (2 chunks, ~25fps target during loading)
-  //         80ms during initial/heavy load (3+ chunks, brief stutter OK)
-  //         Each voxel chunk takes ~35ms to generate via Marching Cubes.
-  const double BudgetMs = (ChunkLoadQueue.Num() > 50) ? 80.0 : 40.0;
+  // Budget:  8ms steady-state (maintains 60fps during loading)
+  //         16ms during heavy load (1-2 chunks, brief stutter OK)
+  //         Each voxel chunk takes ~35ms, so usually 0-1 chunks per frame.
+  const double BudgetMs = (ChunkLoadQueue.Num() > 50) ? 16.0 : 8.0;
   const double StartTime = FPlatformTime::Seconds();
   const double Deadline = StartTime + BudgetMs / 1000.0;
 
@@ -553,39 +589,39 @@ void AFPMWorldChunkManager::ForceChunkUpdate() {
 void AFPMWorldChunkManager::EnsureChunkLoadedAtWorldPos(FVector WorldPos) {
   const FFPMChunkCoord Center = FPMChunkGenerator::WorldToChunkCoord(WorldPos);
 
-  // Load the target chunk AND all 6 hex neighbors (ring 0 + ring 1)
-  // All at Full LOD with collision so the player has ground to stand on
-  // Ring 0: center hex
-  auto LoadOrUpgradeChunk = [this](const FFPMChunkCoord &Coord) {
-    if (FFPMChunkCoord::HexDistance(Coord, FFPMChunkCoord(0, 0)) >
-        FPMChunkConstants::StarterIslandRings) {
-      return;
-    }
+  // Force-load a 3-ring square grid (7x7 = 49 chunks) around the spawn.
+  // Synchronous - causes a brief loading pause (~1.7s at 35ms/chunk),
+  // but guarantees the player has collision-ready terrain in every
+  // direction before they can move.
+  constexpr int32 ForceLoadRadius = 3;
+  int32 ChunksLoaded = 0;
 
-    if (LoadedChunks.Contains(Coord)) {
-      AFPMChunkActor *Existing = LoadedChunks[Coord];
-      if (Existing && Existing->GetCurrentLOD() != EFPMChunkLOD::Full) {
-        Existing->SetChunkLOD(EFPMChunkLOD::Full);
+  for (int32 DQ = -ForceLoadRadius; DQ <= ForceLoadRadius; ++DQ) {
+    for (int32 DR = -ForceLoadRadius; DR <= ForceLoadRadius; ++DR) {
+      const FFPMChunkCoord Coord(Center.Q + DQ, Center.R + DR);
+
+      if (FFPMChunkCoord::HexDistance(Coord, FFPMChunkCoord(0, 0)) >
+          FPMChunkConstants::StarterIslandRings) {
+        continue;
       }
-      return;
+
+      if (LoadedChunks.Contains(Coord)) {
+        AFPMChunkActor *Existing = LoadedChunks[Coord];
+        if (Existing && Existing->GetCurrentLOD() != EFPMChunkLOD::Full) {
+          Existing->SetChunkLOD(EFPMChunkLOD::Full);
+        }
+        continue;
+      }
+
+      LoadChunk(Coord, EFPMChunkLOD::Full);
+      ChunksLoaded++;
     }
-
-    LoadChunk(Coord, EFPMChunkLOD::Full);
-  };
-
-  // Center hex
-  LoadOrUpgradeChunk(Center);
-
-  // Ring 1: all 6 neighbors
-  for (int32 Dir = 0; Dir < 8; ++Dir) {
-    LoadOrUpgradeChunk(Center.Neighbor(Dir));
   }
 
   UE_LOG(LogTemp, Log,
-         TEXT("FPM: Force-loaded grid ring around (%d,%d) for player spawn"),
-         Center.Q, Center.R);
+         TEXT("FPM: Force-loaded %d chunks in %d-ring grid around (%d,%d)"),
+         ChunksLoaded, ForceLoadRadius, Center.Q, Center.R);
 }
-
 // ===================================================================
 //  Player Position
 // ===================================================================
@@ -655,20 +691,18 @@ void AFPMWorldChunkManager::DrawDebugChunks() const {
       break;
     }
 
-    // Draw hexagonal boundary (6 edges)
-    const float R = FPMChunkConstants::ChunkWorldSize * 0.5f;
+    // Draw square chunk boundary (4 edges)
+    const float CS = FPMChunkConstants::ChunkWorldSize;
     const float DebugZ = 1000.0f;
-    // Flat-top hex vertices (angle offset = 0 degrees for first vertex)
-    for (int32 i = 0; i < 8; ++i) {
-      const float Angle0 = FMath::DegreesToRadians(60.0f * i);
-      const float Angle1 = FMath::DegreesToRadians(60.0f * (i + 1));
-      const FVector P0 = HexCenter + FVector(R * FMath::Cos(Angle0),
-                                             R * FMath::Sin(Angle0), DebugZ);
-      const FVector P1 = HexCenter + FVector(R * FMath::Cos(Angle1),
-                                             R * FMath::Sin(Angle1), DebugZ);
-      DrawDebugLine(GetWorld(), P0, P1, Color, false, UpdateInterval + 0.1f, 0,
-                    5.0f);
-    }
+    const FVector Origin = FPMChunkGenerator::ChunkToWorldOrigin(Coord);
+    const FVector P0 = Origin + FVector(0, 0, DebugZ);
+    const FVector P1 = Origin + FVector(CS, 0, DebugZ);
+    const FVector P2 = Origin + FVector(CS, CS, DebugZ);
+    const FVector P3 = Origin + FVector(0, CS, DebugZ);
+    DrawDebugLine(GetWorld(), P0, P1, Color, false, UpdateInterval + 0.1f, 0, 5.0f);
+    DrawDebugLine(GetWorld(), P1, P2, Color, false, UpdateInterval + 0.1f, 0, 5.0f);
+    DrawDebugLine(GetWorld(), P2, P3, Color, false, UpdateInterval + 0.1f, 0, 5.0f);
+    DrawDebugLine(GetWorld(), P3, P0, Color, false, UpdateInterval + 0.1f, 0, 5.0f);
 
     // Draw chunk coordinate text
     DrawDebugString(GetWorld(), HexCenter + FVector(0, 0, DebugZ + 200),
