@@ -54,25 +54,35 @@ private:
    * and FPMVoxelGenerator::BiomeAtWorldXY for biome queries.
    * Points are LOCAL to the chunk actor (X,Y relative to chunk origin).
    *
-   * @param ChunkCoord   Grid coordinate of the chunk
-   * @param TargetBiome  Which biome this scatter is for
-   * @param Count        Number of points to attempt
-   * @param ChunkSeed    Per-chunk seed
-   * @param WorldSeed    Global world seed for terrain queries
-   * @param OutPoints    Output: local-space transforms on the mesh surface
-   * @param ScaleRange   Min/Max uniform scale for instances
+   * @param ChunkCoord      Grid coordinate of the chunk
+   * @param TargetBiome     Which biome this scatter is for
+   * @param Count           Number of points to attempt
+   * @param ChunkSeed       Per-chunk seed
+   * @param WorldSeed       Global world seed for terrain queries
+   * @param OutPoints       Output: local-space transforms on the mesh surface
+   * @param ScaleRange      Min/Max uniform scale for instances
+   * @param MaxSlopeDegrees Steeper terrain than this (degrees) is rejected.
+   *                        Range [0, 90]: 0 = flat only, 90 = no rejection.
    */
   static void GenerateScatterPoints(const FFPMChunkCoord &ChunkCoord,
                                     EFPMBiome TargetBiome, int32 Count,
                                     int32 ChunkSeed, int32 WorldSeed,
                                     TArray<FTransform> &OutPoints,
-                                    FVector2D ScaleRange);
+                                    FVector2D ScaleRange,
+                                    float MaxSlopeDegrees = 90.0f);
 
   /**
    * Create an HISM component on the actor for a given mesh, then add
    * instances at each transform.
+   *
+   * @param bIsRock       Rocks get QueryOnly collision; foliage gets
+   *                      NoCollision.
+   * @param bCastShadow   Per-component shadow toggle (from config).
+   * @param CullDistances [StartCull, EndCull] in cm.
    */
   static UHierarchicalInstancedStaticMeshComponent *
   SpawnHISMInstances(AActor *OwnerActor, UStaticMesh *Mesh,
-                     const TArray<FTransform> &Transforms, FName ComponentName);
+                     const TArray<FTransform> &Transforms, FName ComponentName,
+                     bool bIsRock = false, bool bCastShadow = false,
+                     FVector2D CullDistances = FVector2D(35000.f, 40000.f));
 };

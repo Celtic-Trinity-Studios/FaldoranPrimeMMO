@@ -30,14 +30,27 @@ CREATE TABLE IF NOT EXISTS characters (
     character_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id      UUID NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
     character_name  VARCHAR(20) NOT NULL UNIQUE,
+    species         SMALLINT NOT NULL DEFAULT 0,
     body_type       SMALLINT NOT NULL DEFAULT 0,
     skin_color_r    REAL NOT NULL DEFAULT 0.8,
     skin_color_g    REAL NOT NULL DEFAULT 0.6,
     skin_color_b    REAL NOT NULL DEFAULT 0.5,
+    eye_color_r     REAL NOT NULL DEFAULT 0.3,
+    eye_color_g     REAL NOT NULL DEFAULT 0.5,
+    eye_color_b     REAL NOT NULL DEFAULT 0.8,
     hair_style      SMALLINT NOT NULL DEFAULT 0,
     hair_color_r    REAL NOT NULL DEFAULT 0.3,
     hair_color_g    REAL NOT NULL DEFAULT 0.2,
     hair_color_b    REAL NOT NULL DEFAULT 0.1,
+    morph_jaw       REAL NOT NULL DEFAULT 0.5,
+    morph_nose      REAL NOT NULL DEFAULT 0.5,
+    morph_brow      REAL NOT NULL DEFAULT 0.5,
+    morph_lips      REAL NOT NULL DEFAULT 0.5,
+    -- World position. NULL = new character (server sends to Nexus on first login).
+    -- Updated by the server each time the character logs out or is saved.
+    spawn_x         DOUBLE PRECISION,
+    spawn_y         DOUBLE PRECISION,
+    spawn_z         DOUBLE PRECISION,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_played     TIMESTAMPTZ
 );
@@ -47,7 +60,6 @@ CREATE INDEX IF NOT EXISTS idx_characters_account_id ON characters (account_id);
 
 -- Index for checking character name uniqueness quickly
 CREATE INDEX IF NOT EXISTS idx_characters_name ON characters (character_name);
-
 -- -------------------------------------------------------------------
 -- Character Affinities Table
 -- -------------------------------------------------------------------

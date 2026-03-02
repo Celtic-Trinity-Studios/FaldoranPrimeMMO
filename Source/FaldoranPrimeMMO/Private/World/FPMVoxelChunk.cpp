@@ -3,6 +3,8 @@
 #include "World/FPMVoxelChunk.h"
 #include "MCTables.h"
 #include "Misc/ConfigCacheIni.h"
+#include "World/FPMChunkData.h"
+#include "World/FPMNoise.h"
 
 using namespace FPMVoxelConstants;
 
@@ -13,24 +15,36 @@ using namespace FPMVoxelConstants;
 namespace {
 struct FTerrainSettings {
   // [Terrain]
+  // Higher scale for more rugged mountains across 1.28km chunks
   float NoiseScale = 6.0f;
-  float HeightBase = -400.0f;
-  float HeightScale = 5000.0f;
-  float MaxHeight = 0.55f;
-  float MeadowFlattenTarget = 0.06f;
-  float MeadowFlattenStrength = 0.80f;
-  float MountainPeakIntensity = 0.12f;
+
+  // Sea level at Z=0.
+  // Normalized 0.0 = -11km (MinWorldZ)
+  // Normalized 1.0 = +9km (MaxWorldZ)
+  // Sea level (0m) = 0.55 normalized elevation.
+  float HeightBase = FPMChunkConstants::MinWorldZ;
+  float HeightScale = FPMChunkConstants::WorldHeightRange;
+  float MaxHeight = 1.0f; // Allow the full 9km height
+
+  float MeadowFlattenTarget = 0.57f; // Just above sea level
+  float MeadowFlattenStrength = 0.40f;
+  float MountainPeakIntensity = 0.15f;
+
+  // [Ocean]
+  // Lowest point at -11km ( normalized 0.0 )
+  float OceanFloorDepth = 0.0f;
 
   // [Rivers]
   bool bEnableRivers = true;
-  float RiverBedHeight = 0.04f;
+  float RiverBedHeight = 0.55f;  // Sea level
+  float RiverCarveDepth = 0.02f; // ~400m carving depth
   float RiverCarveStrength = 0.85f;
   float RiverMaskThreshold = 0.15f;
 
   // [Lakes]
   bool bEnableLakes = true;
-  float LakeBedHeight = 0.03f;
-  float LakeThreshold = 0.38f;
+  float LakeBedHeight = 0.555f; // Slightly above sea level
+  float LakeThreshold = 0.58f;
 
   bool bLoaded = false;
 };
@@ -38,13 +52,13 @@ struct FTerrainSettings {
 static FTerrainSettings GTerrainSettings;
 
 void LoadTerrainSettings() {
-  if (GTerrainSettings.bLoaded)
+  static bool bSettingsLoaded = false;
+  if (bSettingsLoaded)
     return;
-  GTerrainSettings.bLoaded = true;
+  bSettingsLoaded = true;
 
-  FString IniPath =
-      FPaths::ConvertRelativePathToFull(
-          FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("WorldGen.ini")));
+  FString IniPath = FPaths::ConvertRelativePathToFull(
+      FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("WorldGen.ini")));
   FConfigCacheIni::NormalizeConfigIniPath(IniPath);
   if (!FPaths::FileExists(IniPath))
     return;
@@ -70,6 +84,8 @@ void LoadTerrainSettings() {
                    GTerrainSettings.bEnableRivers, IniPath);
   GConfig->GetFloat(TEXT("Rivers"), TEXT("RiverBedHeight"),
                     GTerrainSettings.RiverBedHeight, IniPath);
+  GConfig->GetFloat(TEXT("Rivers"), TEXT("RiverCarveDepth"),
+                    GTerrainSettings.RiverCarveDepth, IniPath);
   GConfig->GetFloat(TEXT("Rivers"), TEXT("RiverCarveStrength"),
                     GTerrainSettings.RiverCarveStrength, IniPath);
   GConfig->GetFloat(TEXT("Rivers"), TEXT("RiverMaskThreshold"),
@@ -83,11 +99,18 @@ void LoadTerrainSettings() {
   GConfig->GetFloat(TEXT("Lakes"), TEXT("LakeThreshold"),
                     GTerrainSettings.LakeThreshold, IniPath);
 
+  // [Ocean]
+  GConfig->GetFloat(TEXT("Ocean"), TEXT("OceanFloorDepth"),
+                    GTerrainSettings.OceanFloorDepth, IniPath);
+
   UE_LOG(LogTemp, Warning,
-         TEXT("FPM Voxel: Terrain settings loaded — Rivers=%d, Lakes=%d, "
-              "NoiseScale=%.1f, HeightScale=%.0f"),
+         TEXT("FPM Voxel: Terrain settings loaded -- Rivers=%d, Lakes=%d, "
+              "NoiseScale=%.1f, HeightScale=%.0f, OceanFloor=%.2f, "
+              "RiverCarveDepth=%.4f, RiverCarveStr=%.2f"),
          GTerrainSettings.bEnableRivers, GTerrainSettings.bEnableLakes,
-         GTerrainSettings.NoiseScale, GTerrainSettings.HeightScale);
+         GTerrainSettings.NoiseScale, GTerrainSettings.HeightScale,
+         GTerrainSettings.OceanFloorDepth, GTerrainSettings.RiverCarveDepth,
+         GTerrainSettings.RiverCarveStrength);
 }
 
 /** Hermite smooth-step: S-curve from 0->1 between Edge0 and Edge1 */
@@ -99,7 +122,11 @@ float SmoothStep(float Edge0, float Edge1, float X) {
 } // anonymous namespace
 
 // ===================================================================
-//  Terrain Surface Z — noise + rivers + lakes
+//  Terrain Surface Z ï¿½ noise + rivers + lakes
+// ===================================================================
+
+// ===================================================================
+//  Terrain Surface Z - unified FPMNoise pipeline
 // ===================================================================
 
 float FPMVoxelGenerator::TerrainSurfaceZ(float WorldX, float WorldY,
@@ -107,105 +134,80 @@ float FPMVoxelGenerator::TerrainSurfaceZ(float WorldX, float WorldY,
   LoadTerrainSettings();
   const FTerrainSettings &S = GTerrainSettings;
 
-  // Convert world XY to normalized island-space (0-1)
+  float LandHeight = FPMNoise::TerrainHeight(WorldX, WorldY, WorldSeed);
+
+  // Precompute normalized coords and island mask (shared by rivers + lakes)
   const float HI = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
   const float ISZ = FPMChunkConstants::StarterIslandWorldSize;
   const float NormX = (WorldX + HI) / ISZ;
   const float NormY = (WorldY + HI) / ISZ;
+  const float Mask = FPMNoise::IslandMask(WorldX, WorldY, WorldSeed);
 
-  // Island mask
-  const float Mask = FPMChunkGenerator::IslandMask(NormX, NormY);
-
-  // Biome (needed for vertex colors and flattening)
-  EFPMBiome Biome =
-      FPMChunkGenerator::AssignBiomeFromNoise(NormX, NormY, WorldSeed, Mask);
-
-  // Compute continuous BiomeValue with domain warping (matches
-  // AssignBiomeFromNoise)
-  constexpr float BiomeScale1 = 3.5f;
-  constexpr float BiomeScale2 = 5.0f;
-  constexpr float BiomeScale3 = 12.0f;
-  constexpr int32 BiomeSeedOffset = 99999;
-  constexpr float WarpScale = 4.0f;
-  constexpr float WarpStrength = 0.08f;
-  const float WarpX =
-      FPMChunkGenerator::FractalNoise(NormX * WarpScale, NormY * WarpScale,
-                                      WorldSeed + 55555, 3) *
-      WarpStrength;
-  const float WarpY = FPMChunkGenerator::FractalNoise(
-                          NormX * WarpScale + 100.0f,
-                          NormY * WarpScale + 100.0f, WorldSeed + 66666, 3) *
-                      WarpStrength;
-  const float WarpedX = NormX + WarpX;
-  const float WarpedY = NormY + WarpY;
-  const float BN1 = FPMChunkGenerator::FractalNoise(
-      WarpedX * BiomeScale1, WarpedY * BiomeScale1, WorldSeed + BiomeSeedOffset,
-      3);
-  const float BN2 = FPMChunkGenerator::FractalNoise(
-      WarpedX * BiomeScale2, WarpedY * BiomeScale2,
-      WorldSeed + BiomeSeedOffset + 7777, 2);
-  const float BN3 = FPMChunkGenerator::FractalNoise(
-      WarpedX * BiomeScale3, WarpedY * BiomeScale3,
-      WorldSeed + BiomeSeedOffset + 33333, 2);
-  const float BiomeValue = BN1 * 0.50f + BN2 * 0.30f + BN3 * 0.20f;
-
-  // Smooth noise blend: fractal (plains) ? ridge (mountains)
-  const float RidgeBlend =
-      FMath::Clamp((BiomeValue - 0.30f) / 0.40f, 0.0f, 1.0f);
-  const float FlatNoise = FPMChunkGenerator::FractalNoise(
-      NormX * S.NoiseScale, NormY * S.NoiseScale, WorldSeed, 5);
-  const float MtNoise = FPMChunkGenerator::RidgeNoise(
-      NormX * S.NoiseScale, NormY * S.NoiseScale, WorldSeed, 6);
-  const float Noise = FMath::Lerp(FlatNoise, MtNoise, RidgeBlend);
-
-  // Continuous elevation bias (smooth curve, no jumps)
-  const float BiomeBias =
-      FPMChunkGenerator::ContinuousElevationBias(BiomeValue);
-  float LandHeight = (Noise * 0.5f + BiomeBias * 0.5f) * Mask;
-
-  // Meadows flattening
-  if (Biome == EFPMBiome::Meadows && LandHeight > 0.02f) {
-    LandHeight =
-        FMath::Lerp(LandHeight, S.MeadowFlattenTarget, S.MeadowFlattenStrength);
-  }
-
-  // Mountain peaks
-  if (Biome == EFPMBiome::Mountain) {
-    const float PeakNoise = FPMChunkGenerator::FractalNoise(
-        NormX * S.NoiseScale * 2.0f, NormY * S.NoiseScale * 2.0f,
-        WorldSeed + 12345, 4);
-    LandHeight += PeakNoise * S.MountainPeakIntensity * Mask;
-  }
-
-  // --- Rivers (smooth banks) ---
+  // --- River carving ---
   if (S.bEnableRivers) {
     const float River = FPMChunkGenerator::RiverFactor(NormX, NormY, WorldSeed);
-    if (River > 0.005f && Mask > S.RiverMaskThreshold) {
-      // Smooth S-curve: gentle slope from land into river bed
-      // SmoothStep creates a gradual bank instead of a cliff
-      const float BankFactor = SmoothStep(0.005f, 0.10f, River);
-      LandHeight = FMath::Lerp(LandHeight, S.RiverBedHeight,
-                               BankFactor * S.RiverCarveStrength);
+    if (River > 0.01f && Mask > S.RiverMaskThreshold) {
+      // Carve DOWN from local terrain by RiverCarveDepth.
+      // River factor (0-1) acts as a cross-section profile:
+      //   center of river (Riverâ‰ˆ1) gets full depth,
+      //   edges (Riverâ‰ˆ0) get a shallow bank.
+      const float CarveAmount =
+          S.RiverCarveDepth * River * S.RiverCarveStrength;
+
+      // One-time debug: log actual carving values
+      static bool bCarveDebug = false;
+      if (!bCarveDebug) {
+        bCarveDebug = true;
+        UE_LOG(LogTemp, Warning,
+               TEXT("FPM RIVER CARVE: LandHeight=%.6f, River=%.4f, "
+                    "CarveDepth=%.4f, CarveStrength=%.2f, CarveAmount=%.6f, "
+                    "NewHeight=%.6f, WorldZ=%.1f -> %.1f (delta=%.1fcm)"),
+               LandHeight, River, S.RiverCarveDepth, S.RiverCarveStrength,
+               CarveAmount, LandHeight - CarveAmount,
+               S.HeightBase + LandHeight * S.HeightScale,
+               S.HeightBase + (LandHeight - CarveAmount) * S.HeightScale,
+               CarveAmount * S.HeightScale);
+      }
+
+      LandHeight -= CarveAmount;
+    }
+    // One-time diagnostic: sample near player spawn
+    static bool bRiverDiag = false;
+    if (!bRiverDiag && FMath::Abs(WorldX) < 200000.0f &&
+        FMath::Abs(WorldY) < 200000.0f) {
+      bRiverDiag = true;
+      // Test multiple points along R=3 river direction (315 degrees)
+      for (int32 D = 0; D < 20; ++D) {
+        float TestDist = D * 0.02f; // 0 to 0.38 in normalized
+        float TX = 0.5f + TestDist * 0.707f;
+        float TY = 0.5f - TestDist * 0.707f;
+        float RF = FPMChunkGenerator::RiverFactor(TX, TY, WorldSeed);
+        UE_LOG(LogTemp, Warning,
+               TEXT("FPM RIVER DIAG: Norm(%.3f,%.3f) RF=%.4f Mask=%.3f "
+                    "MaskThresh=%.3f bEnable=%d"),
+               TX, TY, RF, Mask, S.RiverMaskThreshold, S.bEnableRivers);
+      }
     }
   }
 
-  // --- Lakes ---
-  if (S.bEnableLakes) {
-    const float LakeNoise = FPMChunkGenerator::FractalNoise(
-        NormX * 4.0f, NormY * 4.0f, WorldSeed + 77777, 3);
-    if (LakeNoise < S.LakeThreshold && Mask > 0.25f &&
-        Biome != EFPMBiome::Mountain && Biome != EFPMBiome::Snow) {
-      // Smooth lake edge transition
-      const float LakeEdge =
-          SmoothStep(S.LakeThreshold, S.LakeThreshold * 0.5f, LakeNoise);
-      LandHeight = FMath::Lerp(LandHeight, S.LakeBedHeight,
-                               FMath::Clamp(LakeEdge, 0.0f, 0.9f));
+  // --- Lake carving ---
+  // Lakes form in low-lying, high-moisture areas.
+  if (S.bEnableLakes && Mask > 0.1f) {
+    const float Moist = FPMNoise::Moisture(WorldX, WorldY, WorldSeed);
+    // Sea level is at normalized 0.55 (maps to Z=0)
+    const float SeaLevelNorm = 0.55f;
+
+    // Lake activation: high moisture + terrain near or below sea level
+    if (Moist > S.LakeThreshold && LandHeight < SeaLevelNorm + 0.05f) {
+      // Smooth blend into lake bed based on moisture intensity
+      const float LakeFactor =
+          SmoothStep(S.LakeThreshold, S.LakeThreshold + 0.12f, Moist);
+      LandHeight = FMath::Lerp(LandHeight, S.LakeBedHeight, LakeFactor * 0.85f);
     }
   }
 
-  LandHeight = FMath::Clamp(LandHeight, 0.0f, S.MaxHeight);
-
-  // Convert normalized height to world Z
+  // Allow terrain below sea level (ocean floor).
+  LandHeight = FMath::Clamp(LandHeight, S.OceanFloorDepth, S.MaxHeight);
   return S.HeightBase + LandHeight * S.HeightScale;
 }
 
@@ -220,36 +222,32 @@ EFPMBiome FPMVoxelGenerator::BiomeAtWorldXY(float WorldX, float WorldY,
   const float ISZ = FPMChunkConstants::StarterIslandWorldSize;
   const float NormX = (WorldX + HI) / ISZ;
   const float NormY = (WorldY + HI) / ISZ;
-  const float Mask = FPMChunkGenerator::IslandMask(NormX, NormY);
+  const float Mask = FPMNoise::IslandMask(WorldX, WorldY, WorldSeed);
 
   EFPMBiome Biome =
       FPMChunkGenerator::AssignBiomeFromNoise(NormX, NormY, WorldSeed, Mask);
 
-  // River override: paint as Coast biome
   if (GTerrainSettings.bEnableRivers) {
     const float River = FPMChunkGenerator::RiverFactor(NormX, NormY, WorldSeed);
-    if (River > 0.02f && Mask > GTerrainSettings.RiverMaskThreshold) {
-      Biome = EFPMBiome::Coast;
+    if (River > 0.3f && Mask > GTerrainSettings.RiverMaskThreshold) {
+      Biome = EFPMBiome::River;
     }
   }
 
-  // Lake override: paint as Coast biome
-  if (GTerrainSettings.bEnableLakes) {
-    const float LakeNoise = FPMChunkGenerator::FractalNoise(
-        NormX * 4.0f, NormY * 4.0f, WorldSeed + 77777, 3);
-    if (LakeNoise < GTerrainSettings.LakeThreshold && Mask > 0.25f &&
-        Biome != EFPMBiome::Mountain && Biome != EFPMBiome::Snow) {
-      Biome = EFPMBiome::Coast;
-    }
+  // --- Altitude Diagnostic ---
+  static bool bAltDiag = false;
+  if (!bAltDiag) {
+    bAltDiag = true;
+    const float ExpectedSurfaceZ = TerrainSurfaceZ(WorldX, WorldY, WorldSeed);
+    UE_LOG(LogTemp, Warning,
+           TEXT("FPM PLAYER ALT DIAG: WorldX=%.1f WorldP.Z=%.1f, NormH=%.4f, "
+                "ExpectedSurfaceZ=%.1f (Delta=%.1f) BiomeIdx=%d"),
+           WorldX, (NormalizedHeight * 2000000.0f) - 1100000.0f,
+           NormalizedHeight, ExpectedSurfaceZ,
+           ((NormalizedHeight * 2000000.0f) - 1100000.0f) - ExpectedSurfaceZ,
+           static_cast<int32>(Biome));
   }
 
-  // Elevation overrides
-  if (Biome == EFPMBiome::Mountain && NormalizedHeight > 0.40f) {
-    Biome = EFPMBiome::Snow;
-  } else if (NormalizedHeight > 0.0f && NormalizedHeight < 0.05f &&
-             Biome != EFPMBiome::Coast && Biome != EFPMBiome::Ocean) {
-    Biome = EFPMBiome::Swamp;
-  }
   return Biome;
 }
 
@@ -272,26 +270,44 @@ FVector FPMVoxelGenerator::InterpolateEdge(const FVector &P1, const FVector &P2,
 FColor FPMVoxelGenerator::BiomeToVertexColor(EFPMBiome Biome) {
   switch (Biome) {
   case EFPMBiome::Meadows:
-    return FColor(255, 0, 0, 0);
+    return FColor(200, 220, 50, 0);
   case EFPMBiome::Forest:
-    return FColor(0, 255, 0, 0);
-  case EFPMBiome::Mountain:
-    return FColor(0, 0, 255, 0);
-  case EFPMBiome::Coast:
-    return FColor(51, 0, 0, 0);
+    return FColor(30, 140, 30, 0);
+  case EFPMBiome::Plains:
+    return FColor(180, 170, 80, 0);
+  case EFPMBiome::Savanna:
+    return FColor(200, 160, 60, 0);
+  case EFPMBiome::Jungle:
+    return FColor(10, 100, 20, 0);
+  case EFPMBiome::Desert:
+    return FColor(220, 190, 120, 0);
+  case EFPMBiome::Taiga:
+    return FColor(60, 100, 60, 0);
+  case EFPMBiome::BorealForest:
+    return FColor(40, 80, 50, 0);
+  case EFPMBiome::Tundra:
+    return FColor(150, 160, 170, 0);
   case EFPMBiome::Swamp:
-    return FColor(128, 0, 128, 0);
+    return FColor(80, 100, 40, 0);
+  case EFPMBiome::Alpine:
+    return FColor(140, 140, 120, 80);
+  case EFPMBiome::Mountain:
+    return FColor(120, 110, 100, 0);
   case EFPMBiome::Snow:
-    return FColor(0, 0, 0, 255);
+    return FColor(240, 245, 255, 255);
+  case EFPMBiome::River:
+    return FColor(60, 90, 80, 0); // Dark brown-green riverbed/banks
+  case EFPMBiome::Coast:
+    return FColor(0, 255, 255, 0); // DEBUG: bright cyan for rivers
+  case EFPMBiome::Beach:
+    return FColor(230, 210, 160, 0);
   case EFPMBiome::Ocean:
-    return FColor(0, 0, 0, 0);
+    return FColor(30, 80, 120, 0);
   default:
     return FColor(128, 128, 128, 0);
   }
 }
-
-// ===================================================================
-//  Smooth Normals — average normals across shared vertex positions
+//  Smooth Normals ï¿½ average normals across shared vertex positions
 // ===================================================================
 
 static void SmoothNormals(FFPMVoxelMeshData &Mesh) {
@@ -328,7 +344,7 @@ static void SmoothNormals(FFPMVoxelMeshData &Mesh) {
 }
 
 // ===================================================================
-//  Vertex color smoothing — averages colors at shared positions for
+//  Vertex color smoothing ï¿½ averages colors at shared positions for
 //  smooth biome transitions.  Uses the same position-quantization
 //  approach as SmoothNormals.
 // ===================================================================
@@ -393,33 +409,52 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
   // Overlap margin: grid starts OverlapMargin voxels BEFORE the chunk origin
   const float OverlapOff = OverlapOffsetCm;
 
-  // --- 1. Build density grid ---
+  // --- 1. Build density grid + climate grids ---
   TArray<float> Density;
   Density.SetNumUninitialized(TotalCorners);
 
-  for (int32 Z = 0; Z < GridZ; ++Z) {
-    const float WorldZ = WorldZBase + Z * VS;
-    for (int32 Y = 0; Y < GridY; ++Y) {
-      const float WorldY = ChunkOrigin.Y - OverlapOff + Y * VS;
-      for (int32 X = 0; X < GridX; ++X) {
-        const float WorldX = ChunkOrigin.X - OverlapOff + X * VS;
+  // Climate grids: Temperature and Moisture sampled at each XY column
+  // These will be diffusion-smoothed before biome assignment.
+  TArray<float> TempGrid, MoistGrid, HeightGrid, MaskGrid;
+  const int32 ClimateSize = GridX * GridY;
+  TempGrid.SetNumUninitialized(ClimateSize);
+  MoistGrid.SetNumUninitialized(ClimateSize);
+  HeightGrid.SetNumUninitialized(ClimateSize);
+  MaskGrid.SetNumUninitialized(ClimateSize);
+
+  // Sample terrain height, density, AND climate fields per column
+  for (int32 Y = 0; Y < GridY; ++Y) {
+    const float WorldY = ChunkOrigin.Y - OverlapOff + Y * VS;
+    for (int32 X = 0; X < GridX; ++X) {
+      const float WorldX = ChunkOrigin.X - OverlapOff + X * VS;
+      const float SurfaceZ = TerrainSurfaceZ(WorldX, WorldY, WorldSeed);
+
+      // Climate fields (will be smoothed in step 1b)
+      const int32 CIdx = Y * GridX + X;
+      TempGrid[CIdx] = FPMNoise::Temperature(WorldX, WorldY, WorldSeed);
+      MoistGrid[CIdx] = FPMNoise::Moisture(WorldX, WorldY, WorldSeed);
+      HeightGrid[CIdx] = FPMNoise::TerrainHeight(WorldX, WorldY, WorldSeed);
+      MaskGrid[CIdx] = FPMNoise::IslandMask(WorldX, WorldY, WorldSeed);
+
+      // Fill density column
+      for (int32 Z = 0; Z < GridZ; ++Z) {
+        const float WorldZ = WorldZBase + Z * VS;
         const int32 Idx = Z * GridX * GridY + Y * GridX + X;
 
-        // Density > 0 = solid (below surface), < 0 = air (above surface)
-        const float SurfaceZ = TerrainSurfaceZ(WorldX, WorldY, WorldSeed);
         float D = SurfaceZ - WorldZ;
-
-        // CRITICAL: Force the top 2 layers to be air (density < 0).
-        // This prevents Marching Cubes from generating chaotic cap
-        // geometry when the terrain approaches the volume ceiling.
         if (Z >= GridZ - 2) {
           D = -1.0f;
         }
-
         Density[Idx] = D;
       }
     }
   }
+
+  // --- 1b. Diffusion-smooth climate grids ---
+  // 3 passes at strength 0.4: enough to prevent speckling, but preserves
+  // the medium-frequency climate variation for within-region variety.
+  FPMNoise::DiffusionSmooth(TempGrid, GridX, GridY, 3, 0.4f);
+  FPMNoise::DiffusionSmooth(MoistGrid, GridX, GridY, 3, 0.4f);
 
   // --- 2. Marching Cubes ---
   for (int32 Z = 0; Z < ChunkVoxelsZ; ++Z) {
@@ -436,7 +471,8 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
           const int32 Idx = CZ * GridX * GridY + CY * GridX + CX;
           CornerDensity[C] = Density[Idx];
 
-          CornerPos[C] = FVector(CX * VS - OverlapOff, CY * VS - OverlapOff, WorldZBase + CZ * VS);
+          CornerPos[C] = FVector(CX * VS - OverlapOff, CY * VS - OverlapOff,
+                                 WorldZBase + CZ * VS);
         }
 
         // Determine cube configuration index
@@ -468,7 +504,7 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
           const FVector &V1 = EdgeVerts[MCTriTable[CubeIndex][T + 1]];
           const FVector &V2 = EdgeVerts[MCTriTable[CubeIndex][T + 2]];
 
-          // Face normal (initial — will be smoothed in post-pass)
+          // Face normal (initial â€” will be smoothed in post-pass)
           const FVector Edge1 = V1 - V0;
           const FVector Edge2 = V2 - V0;
           FVector FaceNormal =
@@ -495,15 +531,22 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
                                 (ChunkOrigin.Y + VP.Y) / 100.0f);
           }
 
-          // Vertex color: biome at triangle center
-          const FVector Center = (V0 + V1 + V2) / 3.0f;
-          const float CenterWorldX = ChunkOrigin.X + Center.X;
-          const float CenterWorldY = ChunkOrigin.Y + Center.Y;
-          const float NormH = (Center.Z - GTerrainSettings.HeightBase) /
-                              GTerrainSettings.HeightScale;
-          const EFPMBiome Biome =
-              BiomeAtWorldXY(CenterWorldX, CenterWorldY, WorldSeed, NormH);
-          const FColor BColor = BiomeToVertexColor(Biome);
+          // Use the SAME biome code path as the HUD so terrain colour always
+          // matches the displayed biome name.
+          // WorldToIslandNorm converts world cm â†’ normalised [0,1] island
+          // coords. AssignBiomeFromNoise uses those same coords internally
+          // (matching HUD).
+          const FVector TriCentroid = (V0 + V1 + V2) / 3.0f;
+          const float WorldCX = ChunkOrigin.X + TriCentroid.X;
+          const float WorldCY = ChunkOrigin.Y + TriCentroid.Y;
+
+          float NormX, NormY;
+          FPMChunkGenerator::WorldToIslandNorm(FVector(WorldCX, WorldCY, 0.0f),
+                                               NormX, NormY);
+
+          const EFPMBiome WBiome = FPMChunkGenerator::AssignBiomeFromNoise(
+              NormX, NormY, WorldSeed, 0.5f);
+          const FColor BColor = FPMVoxelGenerator::BiomeToVertexColor(WBiome);
           OutMesh.Colors.Add(BColor);
           OutMesh.Colors.Add(BColor);
           OutMesh.Colors.Add(BColor);
@@ -521,4 +564,20 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
   UE_LOG(LogTemp, Verbose, TEXT("FPM Voxel: Chunk %s -> %d verts, %d tris"),
          *Coord.ToString(), OutMesh.Vertices.Num(),
          OutMesh.Triangles.Num() / 3);
+
+  // One-time diagnostic: scan vertex Z range to verify carving
+  static bool bMeshZDiag = false;
+  if (!bMeshZDiag && OutMesh.Vertices.Num() > 0) {
+    bMeshZDiag = true;
+    float MinZ = TNumericLimits<float>::Max();
+    float MaxZ = TNumericLimits<float>::Lowest();
+    for (const FVector &V : OutMesh.Vertices) {
+      MinZ = FMath::Min(MinZ, V.Z);
+      MaxZ = FMath::Max(MaxZ, V.Z);
+    }
+    UE_LOG(LogTemp, Warning,
+           TEXT("FPM MESH DIAG: Chunk %s -> %d verts, Z range [%.1f .. %.1f] "
+                "(span=%.1fcm)"),
+           *Coord.ToString(), OutMesh.Vertices.Num(), MinZ, MaxZ, MaxZ - MinZ);
+  }
 }

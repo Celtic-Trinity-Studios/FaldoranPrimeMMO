@@ -9,10 +9,10 @@
 #include "Components/Image.h"
 #include "Components/Slider.h"
 #include "Components/TextBlock.h"
+#include "Components/VerticalBox.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Player/FPMPlayerController.h"
 #include "Styling/SlateColor.h"
-
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPMCharCreate, Log, All);
 
@@ -92,21 +92,40 @@ void UFPMCharacterCreationWidget::DestroyPreviewActor() {
   }
 }
 
+// --- HSV Color Helpers ---
+
+FLinearColor UFPMCharacterCreationWidget::GetColorFromHSVSliders(
+    const TArray<TObjectPtr<USlider>> &Sliders) const {
+  if (Sliders.Num() < 3)
+    return FLinearColor::White;
+  // Sliders store H(0..1), S(0..1), V(0..1) — convert to 0-255 for
+  // MakeFromHSV8
+  const uint8 H = static_cast<uint8>(
+      FMath::Clamp(Sliders[0]->GetValue(), 0.f, 1.f) * 255.f);
+  const uint8 S = static_cast<uint8>(
+      FMath::Clamp(Sliders[1]->GetValue(), 0.f, 1.f) * 255.f);
+  const uint8 V = static_cast<uint8>(
+      FMath::Clamp(Sliders[2]->GetValue(), 0.f, 1.f) * 255.f);
+  return FLinearColor::MakeFromHSV8(H, S, V);
+}
+
+void UFPMCharacterCreationWidget::RefreshColorPreview(
+    const TArray<TObjectPtr<USlider>> &Sliders, UImage *Preview) {
+  if (Preview)
+    Preview->SetColorAndOpacity(GetColorFromHSVSliders(Sliders));
+}
+
 void UFPMCharacterCreationWidget::UpdatePreviewFromSliders() {
+  // Refresh color preview swatches
+  RefreshColorPreview(SkinSliders, SkinColorPreview);
+  RefreshColorPreview(EyeSliders, EyeColorPreview);
+  RefreshColorPreview(HairColorSliders, HairColorPreview);
+
   if (!PreviewActor)
     return;
-  if (SkinSliders.Num() >= 3)
-    PreviewActor->SetSkinTone(FLinearColor(SkinSliders[0]->GetValue(),
-                                           SkinSliders[1]->GetValue(),
-                                           SkinSliders[2]->GetValue(), 1.f));
-  if (EyeSliders.Num() >= 3)
-    PreviewActor->SetEyeColor(FLinearColor(EyeSliders[0]->GetValue(),
-                                           EyeSliders[1]->GetValue(),
-                                           EyeSliders[2]->GetValue(), 1.f));
-  if (HairColorSliders.Num() >= 3)
-    PreviewActor->SetHairColor(FLinearColor(
-        HairColorSliders[0]->GetValue(), HairColorSliders[1]->GetValue(),
-        HairColorSliders[2]->GetValue(), 1.f));
+  PreviewActor->SetSkinTone(GetColorFromHSVSliders(SkinSliders));
+  PreviewActor->SetEyeColor(GetColorFromHSVSliders(EyeSliders));
+  PreviewActor->SetHairColor(GetColorFromHSVSliders(HairColorSliders));
   if (HairStyleComboBox)
     PreviewActor->SetHairStyle(HairStyleComboBox->GetSelectedIndex());
   for (int i = 0; i < FMath::Min(MorphSliders.Num(), 4); ++i)
@@ -166,6 +185,63 @@ void UFPMCharacterCreationWidget::OnHairStyleChanged(FString,
   if (PreviewActor && HairStyleComboBox)
     PreviewActor->SetHairStyle(HairStyleComboBox->GetSelectedIndex());
 }
+
+void UFPMCharacterCreationWidget::OnSpeciesChanged(FString, ESelectInfo::Type) {
+  // Species combo index maps directly to EFPMSpecies enum values
+  const int32 Idx = SpeciesComboBox ? SpeciesComboBox->GetSelectedIndex() : 0;
+  UE_LOG(LogFPMCharCreate, Log, TEXT("FPM: Species changed to index %d"), Idx);
+
+  // Species mesh scale table (must match FPMPlayerCharacter.cpp SpeciesData)
+  static const float SpeciesScales[] = {
+      1.00f, // Human
+      1.05f, // HalfElf
+      1.08f, // Elf
+      0.75f, // Dwarf
+      0.55f, // Halfling
+      1.15f, // HalfOrc
+      0.55f, // Gnome
+      0.95f, // Kethari
+      1.05f, // Rauken
+  };
+  static constexpr int32 NumScales = sizeof(SpeciesScales) / sizeof(float);
+
+  if (PreviewActor) {
+    const float Scale = SpeciesScales[FMath::Clamp(Idx, 0, NumScales - 1)];
+    PreviewActor->SetSpeciesScale(Scale);
+  }
+}
+
+// =====================================================================
+// TAB SYSTEM
+// =====================================================================
+
+void UFPMCharacterCreationWidget::SwitchTab(int32 Index) {
+  if (Index < 0 || Index >= TabPanels.Num())
+    return;
+  ActiveTabIndex = Index;
+  for (int i = 0; i < TabPanels.Num(); ++i)
+    TabPanels[i]->SetVisibility(i == Index ? ESlateVisibility::Visible
+                                           : ESlateVisibility::Collapsed);
+  UpdateTabButtonStyles();
+}
+
+void UFPMCharacterCreationWidget::UpdateTabButtonStyles() {
+  static const FLinearColor ActiveTint(0.773f, 0.627f, 0.349f, 0.2f);
+  static const FLinearColor InactiveTint(0, 0, 0, 0.01f);
+  for (int i = 0; i < TabButtons.Num(); ++i) {
+    if (!TabButtons[i])
+      continue;
+    FButtonStyle BS = TabButtons[i]->GetStyle();
+    BS.Normal.TintColor =
+        FSlateColor(i == ActiveTabIndex ? ActiveTint : InactiveTint);
+    TabButtons[i]->SetStyle(BS);
+  }
+}
+
+void UFPMCharacterCreationWidget::OnTabIdentityClicked() { SwitchTab(0); }
+void UFPMCharacterCreationWidget::OnTabBodyClicked() { SwitchTab(1); }
+void UFPMCharacterCreationWidget::OnTabFaceClicked() { SwitchTab(2); }
+void UFPMCharacterCreationWidget::OnTabHairClicked() { SwitchTab(3); }
 
 void UFPMCharacterCreationWidget::OnPlaystyleChanged(float) {
   for (int i = 0; i < PlaystyleSliders.Num(); ++i)
@@ -230,18 +306,22 @@ void UFPMCharacterCreationWidget::OnSubmitClicked() {
 
   FFPMCharacterCreationRequest Req;
   Req.CharacterName = Name;
+  // Species combo index maps directly to EFPMSpecies enum
+  Req.Species =
+      SpeciesComboBox
+          ? static_cast<EFPMSpecies>(SpeciesComboBox->GetSelectedIndex())
+          : EFPMSpecies::Human;
   Req.BodyType = bIsFemale ? 1 : 0;
 
-  if (SkinSliders.Num() >= 3)
-    Req.SkinTone =
-        FLinearColor(SkinSliders[0]->GetValue(), SkinSliders[1]->GetValue(),
-                     SkinSliders[2]->GetValue(), 1.f);
+  Req.SkinTone = GetColorFromHSVSliders(SkinSliders);
+  Req.EyeColor = GetColorFromHSVSliders(EyeSliders);
   if (HairStyleComboBox)
     Req.HairStyle = static_cast<uint8>(HairStyleComboBox->GetSelectedIndex());
-  if (HairColorSliders.Num() >= 3)
-    Req.HairColor = FLinearColor(HairColorSliders[0]->GetValue(),
-                                 HairColorSliders[1]->GetValue(),
-                                 HairColorSliders[2]->GetValue(), 1.f);
+  Req.HairColor = GetColorFromHSVSliders(HairColorSliders);
+
+  // Facial morphs (Jaw, Nose, Brow, Lips)
+  for (int i = 0; i < FMath::Min(MorphSliders.Num(), 4); ++i)
+    Req.FacialMorphs.Add(MorphSliders[i]->GetValue());
 
   // Playstyle affinities
   static const EFPMPlaystyleAffinity PSEnum[] = {

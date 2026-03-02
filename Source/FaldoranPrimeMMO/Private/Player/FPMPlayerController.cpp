@@ -14,10 +14,13 @@
 #include "Player/FPMPlayerCharacter.h"
 #include "UI/FPMCharacterCreationWidget.h"
 #include "UI/FPMCharacterSelectWidget.h"
+#include "UI/FPMEscMenuWidget.h"
 #include "UI/FPMLoginWidget.h"
 #include "UObject/ConstructorHelpers.h"
 #include "World/FPMChunkActor.h"
 #include "World/FPMChunkData.h"
+#include "World/FPMNexusManager.h"
+#include "World/FPMNoise.h"
 #include "World/FPMVoxelChunk.h"
 #include "World/FPMWorldChunkManager.h"
 
@@ -47,6 +50,12 @@ AFPMPlayerController::AFPMPlayerController() {
   if (CharSelectBP.Succeeded()) {
     CharacterSelectWidgetClass = CharSelectBP.Class;
   }
+
+  static ConstructorHelpers::FClassFinder<UFPMEscMenuWidget> EscMenuBP(
+      TEXT("/Game/UI/WBP_EscMenu"));
+  if (EscMenuBP.Succeeded()) {
+    EscMenuWidgetClass = EscMenuBP.Class;
+  }
 }
 
 void AFPMPlayerController::BeginPlay() {
@@ -61,10 +70,57 @@ void AFPMPlayerController::BeginPlay() {
   }
 }
 
+void AFPMPlayerController::SetupInputComponent() {
+  Super::SetupInputComponent();
+  // ESC toggles the in-game menu. Only meaningful once the player is in-world.
+  if (InputComponent) {
+    InputComponent->BindAction(TEXT("OpenEscMenu"), IE_Pressed, this,
+                               &AFPMPlayerController::ToggleEscMenu);
+  }
+}
+
 void AFPMPlayerController::OnPossess(APawn *InPawn) {
   Super::OnPossess(InPawn);
   UE_LOG(LogFPMPlayerController, Log, TEXT("FPM Server: Possessed pawn %s"),
          *GetNameSafe(InPawn));
+}
+
+void AFPMPlayerController::OnUnPossess() {
+  // Save position NOW while the pawn is still guaranteed to be valid.
+  // This fires: on explicit logout, on PIE stop, on disconnect, and when the
+  // server demotes the controller for any reason.
+  // GameMode::Logout() also saves as a belt-and-suspenders backup—
+  // double-writing identical values to the DB is harmless.
+  if (HasAuthority() && bIsAuthenticated && ActiveCharacterId.IsValid()) {
+    if (APawn *P = GetPawn()) {
+      const FVector Loc = P->GetActorLocation();
+      UGameInstance *GI = GetGameInstance();
+      UFPMDatabaseSubsystem *DB =
+          GI ? GI->GetSubsystem<UFPMDatabaseSubsystem>() : nullptr;
+      if (DB && DB->IsConnected()) {
+        const FString CId =
+            ActiveCharacterId.ToString(EGuidFormats::DigitsWithHyphensLower);
+        const FFPMDatabaseQueryResult R = DB->ExecuteQuery(
+            TEXT("UPDATE characters "
+                 "SET spawn_x = $1, spawn_y = $2, spawn_z = $3, "
+                 "last_played = NOW() "
+                 "WHERE character_id = $4"),
+            {FString::SanitizeFloat(Loc.X), FString::SanitizeFloat(Loc.Y),
+             FString::SanitizeFloat(Loc.Z), CId});
+        if (R.bSuccess) {
+          UE_LOG(LogFPMPlayerController, Log,
+                 TEXT("FPM Server: OnUnPossess — saved position "
+                      "(%.0f, %.0f, %.0f) for %s"),
+                 Loc.X, Loc.Y, Loc.Z, *CId);
+        } else {
+          UE_LOG(LogFPMPlayerController, Warning,
+                 TEXT("FPM Server: OnUnPossess — DB save failed for %s: %s"),
+                 *CId, *R.ErrorMessage);
+        }
+      }
+    }
+  }
+  Super::OnUnPossess();
 }
 
 void AFPMPlayerController::ShowLoginWidget() {
@@ -139,6 +195,53 @@ void AFPMPlayerController::HideAllUIAndEnterGame() {
   bShowMouseCursor = false;
 }
 
+// --- ESC Menu ---
+
+void AFPMPlayerController::ShowEscMenu() {
+  // Don't open ESC menu if we're not in-game (still on login/char create)
+  if (!GetPawn())
+    return;
+  if (EscMenuWidget)
+    return; // already open — toggle will close it
+  if (!EscMenuWidgetClass)
+    return;
+
+  EscMenuWidget = CreateWidget<UFPMEscMenuWidget>(this, EscMenuWidgetClass);
+  if (EscMenuWidget) {
+    EscMenuWidget->AddToViewport(200); // high Z so it's always on top
+    FInputModeGameAndUI Mode;
+    Mode.SetWidgetToFocus(EscMenuWidget->TakeWidget());
+    Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    SetInputMode(Mode);
+    bShowMouseCursor = true;
+    UE_LOG(LogFPMPlayerController, Log, TEXT("FPM: ESC menu opened."));
+  }
+}
+
+void AFPMPlayerController::HideEscMenu() {
+  if (EscMenuWidget) {
+    EscMenuWidget->RemoveFromParent();
+    EscMenuWidget = nullptr;
+  }
+  // Restore game-only input only if the player is in-world
+  if (GetPawn()) {
+    SetInputMode(FInputModeGameOnly());
+    bShowMouseCursor = false;
+  }
+  UE_LOG(LogFPMPlayerController, Log, TEXT("FPM: ESC menu closed."));
+}
+
+void AFPMPlayerController::ToggleEscMenu() {
+  // Only respond to ESC while actively playing (pawn possessed)
+  if (!GetPawn())
+    return;
+  if (EscMenuWidget) {
+    HideEscMenu();
+  } else {
+    ShowEscMenu();
+  }
+}
+
 // -------------------------------------------------------------------
 // Client-Side Helpers (called by widgets)
 // -------------------------------------------------------------------
@@ -170,6 +273,33 @@ void AFPMPlayerController::RequestCharacterList() {
 
 void AFPMPlayerController::RequestEnterWorld(const FGuid &CharacterId) {
   ServerRequestEnterWorld(CharacterId);
+}
+
+void AFPMPlayerController::RequestSaveAndLogout() {
+  // Client-side: fire the server RPC that will persist position then disconnect
+  ServerSaveAndLogout();
+}
+
+void AFPMPlayerController::ExecuteLogout() {
+  UE_LOG(LogFPMPlayerController, Log,
+         TEXT("FPM Client: Executing logout — returning to login."));
+
+  HideEscMenu();
+
+  // Travel back to the same server URL. This properly tears down the
+  // current net connection and immediately reconnects, giving us a fresh
+  // PlayerController on the server and showing the login screen on the
+  // client. Works in both PIE (listen server) and packaged dedicated server.
+  //
+  // Using ClientTravel rather than ConsoleCommand("disconnect") because:
+  //   - "disconnect" in PIE leaves the client with no server connection,
+  //     making the subsequent login RPC unreachable.
+  //   - ClientTravel reconnects to the same address, so the login UI
+  //     can immediately send RPCs without restarting PIE.
+  const FString ServerURL = GetWorld()->GetAddressURL();
+  UE_LOG(LogFPMPlayerController, Log, TEXT("FPM Client: Travelling back to %s"),
+         *ServerURL);
+  ClientTravel(ServerURL, TRAVEL_Relative);
 }
 
 void AFPMPlayerController::ReturnToLogin() {
@@ -313,9 +443,9 @@ void AFPMPlayerController::ServerRequestCharacterList_Implementation() {
     return;
   }
 
-  const FString SQL =
-      TEXT("SELECT character_id, character_name, body_type, last_played "
-           "FROM characters WHERE account_id = $1 ORDER BY last_played DESC");
+  const FString SQL = TEXT(
+      "SELECT character_id, character_name, body_type, species, last_played "
+      "FROM characters WHERE account_id = $1 ORDER BY last_played DESC");
   const FString AccId =
       AuthenticatedAccountId.ToString(EGuidFormats::DigitsWithHyphensLower);
 
@@ -331,6 +461,8 @@ void AFPMPlayerController::ServerRequestCharacterList_Implementation() {
         S.CharacterName = *V;
       if (const FString *V = Row.Find(TEXT("body_type")))
         S.BodyType = static_cast<uint8>(FCString::Atoi(**V));
+      if (const FString *V = Row.Find(TEXT("species")))
+        S.Species = static_cast<EFPMSpecies>(FCString::Atoi(**V));
       if (const FString *V = Row.Find(TEXT("last_played")))
         S.LastPlayed = *V;
       List.Add(S);
@@ -357,11 +489,14 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     return;
   }
 
-  // Validate character ownership
+  // Validate character ownership (also fetch saved world position)
   const FString SQL =
-      TEXT("SELECT character_name, body_type, "
+      TEXT("SELECT character_name, species, body_type, "
            "skin_color_r, skin_color_g, skin_color_b, "
-           "hair_color_r, hair_color_g, hair_color_b "
+           "eye_color_r, eye_color_g, eye_color_b, "
+           "hair_color_r, hair_color_g, hair_color_b, "
+           "morph_jaw, morph_nose, morph_brow, morph_lips, "
+           "spawn_x, spawn_y, spawn_z "
            "FROM characters WHERE character_id = $1 AND account_id = $2");
   const FString CId =
       CharacterId.ToString(EGuidFormats::DigitsWithHyphensLower);
@@ -380,12 +515,18 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
   // Parse appearance
   const auto &Row = DBR.Rows[0];
   FString Name;
+  uint8 Species = 0;
   uint8 BT = 0;
   FLinearColor Skin(0.8f, 0.6f, 0.5f, 1.0f);
+  FLinearColor Eye(0.3f, 0.5f, 0.8f, 1.0f);
   FLinearColor Hair(0.2f, 0.15f, 0.1f, 1.0f);
+  float MorphJaw = 0.5f, MorphNose = 0.5f;
+  float MorphBrow = 0.5f, MorphLips = 0.5f;
 
   if (const FString *V = Row.Find(TEXT("character_name")))
     Name = *V;
+  if (const FString *V = Row.Find(TEXT("species")))
+    Species = static_cast<uint8>(FCString::Atoi(**V));
   if (const FString *V = Row.Find(TEXT("body_type")))
     BT = static_cast<uint8>(FCString::Atoi(**V));
   if (const FString *V = Row.Find(TEXT("skin_color_r")))
@@ -394,12 +535,59 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     Skin.G = FCString::Atof(**V);
   if (const FString *V = Row.Find(TEXT("skin_color_b")))
     Skin.B = FCString::Atof(**V);
+  if (const FString *V = Row.Find(TEXT("eye_color_r")))
+    Eye.R = FCString::Atof(**V);
+  if (const FString *V = Row.Find(TEXT("eye_color_g")))
+    Eye.G = FCString::Atof(**V);
+  if (const FString *V = Row.Find(TEXT("eye_color_b")))
+    Eye.B = FCString::Atof(**V);
   if (const FString *V = Row.Find(TEXT("hair_color_r")))
     Hair.R = FCString::Atof(**V);
   if (const FString *V = Row.Find(TEXT("hair_color_g")))
     Hair.G = FCString::Atof(**V);
   if (const FString *V = Row.Find(TEXT("hair_color_b")))
     Hair.B = FCString::Atof(**V);
+  if (const FString *V = Row.Find(TEXT("morph_jaw")))
+    MorphJaw = FCString::Atof(**V);
+  if (const FString *V = Row.Find(TEXT("morph_nose")))
+    MorphNose = FCString::Atof(**V);
+  if (const FString *V = Row.Find(TEXT("morph_brow")))
+    MorphBrow = FCString::Atof(**V);
+  if (const FString *V = Row.Find(TEXT("morph_lips")))
+    MorphLips = FCString::Atof(**V);
+
+  // Fetch saved spawn position from DB (NULL on first login)
+  float SavedX = 0.f, SavedY = 0.f, SavedZ = 0.f;
+  bool bHasSavedPos = false;
+
+  // NOTE: FPMDatabaseSubsystem stores PostgreSQL NULLs as the literal
+  // string "NULL" (uppercase) — see FPMDatabaseSubsystem.cpp line ~286.
+  auto IsNullOrEmpty = [](const FString &S) {
+    return S.IsEmpty() || S.Equals(TEXT("NULL"), ESearchCase::IgnoreCase);
+  };
+
+  const FString *VX = Row.Find(TEXT("spawn_x"));
+  const FString *VY = Row.Find(TEXT("spawn_y"));
+  const FString *VZ = Row.Find(TEXT("spawn_z"));
+
+  UE_LOG(LogFPMPlayerController, Log,
+         TEXT("FPM DB spawn pos: spawn_x='%s' spawn_y='%s' spawn_z='%s'"),
+         VX ? **VX : TEXT("<missing>"), VY ? **VY : TEXT("<missing>"),
+         VZ ? **VZ : TEXT("<missing>"));
+
+  if (VX && VY && VZ && !IsNullOrEmpty(*VX) && !IsNullOrEmpty(*VY) &&
+      !IsNullOrEmpty(*VZ)) {
+    SavedX = FCString::Atof(**VX);
+    SavedY = FCString::Atof(**VY);
+    SavedZ = FCString::Atof(**VZ);
+    // (0,0,0) exactly is almost certainly an unset value, not a real position
+    if (!FMath::IsNearlyZero(SavedX) || !FMath::IsNearlyZero(SavedY)) {
+      bHasSavedPos = true;
+    } else {
+      UE_LOG(LogFPMPlayerController, Log,
+             TEXT("FPM: spawn_x/y are both ~0 — treating as unset."));
+    }
+  }
 
   // Spawn character on server
   UWorld *World = GetWorld();
@@ -408,60 +596,63 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     return;
   }
 
-  // --- Spawn near island center, searching for a suitable biome ---
-  // Start at (0,0) and spiral outward to find a Forest or Meadows
-  // location at a reasonable elevation.  Avoids Snow/Mountain peaks.
-  FVector SpawnLoc(0.0f, 0.0f, 500.0f); // Overwritten below
-  FRotator SpawnRot = FRotator(0.0f, FMath::FRandRange(0.0f, 360.0f), 0.0f);
+  int32 ActualWorldSeed = 42;
+  if (AFPMWorldChunkManager *WCM = AFPMWorldChunkManager::GetOrCreate(World)) {
+    ActualWorldSeed = WCM->WorldSeed;
+  }
 
-  {
-    int32 ActualWorldSeed = 42;
-    if (AFPMWorldChunkManager *WCM =
-            AFPMWorldChunkManager::GetOrCreate(World)) {
-      ActualWorldSeed = WCM->WorldSeed;
+  // Ensure NexusManager exists (singleton — safe to call every time)
+  AFPMNexusManager *NexusMgr = AFPMNexusManager::GetOrCreate(World);
+
+  // -----------------------------------------------------------------------
+  //  SPAWN LOCATION RESOLUTION
+  //
+  //  Priority:
+  //    1. Saved position (returning character) — validated: must be on land
+  //    2. Nexus spawn point (new character, or invalid saved position)
+  //    3. Absolute fallback: world origin (should never hit this)
+  // -----------------------------------------------------------------------
+  FVector SpawnLoc(0.0f, 0.0f, 500.0f);
+  FRotator SpawnRot = FRotator(0.0f, 0.0f, 0.0f);
+
+  if (bHasSavedPos) {
+    // Validate: confirm saved position is proper land (above sea level)
+    const float RawH = FPMNoise::TerrainHeight(SavedX, SavedY, ActualWorldSeed);
+    const bool bIsLand = (RawH >= 0.56f && RawH <= 0.95f);
+    if (bIsLand) {
+      const float SurfaceZ =
+          FPMVoxelGenerator::TerrainSurfaceZ(SavedX, SavedY, ActualWorldSeed);
+      SpawnLoc = FVector(SavedX, SavedY, SurfaceZ);
+      UE_LOG(LogFPMPlayerController, Log,
+             TEXT("FPM: Returning character '%s' — restoring to saved pos "
+                  "(%.0f, %.0f, %.0f)"),
+             *Name, SavedX, SavedY, SavedZ);
+    } else {
+      UE_LOG(LogFPMPlayerController, Warning,
+             TEXT("FPM: Saved position (%.0f, %.0f) is over water/invalid — "
+                  "redirecting to Nexus."),
+             SavedX, SavedY);
+      bHasSavedPos = false; // fall through to Nexus
     }
+  }
 
-    bool bFoundSpawn = false;
-    const float SearchStep = 1600.0f;   // ~1 hex chunk width
-    constexpr int32 MaxSearchDist = 80; // covers most of the island
-
-    for (int32 Ring = 0; Ring <= MaxSearchDist && !bFoundSpawn; ++Ring) {
-      const int32 Samples = FMath::Max(1, Ring * 6);
-      for (int32 S = 0; S < Samples && !bFoundSpawn; ++S) {
-        const float Angle = (static_cast<float>(S) / Samples) * 2.0f * PI;
-        const float TestX = Ring * SearchStep * FMath::Cos(Angle);
-        const float TestY = Ring * SearchStep * FMath::Sin(Angle);
-
-        const float SurfaceZ =
-            FPMVoxelGenerator::TerrainSurfaceZ(TestX, TestY, ActualWorldSeed);
-
-        if (SurfaceZ < 0.0f || SurfaceZ > 4000.0f) {
-          continue;
-        }
-
-        const float NormH = (SurfaceZ - (-400.0f)) / 5000.0f;
-        const EFPMBiome Biome = FPMVoxelGenerator::BiomeAtWorldXY(
-            TestX, TestY, ActualWorldSeed, NormH);
-
-        if (Biome == EFPMBiome::Forest || Biome == EFPMBiome::Meadows) {
-          SpawnLoc = FVector(TestX, TestY, SurfaceZ);
-          bFoundSpawn = true;
-          UE_LOG(
-              LogFPMPlayerController, Log,
-              TEXT("FPM: Spawn found at (%.0f, %.0f, %.0f) Biome=%d Ring=%d"),
-              TestX, TestY, SurfaceZ, static_cast<int32>(Biome), Ring);
-        }
-      }
-    }
-
-    if (!bFoundSpawn) {
+  if (!bHasSavedPos) {
+    // Brand-new character or invalid saved pos → always start at the Nexus
+    if (NexusMgr) {
+      SpawnLoc = NexusMgr->GetNewCharacterSpawnPos(ActualWorldSeed);
+      UE_LOG(LogFPMPlayerController, Log,
+             TEXT("FPM: New/reset character '%s' — spawning at Nexus "
+                  "(%.0f, %.0f, %.0f)"),
+             *Name, SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z);
+    } else {
+      // Last-resort fallback: world origin
       const float TerrainZ =
-          FPMVoxelGenerator::TerrainSurfaceZ(0.0f, 0.0f, ActualWorldSeed);
-      SpawnLoc = FVector(0.0f, 0.0f, TerrainZ);
-      UE_LOG(
-          LogFPMPlayerController, Warning,
-          TEXT("FPM: No suitable spawn biome found, using origin (0,0,%.0f)"),
-          SpawnLoc.Z);
+          FPMVoxelGenerator::TerrainSurfaceZ(0.f, 0.f, ActualWorldSeed);
+      SpawnLoc = FVector(0.f, 0.f, TerrainZ);
+      UE_LOG(LogFPMPlayerController, Warning,
+             TEXT("FPM: NexusManager unavailable — falling back to origin "
+                  "(0,0,%.0f)"),
+             SpawnLoc.Z);
     }
   }
 
@@ -510,7 +701,8 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     MoveComp->Velocity = FVector::ZeroVector;
   }
 
-  Char->InitializeAppearance(Name, BT, Skin, Hair);
+  Char->InitializeAppearance(Name, Species, BT, Skin, Eye, Hair, MorphJaw,
+                             MorphNose, MorphBrow, MorphLips);
   Possess(Char);
   ActiveCharacterId = CharacterId;
 
@@ -539,7 +731,8 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
         // Line trace downward from character to check terrain collision
         FHitResult Hit;
         const FVector Start = C->GetActorLocation();
-        const FVector End = Start - FVector(0.0f, 0.0f, 2000.0f);
+        // Trace down 5km to ensure we find the ground in this new 20km world
+        const FVector End = Start - FVector(0.0f, 0.0f, 500000.0f);
         const bool bHit = WeakWorld->LineTraceSingleByChannel(Hit, Start, End,
                                                               ECC_WorldStatic);
 
@@ -577,8 +770,9 @@ void AFPMPlayerController::ClientReceiveLoginResult_Implementation(
     FFPMLoginResult Result) {
   if (Result.bSuccess) {
     HideLoginWidget();
+    // One character per account: request character list to check
+    // if a character exists. If yes, auto-enter. If no, create one.
     RequestCharacterList();
-    ShowCharacterSelectWidget();
   } else {
     if (LoginWidget)
       LoginWidget->SetResultMessage(Result.ErrorMessage, true);
@@ -601,7 +795,10 @@ void AFPMPlayerController::ClientReceiveCreateCharacterResult_Implementation(
     if (CharacterCreationWidget)
       CharacterCreationWidget->SetResultMessage(TEXT("Character created!"),
                                                 false);
-    TransitionToCharacterSelect();
+    // One character per account: after creation, auto-enter world.
+    // Request character list which will trigger auto-enter.
+    HideCharacterCreationWidget();
+    RequestCharacterList();
   } else {
     if (CharacterCreationWidget)
       CharacterCreationWidget->SetResultMessage(Result.ErrorMessage, true);
@@ -614,12 +811,16 @@ void AFPMPlayerController::ClientReceiveCharacterList_Implementation(
          TEXT("FPM Client: Received %d characters."), Characters.Num());
 
   if (Characters.Num() == 0) {
+    // One character per account: no character yet, go to creation.
     HideCharacterSelectWidget();
     ShowCharacterCreationWidget();
     return;
   }
-  if (CharacterSelectWidget)
-    CharacterSelectWidget->PopulateCharacterList(Characters);
+
+  // One character per account: auto-enter world with the single character.
+  // No character select screen needed.
+  HideCharacterSelectWidget();
+  RequestEnterWorld(Characters[0].CharacterId);
 }
 
 void AFPMPlayerController::ClientEnterWorldSuccess_Implementation(
@@ -658,33 +859,63 @@ void AFPMPlayerController::ClientEnterWorldSuccess_Implementation(
       }
 
       // Poll for terrain collision readiness, then re-enable gravity.
+      // CRITICAL: Must match server's trace distance (5km) and timeout
+      // (20 polls = 5s). The client has independently async-cooking
+      // collision, so we can NOT rely on the server's replicated movement
+      // mode — we must wait for OUR OWN collision to be ready.
       TWeakObjectPtr<ACharacter> WeakChar = Char;
       TWeakObjectPtr<UWorld> WeakWorld = World;
-      FTimerHandle GravityPollHandle;
+      TSharedPtr<int32> ClientPollCount = MakeShared<int32>(0);
+      TSharedPtr<FTimerHandle> ClientGravityTimerPtr =
+          MakeShared<FTimerHandle>();
 
       World->GetTimerManager().SetTimer(
-          GravityPollHandle,
-          [WeakChar, WeakWorld]() {
-            if (!WeakChar.IsValid() || !WeakWorld.IsValid())
+          *ClientGravityTimerPtr,
+          [WeakChar, WeakWorld, ClientPollCount, ClientGravityTimerPtr]() {
+            if (!WeakChar.IsValid() || !WeakWorld.IsValid()) {
+              if (WeakWorld.IsValid())
+                WeakWorld->GetTimerManager().ClearTimer(*ClientGravityTimerPtr);
               return;
+            }
             ACharacter *C = WeakChar.Get();
             UCharacterMovementComponent *MC = C->GetCharacterMovement();
-            if (!MC || MC->MovementMode != MOVE_Flying)
+            if (!MC) {
+              WeakWorld->GetTimerManager().ClearTimer(*ClientGravityTimerPtr);
               return;
+            }
 
+            ++(*ClientPollCount);
+
+            // Line trace downward 5km (matching server) to find terrain
             FHitResult Hit;
             const FVector Start = C->GetActorLocation();
-            const FVector End = Start - FVector(0, 0, 500.0f);
+            const FVector End = Start - FVector(0.0f, 0.0f, 500000.0f);
             FCollisionQueryParams QParams;
             QParams.AddIgnoredActor(C);
 
-            if (WeakWorld->LineTraceSingleByChannel(Hit, Start, End,
-                                                    ECC_WorldStatic, QParams)) {
+            const bool bHit = WeakWorld->LineTraceSingleByChannel(
+                Hit, Start, End, ECC_WorldStatic, QParams);
+
+            if (bHit || *ClientPollCount >= 20) { // 20 * 0.25s = 5s max
               MC->SetMovementMode(MOVE_Walking);
               MC->GravityScale = 1.0f;
               UE_LOG(LogTemp, Log,
-                     TEXT("FPM Client: Terrain collision ready, gravity on"));
-              WeakWorld->GetTimerManager().ClearAllTimersForObject(C);
+                     TEXT("FPM Client: Gravity re-enabled after %d polls "
+                          "(collision %s)"),
+                     *ClientPollCount,
+                     bHit ? TEXT("confirmed") : TEXT("timeout"));
+              WeakWorld->GetTimerManager().ClearTimer(*ClientGravityTimerPtr);
+            } else {
+              // Force Flying mode in case server replication overwrote it
+              if (MC->MovementMode != MOVE_Flying) {
+                MC->SetMovementMode(MOVE_Flying);
+                MC->GravityScale = 0.0f;
+                MC->Velocity = FVector::ZeroVector;
+                UE_LOG(LogTemp, Warning,
+                       TEXT("FPM Client: Re-forced Flying mode (poll %d, "
+                            "server replicated %d)"),
+                       *ClientPollCount, static_cast<int32>(MC->MovementMode));
+              }
             }
           },
           0.25f, true);
@@ -699,6 +930,106 @@ void AFPMPlayerController::ClientEnterWorldFailed_Implementation(
          TEXT("FPM Client: Enter world failed — %s"), *ErrorMessage);
   if (CharacterSelectWidget)
     CharacterSelectWidget->SetStatusMessage(ErrorMessage, true);
+}
+
+// -------------------------------------------------------------------
+// Save & Logout RPCs
+// -------------------------------------------------------------------
+
+void AFPMPlayerController::ServerSaveAndLogout_Implementation() {
+  if (!bIsAuthenticated || !ActiveCharacterId.IsValid()) {
+    UE_LOG(LogFPMPlayerController, Warning,
+           TEXT("FPM Server: SaveAndLogout ignored — not authenticated or "
+                "no active character."));
+    // Still tell client to disconnect so it doesn't hang
+    ClientSaveComplete(false);
+    return;
+  }
+
+  // Grab current pawn position
+  FVector PawnLoc = FVector::ZeroVector;
+  if (APawn *P = GetPawn()) {
+    PawnLoc = P->GetActorLocation();
+  }
+
+  const FString CId =
+      ActiveCharacterId.ToString(EGuidFormats::DigitsWithHyphensLower);
+
+  UGameInstance *GI = GetGameInstance();
+  UFPMDatabaseSubsystem *DB =
+      GI ? GI->GetSubsystem<UFPMDatabaseSubsystem>() : nullptr;
+  bool bSaved = false;
+
+  if (DB && DB->IsConnected()) {
+    // Write spawn position and last_played
+    const FString XStr = FString::SanitizeFloat(PawnLoc.X);
+    const FString YStr = FString::SanitizeFloat(PawnLoc.Y);
+    const FString ZStr = FString::SanitizeFloat(PawnLoc.Z);
+
+    const FFPMDatabaseQueryResult R =
+        DB->ExecuteQuery(TEXT("UPDATE characters "
+                              "SET spawn_x = $1, spawn_y = $2, spawn_z = $3, "
+                              "last_played = NOW() "
+                              "WHERE character_id = $4"),
+                         {XStr, YStr, ZStr, CId});
+
+    bSaved = R.bSuccess;
+    if (bSaved) {
+      UE_LOG(LogFPMPlayerController, Log,
+             TEXT("FPM Server: Saved position (%.0f, %.0f, %.0f) for "
+                  "character %s"),
+             PawnLoc.X, PawnLoc.Y, PawnLoc.Z, *CId);
+    } else {
+      UE_LOG(LogFPMPlayerController, Warning,
+             TEXT("FPM Server: DB save failed for character %s — %s"), *CId,
+             *R.ErrorMessage);
+    }
+  } else {
+    UE_LOG(LogFPMPlayerController, Warning,
+           TEXT("FPM Server: DB unavailable — position not saved for %s"),
+           *CId);
+  }
+
+  // Notify client (regardless of success — allow logout to proceed)
+  ClientSaveComplete(bSaved);
+}
+
+void AFPMPlayerController::ClientSaveComplete_Implementation(bool bSuccess) {
+  UE_LOG(LogFPMPlayerController, Log,
+         TEXT("FPM Client: Save complete — success=%d"), bSuccess ? 1 : 0);
+
+  if (EscMenuWidget) {
+    if (bSuccess) {
+      EscMenuWidget->SetStatusMessage(
+          TEXT("\u2713 Saved \u2014 disconnecting\u2026"), false);
+    } else {
+      EscMenuWidget->SetStatusMessage(
+          TEXT("Could not save position. Disconnecting\u2026"), true);
+    }
+  }
+
+  // Give the player a moment to read the message, then disconnect.
+  // The ESC widget countdown (2.5s) is already running as a safety net.
+  // This timer fires at 1.2s — whichever fires first wins (widget sets
+  // bLogoutPending on first call, subsequent ones are ignored).
+  UWorld *World = GetWorld();
+  if (World) {
+    TWeakObjectPtr<AFPMPlayerController> WeakSelf = this;
+    World->GetTimerManager().SetTimerForNextTick([WeakSelf]() {
+      if (AFPMPlayerController *Self = WeakSelf.Get()) {
+        // Use a proper timer for the 1.2s delay
+        FTimerHandle Handle;
+        Self->GetWorld()->GetTimerManager().SetTimer(
+            Handle,
+            [WeakSelf]() {
+              if (AFPMPlayerController *S = WeakSelf.Get()) {
+                S->ExecuteLogout();
+              }
+            },
+            1.2f, false);
+      }
+    });
+  }
 }
 
 // -------------------------------------------------------------------

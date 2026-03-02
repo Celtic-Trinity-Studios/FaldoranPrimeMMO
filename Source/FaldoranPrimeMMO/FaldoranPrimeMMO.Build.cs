@@ -9,14 +9,19 @@ public class FaldoranPrimeMMO : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG", "Slate", "SlateCore", "Landscape", "Foliage", "ProceduralMeshComponent", "Json", "JsonUtilities", "PCG" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG", "Slate", "SlateCore", "Landscape", "Foliage", "ProceduralMeshComponent", "Json", "JsonUtilities", "PCG", "CinematicCamera" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 
 		// Editor-only: needed for GEditor in terrain generation console commands
+		// and for auto-creating the terrain biome material asset on startup.
 		if (Target.bBuildEditor)
 		{
-			PrivateDependencyModuleNames.Add("UnrealEd");
+			PrivateDependencyModuleNames.AddRange(new string[] {
+				"UnrealEd",
+				"MaterialEditor",
+				"AssetTools",
+			});
 		}
 
 		// --- libpq (PostgreSQL C API) integration ---

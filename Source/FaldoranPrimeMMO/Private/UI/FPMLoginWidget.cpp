@@ -66,7 +66,60 @@ void UFPMLoginWidget::NativeConstruct() {
   SetResultMessage(TEXT(""), false);
 
   UE_LOG(LogFPMLoginWidget, Log,
-         TEXT("FPM Login: Widget constructed with opaque background."));
+         TEXT("FPM Login: Widget constructed. BackgroundTexture=%s"),
+         BackgroundTexture ? *BackgroundTexture->GetName()
+                           : TEXT("none (solid)"));
+}
+
+// ===================================================================
+// NativeTick — breathing glow + shimmer sweep
+// ===================================================================
+
+void UFPMLoginWidget::NativeTick(const FGeometry &MyGeometry,
+                                 float InDeltaTime) {
+  Super::NativeTick(MyGeometry, InDeltaTime);
+
+  AnimTime += InDeltaTime;
+
+  // ---- 1. Title breathing glow -----------------------------------
+  // Sine wave in [0,1] with a 3-second period. Modulates the gold shadow
+  // opacity from 0.15 → 0.55, giving the title a gentle "pulse" effect.
+  if (TitleText) {
+    const float GlowAlpha = FMath::Lerp(
+        0.15f, 0.55f, (FMath::Sin(AnimTime * (TWO_PI / 3.0f)) + 1.0f) * 0.5f);
+    TitleText->SetShadowColorAndOpacity(
+        FLinearColor(0.773f, 0.627f, 0.349f, GlowAlpha));
+  }
+
+  // ---- 2. Shimmer sweep ------------------------------------------
+  // ShimmerPhase goes 0 → 1 over ShimmerPeriodSeconds, then wraps.
+  ShimmerPhase = FMath::Frac(AnimTime / ShimmerPeriodSeconds);
+
+  if (ShimmerLine && ShimmerSlot) {
+    // Panel is centered horizontally. Calculate its left edge in viewport
+    // space. We use the cached width; the panel starts at roughly
+    // (ViewportWidth/2 - CachedPanelWidth/2) from the left edge.
+    const FVector2D ViewportSize = MyGeometry.GetLocalSize();
+    const float PanelLeft = (ViewportSize.X - CachedPanelWidth) * 0.5f;
+    const float ShimmerX = PanelLeft + ShimmerPhase * CachedPanelWidth;
+
+    // Position shimmer line at the computed X
+    FMargin Offsets = ShimmerSlot->GetOffsets();
+    Offsets.Left = ShimmerX;
+    ShimmerSlot->SetOffsets(Offsets);
+
+    // Fade in at start and out at end of sweep for a smooth look
+    float ShimmerAlpha;
+    if (ShimmerPhase < 0.1f) {
+      ShimmerAlpha = ShimmerPhase / 0.1f;
+    } else if (ShimmerPhase > 0.85f) {
+      ShimmerAlpha = (1.0f - ShimmerPhase) / 0.15f;
+    } else {
+      ShimmerAlpha = 1.0f;
+    }
+    ShimmerLine->SetColorAndOpacity(
+        FLinearColor(0.933f, 0.804f, 0.553f, ShimmerAlpha * 0.25f));
+  }
 }
 
 // ===================================================================
@@ -84,17 +137,35 @@ void UFPMLoginWidget::BuildUI() {
   }
 
   // ==============================================================
-  // 1. FULL-SCREEN OPAQUE BACKGROUND
+  // 1. FULL-SCREEN BACKGROUND IMAGE
+  // Fully opaque by default — hides everything behind the widget.
+  // If BackgroundTexture is assigned (EditAnywhere in Details or set
+  // by PlayerController before construction), it fills the screen.
+  // Leave null for the solid deep-navy fallback colour.
   // ==============================================================
   BackgroundImage = NewObject<UImage>(this);
-  BackgroundImage->SetColorAndOpacity(FPMLoginColors::DeepBG);
-  // A solid white brush tinted to our deep dark color
-  BackgroundImage->SetBrushTintColor(FSlateColor(FPMLoginColors::DeepBG));
+
+  if (BackgroundTexture) {
+    // Texture path: fill the screen with the assigned image
+    FSlateBrush Brush;
+    Brush.SetResourceObject(BackgroundTexture);
+    Brush.DrawAs = ESlateBrushDrawType::Image;
+    Brush.Tiling = ESlateBrushTileType::NoTile;
+    Brush.Mirroring = ESlateBrushMirrorType::NoMirror;
+    BackgroundImage->SetBrush(Brush);
+    BackgroundImage->SetColorAndOpacity(FLinearColor::White); // no tint
+  } else {
+    // Fallback: solid deep-navy, fully opaque
+    static const FLinearColor SolidBG(0.039f, 0.047f, 0.063f, 1.0f); // #0a0c10
+    BackgroundImage->SetColorAndOpacity(SolidBG);
+    BackgroundImage->SetBrushTintColor(FSlateColor(SolidBG));
+  }
 
   UCanvasPanelSlot *BgSlot = RootCanvas->AddChildToCanvas(BackgroundImage);
   if (BgSlot) {
-    BgSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f)); // Full stretch
+    BgSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f)); // full stretch
     BgSlot->SetOffsets(FMargin(0.0f));
+    BgSlot->SetZOrder(0);
   }
 
   // ==============================================================
@@ -105,6 +176,23 @@ void UFPMLoginWidget::BuildUI() {
   if (OverlaySlot) {
     OverlaySlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
     OverlaySlot->SetOffsets(FMargin(0.0f));
+    OverlaySlot->SetZOrder(1);
+  }
+
+  // ==============================================================
+  // 3. SHIMMER LINE (thin gold sweep animated in NativeTick)
+  // Positioned by NativeTick via ShimmerSlot. Zero width initially.
+  // ==============================================================
+  ShimmerLine = NewObject<UImage>(this);
+  ShimmerLine->SetColorAndOpacity(FLinearColor(0.933f, 0.804f, 0.553f, 0.0f));
+
+  ShimmerSlot = RootCanvas->AddChildToCanvas(ShimmerLine);
+  if (ShimmerSlot) {
+    // Anchored top-left; NativeTick updates Left offset each frame
+    ShimmerSlot->SetAnchors(FAnchors(0.0f, 0.5f, 0.0f, 0.5f));
+    // Width = 3px wide shimmer line, Height = full viewport height
+    ShimmerSlot->SetOffsets(FMargin(0.0f, -400.0f, 3.0f, 800.0f));
+    ShimmerSlot->SetZOrder(10);
   }
 
   // Main vertical content container

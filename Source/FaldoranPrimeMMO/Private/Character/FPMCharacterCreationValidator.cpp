@@ -120,6 +120,13 @@ bool FFPMCharacterCreationValidator::ValidateName(const FString &Name,
 
 bool FFPMCharacterCreationValidator::ValidateAppearance(
     const FFPMCharacterCreationRequest &Request, FString &OutError) {
+  // --- Species bounds ---
+  if (static_cast<uint8>(Request.Species) > MaxSpeciesIndex) {
+    OutError = FString::Printf(TEXT("Invalid species (must be 0-%d)."),
+                               MaxSpeciesIndex);
+    return false;
+  }
+
   // --- Body type bounds ---
   if (Request.BodyType > MaxBodyTypeIndex) {
     OutError = FString::Printf(TEXT("Invalid body type (must be 0-%d)."),
@@ -139,9 +146,33 @@ bool FFPMCharacterCreationValidator::ValidateAppearance(
     return false;
   }
 
+  // --- Eye color range ---
+  if (!ValidateColorRange(Request.EyeColor, TEXT("Eye color"), OutError)) {
+    return false;
+  }
+
   // --- Hair color range ---
   if (!ValidateColorRange(Request.HairColor, TEXT("Hair color"), OutError)) {
     return false;
+  }
+
+  // --- Facial morph validation ---
+  if (Request.FacialMorphs.Num() > 0) {
+    if (Request.FacialMorphs.Num() != FacialMorphCount) {
+      OutError = FString::Printf(
+          TEXT("Facial morphs must have exactly %d entries (got %d)."),
+          FacialMorphCount, Request.FacialMorphs.Num());
+      return false;
+    }
+
+    for (int32 i = 0; i < Request.FacialMorphs.Num(); ++i) {
+      if (Request.FacialMorphs[i] < 0.0f || Request.FacialMorphs[i] > 1.0f) {
+        OutError = FString::Printf(
+            TEXT("Facial morph %d value %.3f is out of range [0.0, 1.0]."), i,
+            Request.FacialMorphs[i]);
+        return false;
+      }
+    }
   }
 
   return true;

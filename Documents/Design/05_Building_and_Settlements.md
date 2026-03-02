@@ -61,3 +61,13 @@ Players and guilds with **territory ownership** can modify the terrain within th
 | **Terraforming** | Player-owned territory terrain modification | High |
 | **Biome Painting** | Cosmetic surface texture override in territory | Medium |
 | **Group Blueprints** | Shared Construction | High |
+
+## Town Anchors and Protection
+
+Settlements are established by placing a **Town Anchor**, which marks the heart of the claim and defines its influence.
+
+### Town Anchor Functions:
+- **Territory Heart:** Serves as the central point for all claim-related logic (Shields, Permissions, Upkeep).
+- **Spawn Safe Zone:** The most critical function of a Town Anchor is the generation of a **Spawning Exclusion Radius**.
+- **Monster Spawning Invariant:** No monsters or wildlife may spawn within the exclusion radius of an active Town Anchor. Spawns are dynamically suppressed as the town grows or as new anchors are placed.
+- **Biome Preservation:** While spawns are suppressed, the underlying biome remains, allowing for gardens, parks, and player-curated flora within the city walls.

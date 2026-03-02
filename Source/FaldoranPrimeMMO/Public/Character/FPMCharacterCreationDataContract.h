@@ -45,6 +45,28 @@ enum class EFPMMagicalAffinity : uint8 {
 };
 
 /**
+ * EFPMSpecies
+ *
+ * The playable races available at character creation.
+ * Race choice is permanent and affects mesh scale, capsule height,
+ * walk speed, carry weight, and available morph presets.
+ * See 03_Progression_and_Attributes.md for design.
+ */
+UENUM(BlueprintType)
+enum class EFPMSpecies : uint8 {
+  Human = 0,
+  HalfElf,
+  Elf,
+  Dwarf,
+  Halfling,
+  HalfOrc,
+  Gnome,
+  Kethari, // Cat race
+  Rauken,  // Dog race
+  MAX UMETA(Hidden)
+};
+
+/**
  * EFPMCharacterCreationError
  *
  * Comprehensive error codes for character creation validation.
@@ -68,8 +90,8 @@ enum class EFPMCharacterCreationError : uint8 {
   /** Affinity point distribution is invalid (wrong total, out of range). */
   InvalidAffinities,
 
-  /** Account already has the maximum number of characters. */
-  TooManyCharacters,
+  /** Account already has a character (one character per account). */
+  CharacterAlreadyExists,
 
   /** Too many creation requests in a short window. */
   RateLimited,
@@ -130,6 +152,10 @@ struct FALDORANPRIMEMMO_API FFPMCharacterCreationRequest {
   UPROPERTY(BlueprintReadWrite)
   FString CharacterName;
 
+  /** Species selection. Permanent choice — affects mesh scale and gameplay. */
+  UPROPERTY(BlueprintReadWrite)
+  EFPMSpecies Species = EFPMSpecies::Human;
+
   /** Body type index. Validated against design data bounds (0-3). */
   UPROPERTY(BlueprintReadWrite)
   uint8 BodyType = 0;
@@ -138,6 +164,10 @@ struct FALDORANPRIMEMMO_API FFPMCharacterCreationRequest {
   UPROPERTY(BlueprintReadWrite)
   FLinearColor SkinTone = FLinearColor(0.8f, 0.6f, 0.5f, 1.0f);
 
+  /** Eye color. RGB values must be in range [0.0, 1.0]. */
+  UPROPERTY(BlueprintReadWrite)
+  FLinearColor EyeColor = FLinearColor(0.3f, 0.5f, 0.8f, 1.0f);
+
   /** Hair style index. Validated against design data bounds. */
   UPROPERTY(BlueprintReadWrite)
   uint8 HairStyle = 0;
@@ -145,6 +175,13 @@ struct FALDORANPRIMEMMO_API FFPMCharacterCreationRequest {
   /** Hair color. RGB values must be in range [0.0, 1.0]. */
   UPROPERTY(BlueprintReadWrite)
   FLinearColor HairColor = FLinearColor(0.2f, 0.15f, 0.1f, 1.0f);
+
+  /**
+   * Facial morph target values (0.0 to 1.0).
+   * Index 0=Jaw, 1=Nose, 2=Brow, 3=Lips.
+   */
+  UPROPERTY(BlueprintReadWrite)
+  TArray<float> FacialMorphs;
 
   /**
    * Playstyle affinity point distribution. Zero-sum pool: total must equal 600.
@@ -219,6 +256,10 @@ struct FALDORANPRIMEMMO_API FFPMCharacterSummary {
   /** Body type index for display purposes. */
   UPROPERTY(BlueprintReadOnly)
   uint8 BodyType = 0;
+
+  /** Species for display purposes. */
+  UPROPERTY(BlueprintReadOnly)
+  EFPMSpecies Species = EFPMSpecies::Human;
 
   /** When this character was last played (human-readable string). */
   UPROPERTY(BlueprintReadOnly)

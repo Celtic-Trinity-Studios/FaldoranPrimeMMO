@@ -107,10 +107,9 @@ UFPMCharacterCreationSubsystem::SubmitCharacterCreation(
   }
 
   if (CharCount >= FFPMCharacterCreationValidator::MaxCharactersPerAccount) {
-    Result.ErrorCode = EFPMCharacterCreationError::TooManyCharacters;
-    Result.ErrorMessage = FString::Printf(
-        TEXT("Maximum of %d characters per account."),
-        FFPMCharacterCreationValidator::MaxCharactersPerAccount);
+    Result.ErrorCode = EFPMCharacterCreationError::CharacterAlreadyExists;
+    Result.ErrorMessage = TEXT(
+        "Your account already has a character. One character per account.");
     AuditLog(AccountId, Request, Result);
     return Result;
   }
@@ -274,28 +273,50 @@ bool UFPMCharacterCreationSubsystem::InsertCharacter(
   // Insert the character with a server-generated UUID
   const FString SQL =
       TEXT("INSERT INTO characters "
-           "(character_id, account_id, character_name, body_type, "
+           "(character_id, account_id, character_name, species, body_type, "
            "skin_color_r, skin_color_g, skin_color_b, "
+           "eye_color_r, eye_color_g, eye_color_b, "
            "hair_style, hair_color_r, hair_color_g, hair_color_b, "
+           "morph_jaw, morph_nose, morph_brow, morph_lips, "
            "created_at, last_played) "
-           "VALUES (gen_random_uuid(), $1, $2, $3, "
-           "$4, $5, $6, $7, $8, $9, $10, NOW(), NOW()) "
+           "VALUES (gen_random_uuid(), $1, $2, $3, $4, "
+           "$5, $6, $7, $8, $9, $10, $11, $12, $13, $14, "
+           "$15, $16, $17, $18, NOW(), NOW()) "
            "RETURNING character_id");
 
   const FString AccountIdStr =
       AccountId.ToString(EGuidFormats::DigitsWithHyphensLower);
 
+  // Extract morph values (default to 0.5 if not provided)
+  const float MorphJaw =
+      Request.FacialMorphs.Num() > 0 ? Request.FacialMorphs[0] : 0.5f;
+  const float MorphNose =
+      Request.FacialMorphs.Num() > 1 ? Request.FacialMorphs[1] : 0.5f;
+  const float MorphBrow =
+      Request.FacialMorphs.Num() > 2 ? Request.FacialMorphs[2] : 0.5f;
+  const float MorphLips =
+      Request.FacialMorphs.Num() > 3 ? Request.FacialMorphs[3] : 0.5f;
+
   TArray<FString> Params;
-  Params.Add(AccountIdStr);
-  Params.Add(Request.CharacterName);
-  Params.Add(FString::Printf(TEXT("%d"), Request.BodyType));
-  Params.Add(FString::Printf(TEXT("%.6f"), Request.SkinTone.R));
-  Params.Add(FString::Printf(TEXT("%.6f"), Request.SkinTone.G));
-  Params.Add(FString::Printf(TEXT("%.6f"), Request.SkinTone.B));
-  Params.Add(FString::Printf(TEXT("%d"), Request.HairStyle));
-  Params.Add(FString::Printf(TEXT("%.6f"), Request.HairColor.R));
-  Params.Add(FString::Printf(TEXT("%.6f"), Request.HairColor.G));
-  Params.Add(FString::Printf(TEXT("%.6f"), Request.HairColor.B));
+  Params.Add(AccountIdStr);          // $1
+  Params.Add(Request.CharacterName); // $2
+  Params.Add(FString::Printf(TEXT("%d"),
+                             static_cast<int32>(Request.Species))); // $3
+  Params.Add(FString::Printf(TEXT("%d"), Request.BodyType));        // $4
+  Params.Add(FString::Printf(TEXT("%.6f"), Request.SkinTone.R));    // $5
+  Params.Add(FString::Printf(TEXT("%.6f"), Request.SkinTone.G));    // $6
+  Params.Add(FString::Printf(TEXT("%.6f"), Request.SkinTone.B));    // $7
+  Params.Add(FString::Printf(TEXT("%.6f"), Request.EyeColor.R));    // $8
+  Params.Add(FString::Printf(TEXT("%.6f"), Request.EyeColor.G));    // $9
+  Params.Add(FString::Printf(TEXT("%.6f"), Request.EyeColor.B));    // $10
+  Params.Add(FString::Printf(TEXT("%d"), Request.HairStyle));       // $11
+  Params.Add(FString::Printf(TEXT("%.6f"), Request.HairColor.R));   // $12
+  Params.Add(FString::Printf(TEXT("%.6f"), Request.HairColor.G));   // $13
+  Params.Add(FString::Printf(TEXT("%.6f"), Request.HairColor.B));   // $14
+  Params.Add(FString::Printf(TEXT("%.6f"), MorphJaw));              // $15
+  Params.Add(FString::Printf(TEXT("%.6f"), MorphNose));             // $16
+  Params.Add(FString::Printf(TEXT("%.6f"), MorphBrow));             // $17
+  Params.Add(FString::Printf(TEXT("%.6f"), MorphLips));             // $18
 
   FFPMDatabaseQueryResult DBResult = DB->ExecuteQuery(SQL, Params);
 

@@ -17,39 +17,71 @@ class USizeBox;
 class UBorder;
 class UOverlay;
 class USpacer;
+class UTexture2D;
 
 /**
  * UFPMLoginWidget
  *
  * Self-contained login screen widget for Faldoran Prime.
  *
- * Builds its entire UI programmatically in C++ with a full-screen
- * opaque dark background, so it completely hides whatever level is
- * loaded behind it. Features a themed "Glass & Gold" centered panel
- * with title, input fields, buttons, and status text.
+ * Renders a full-screen opaque background (solid colour by default;
+ * assign BackgroundTexture to display a static or animated image)
+ * over which the "Glass & Gold" login panel sits.
  *
- * NOTE: The WBP_LoginScreen Blueprint should have its root be an
- * empty Canvas Panel (no children). All visual children are created
- * in NativeConstruct.
+ * Future: set BackgroundTexture to a Media Player / animated texture
+ * to display a cinematic or looping splash video — no code change
+ * required, just assign the asset.
+ *
+ * NOTE: WBP_LoginScreen Blueprint root must be a single empty Canvas
+ * Panel. All children are built in C++ via NativeConstruct → BuildUI().
  */
 UCLASS()
 class FALDORANPRIMEMMO_API UFPMLoginWidget : public UUserWidget {
   GENERATED_BODY()
 
 public:
+  /**
+   * Optional background image/texture for the login screen.
+   *
+   * Leave null  → solid deep-navy background (current default).
+   * Assign here → the texture fills the full screen behind the panel.
+   *
+   * Supports any UTexture2D, including media textures (animated/video)
+   * and render targets. Set this before the widget is constructed
+   * (e.g., in the PlayerController before calling ShowLoginWidget).
+   *
+   * EDITOR: Set it on the WBP_LoginScreen Blueprint class defaults,
+   * or assign it programmatically from AFPMPlayerController.
+   */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Visual",
+            meta = (DisplayName = "Background Texture"))
+  TObjectPtr<UTexture2D> BackgroundTexture;
+
   /** Update the result text shown to the user (e.g., error or success). */
   UFUNCTION(BlueprintCallable, Category = "FPM|UI")
   void SetResultMessage(const FString &Message, bool bIsError);
 
 protected:
   virtual void NativeConstruct() override;
+  virtual void NativeTick(const FGeometry &MyGeometry,
+                          float InDeltaTime) override;
 
 private:
   // --- Programmatically created widgets ---
 
-  /** Full-screen dark background image that hides the world. */
+  /**
+   * Full-screen background image. Opaque by default (solid dark colour).
+   * If BackgroundTexture is assigned, it is applied to this image's brush
+   * so the texture fills the screen behind the login panel.
+   */
   UPROPERTY()
   TObjectPtr<UImage> BackgroundImage;
+
+  /**
+   * Thin gold shimmer line that sweeps across the panel every 4 seconds.
+   */
+  UPROPERTY()
+  TObjectPtr<UImage> ShimmerLine;
 
   /** Title text ("FALDORAN PRIME"). */
   UPROPERTY()
@@ -89,6 +121,27 @@ private:
 
   UPROPERTY()
   TObjectPtr<UTextBlock> CopyrightText;
+
+  // --- Animation state ---
+
+  /** Accumulated time for breathing glow on title. */
+  float AnimTime = 0.0f;
+
+  /**
+   * Shimmer position [0, 1] as fraction across the panel width.
+   * Loops every ShimmerPeriodSeconds.
+   */
+  float ShimmerPhase = 0.0f;
+
+  /** Seconds for one full shimmer sweep. */
+  static constexpr float ShimmerPeriodSeconds = 4.0f;
+
+  /** Panel width in slate units (updated in NativeTick). */
+  float CachedPanelWidth = 440.0f;
+
+  /** Canvas slot for the shimmer line (to reposition it). */
+  UPROPERTY()
+  TObjectPtr<class UCanvasPanelSlot> ShimmerSlot;
 
   // --- Helpers ---
 

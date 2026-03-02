@@ -77,6 +77,8 @@ private:
                           float Default, UTextBlock *&OutValueText);
   /** Helper: create a styled button (gold filled or ghost outline). */
   UButton *MakeButton(const FString &Label, bool bGoldFilled);
+  /** Helper: apply Glass & Gold theme to a combo box for readability. */
+  void StyleComboBox(UComboBoxString *CB);
 
   // --- Core Widgets ---
   UPROPERTY() TObjectPtr<UImage> BackgroundImage;
@@ -85,15 +87,37 @@ private:
   UPROPERTY() TObjectPtr<UButton> GenderFemaleBtn;
   UPROPERTY() TObjectPtr<USlider> BodyTypeSlider;
   UPROPERTY() TObjectPtr<UComboBoxString> HairStyleComboBox;
+  UPROPERTY() TObjectPtr<UComboBoxString> SpeciesComboBox;
   UPROPERTY() TObjectPtr<UImage> PreviewImage;
   UPROPERTY() TObjectPtr<UTextBlock> ResultText;
   UPROPERTY() TObjectPtr<UButton> SubmitButton;
   UPROPERTY() TObjectPtr<UButton> BackButton;
 
-  // Color sliders: each array is [R, G, B]
+  // --- Tab System ---
+  UPROPERTY() TArray<TObjectPtr<UButton>> TabButtons;
+  UPROPERTY() TArray<TObjectPtr<UVerticalBox>> TabPanels;
+  int32 ActiveTabIndex = 0;
+  void SwitchTab(int32 Index);
+  void UpdateTabButtonStyles();
+  UFUNCTION() void OnTabIdentityClicked();
+  UFUNCTION() void OnTabBodyClicked();
+  UFUNCTION() void OnTabFaceClicked();
+  UFUNCTION() void OnTabHairClicked();
+
+  // Color pickers: each array is [Hue, Saturation, Value]
   UPROPERTY() TArray<TObjectPtr<USlider>> SkinSliders;
+  UPROPERTY() TObjectPtr<UImage> SkinColorPreview;
   UPROPERTY() TArray<TObjectPtr<USlider>> EyeSliders;
+  UPROPERTY() TObjectPtr<UImage> EyeColorPreview;
   UPROPERTY() TArray<TObjectPtr<USlider>> HairColorSliders;
+  UPROPERTY() TObjectPtr<UImage> HairColorPreview;
+
+  /** Read HSV slider values and convert to linear RGB. */
+  FLinearColor
+  GetColorFromHSVSliders(const TArray<TObjectPtr<USlider>> &Sliders) const;
+  /** Update a preview swatch Image from an HSV slider group. */
+  void RefreshColorPreview(const TArray<TObjectPtr<USlider>> &Sliders,
+                           UImage *Preview);
 
   // Morph sliders: [Jaw, Nose, Brow, Lips]
   UPROPERTY() TArray<TObjectPtr<USlider>> MorphSliders;
@@ -119,6 +143,8 @@ private:
                           ESelectInfo::Type SelectionType);
   UFUNCTION() void OnPlaystyleChanged(float Value);
   UFUNCTION() void OnMagicalChanged(float Value);
+  UFUNCTION()
+  void OnSpeciesChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
 
   // --- Preview Actor ---
   void SpawnPreviewActor();

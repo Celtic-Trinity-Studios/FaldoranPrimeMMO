@@ -31,8 +31,17 @@ public:
   /** Maximum number of hair style options. */
   static constexpr uint8 MaxHairStyleIndex = 7;
 
-  /** Maximum characters per account. */
-  static constexpr int32 MaxCharactersPerAccount = 5;
+  /** Number of facial morph targets (Jaw, Nose, Brow, Lips). */
+  static constexpr int32 FacialMorphCount = 4;
+
+  /** Maximum valid species index. */
+  static constexpr uint8 MaxSpeciesIndex =
+      static_cast<uint8>(EFPMSpecies::MAX) - 1;
+
+  /** Maximum characters per account. One character per account by design:
+   *  classless skill-based system means no reason for alts. Strengthens
+   *  player identity, simplifies backend, prevents economy exploits. */
+  static constexpr int32 MaxCharactersPerAccount = 1;
 
   // --- Named Constants: Playstyle Affinities (§4.2) ---
 
@@ -101,12 +110,16 @@ public:
   static bool ValidateName(const FString &Name, FString &OutError);
 
   /**
-   * Validate appearance values (body type, skin tone, hair style, hair color).
+   * Validate appearance values (body type, skin tone, eye color, hair,
+   * and facial morphs).
    * Rules:
    *   - BodyType: 0 to MaxBodyTypeIndex
    *   - HairStyle: 0 to MaxHairStyleIndex
    *   - SkinTone RGB: each component in [0.0, 1.0]
+   *   - EyeColor RGB: each component in [0.0, 1.0]
    *   - HairColor RGB: each component in [0.0, 1.0]
+   *   - FacialMorphs: exactly FacialMorphCount entries, each in [0.0, 1.0]
+   *   - Species: 0 to MaxSpeciesIndex
    *
    * @param Request   The request containing appearance values.
    * @param OutError  Set to the error description on failure.

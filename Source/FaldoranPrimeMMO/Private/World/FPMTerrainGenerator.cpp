@@ -7,7 +7,6 @@
 #include "EngineUtils.h"
 #include "World/FPMWorldChunkManager.h"
 
-
 #if WITH_EDITOR
 #include "Editor.h"
 #endif
@@ -98,9 +97,9 @@ EFPMBiome FPMTerrainGenerator::GetBiomeAt(float NormX, float NormY) {
   // Find the vertex in the chunk
   const FVector ChunkOrigin = FPMChunkGenerator::ChunkToWorldOrigin(Coord);
   const float LocalX =
-      (WorldPos.X - ChunkOrigin.X) / FPMChunkConstants::ChunkWorldSize;
+      (WorldPos.X - ChunkOrigin.X) / FPMChunkConstants::HexWidth;
   const float LocalY =
-      (WorldPos.Y - ChunkOrigin.Y) / FPMChunkConstants::ChunkWorldSize;
+      (WorldPos.Y - ChunkOrigin.Y) / FPMChunkConstants::HexWidth;
 
   const int32 Res = FPMChunkConstants::ChunkResolution;
   const int32 IX =

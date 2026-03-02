@@ -170,6 +170,33 @@ void UFPMCharacterCreationWidget::UpdateGenderButtons() {
   GenderFemaleBtn->SetStyle(FS);
 }
 
+void UFPMCharacterCreationWidget::StyleComboBox(UComboBoxString *CB) {
+  if (!CB)
+    return;
+  // Dropdown item row style — use getter/setter API
+  FTableRowStyle IS = CB->GetItemStyle();
+  IS.TextColor = FSlateColor(CC::White);
+  IS.SelectedTextColor = FSlateColor(CC::Gold);
+  // Row backgrounds — dark with subtle gold highlight on hover/active
+  FSlateBrush DarkBrush;
+  DarkBrush.TintColor = FSlateColor(CC::DeepBG);
+  FSlateBrush HoverBrush;
+  HoverBrush.TintColor =
+      FSlateColor(FLinearColor(0.773f, 0.627f, 0.349f, 0.15f));
+  FSlateBrush ActiveBrush;
+  ActiveBrush.TintColor =
+      FSlateColor(FLinearColor(0.773f, 0.627f, 0.349f, 0.25f));
+  IS.SetActiveBrush(ActiveBrush);
+  IS.SetActiveHoveredBrush(ActiveBrush);
+  IS.SetInactiveBrush(DarkBrush);
+  IS.SetInactiveHoveredBrush(HoverBrush);
+  IS.SetEvenRowBackgroundBrush(DarkBrush);
+  IS.SetEvenRowBackgroundHoveredBrush(HoverBrush);
+  IS.SetOddRowBackgroundBrush(DarkBrush);
+  IS.SetOddRowBackgroundHoveredBrush(HoverBrush);
+  CB->SetItemStyle(IS);
+}
+
 // =====================================================================
 // BUILD UI — programmatic construction with Glass & Gold theme
 // =====================================================================
@@ -246,14 +273,67 @@ void UFPMCharacterCreationWidget::BuildUI() {
   UVerticalBox *LV = NewObject<UVerticalBox>(this);
   LSz->AddChild(LV);
   LSc->AddChild(LSz);
-  AddSectionLabel(LV, TEXT("PHYSICAL ATTRIBUTES"));
-  AddSubLabel(LV, TEXT("Character Name"));
+  // ---- TAB BAR ----
+  static const TCHAR *TabLabels[] = {TEXT("IDENTITY"), TEXT("BODY"),
+                                     TEXT("FACE"), TEXT("HAIR")};
+  UHorizontalBox *TabBar = NewObject<UHorizontalBox>(this);
+  if (auto *S = LV->AddChildToVerticalBox(TabBar))
+    S->SetPadding(FMargin(0, 0, 0, 8));
+  TabButtons.SetNum(4);
+  for (int i = 0; i < 4; ++i) {
+    TabButtons[i] = MakeButton(TabLabels[i], false);
+    if (auto *S = TabBar->AddChildToHorizontalBox(TabButtons[i]))
+      S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+  }
+  TabButtons[0]->OnClicked.AddDynamic(
+      this, &UFPMCharacterCreationWidget::OnTabIdentityClicked);
+  TabButtons[1]->OnClicked.AddDynamic(
+      this, &UFPMCharacterCreationWidget::OnTabBodyClicked);
+  TabButtons[2]->OnClicked.AddDynamic(
+      this, &UFPMCharacterCreationWidget::OnTabFaceClicked);
+  TabButtons[3]->OnClicked.AddDynamic(
+      this, &UFPMCharacterCreationWidget::OnTabHairClicked);
+
+  // ---- TAB CONTENT PANELS ----
+  TabPanels.SetNum(4);
+  for (int i = 0; i < 4; ++i) {
+    TabPanels[i] = NewObject<UVerticalBox>(this);
+    if (auto *S = LV->AddChildToVerticalBox(TabPanels[i]))
+      S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+    TabPanels[i]->SetVisibility(i == 0 ? ESlateVisibility::Visible
+                                       : ESlateVisibility::Collapsed);
+  }
+  ActiveTabIndex = 0;
+  UpdateTabButtonStyles();
+
+  // ==== TAB 0: IDENTITY ====
+  UVerticalBox *T0 = TabPanels[0];
+  AddSectionLabel(T0, TEXT("IDENTITY"));
+  AddSubLabel(T0, TEXT("Character Name"));
   NameInput = NewObject<UEditableTextBox>(this);
   NameInput->SetHintText(FText::FromString(TEXT("3-20 characters")));
-  if (auto *S = LV->AddChildToVerticalBox(NameInput))
+  if (auto *S = T0->AddChildToVerticalBox(NameInput))
     S->SetPadding(FMargin(0, 0, 0, 8));
+  // Race selection
+  AddSubLabel(T0, TEXT("Race"));
+  SpeciesComboBox = NewObject<UComboBoxString>(this);
+  SpeciesComboBox->AddOption(TEXT("Human"));
+  SpeciesComboBox->AddOption(TEXT("Half-Elf"));
+  SpeciesComboBox->AddOption(TEXT("Elf"));
+  SpeciesComboBox->AddOption(TEXT("Dwarf"));
+  SpeciesComboBox->AddOption(TEXT("Halfling"));
+  SpeciesComboBox->AddOption(TEXT("Half-Orc"));
+  SpeciesComboBox->AddOption(TEXT("Gnome"));
+  SpeciesComboBox->AddOption(TEXT("Kethari"));
+  SpeciesComboBox->AddOption(TEXT("Rauken"));
+  SpeciesComboBox->SetSelectedIndex(0);
+  SpeciesComboBox->OnSelectionChanged.AddDynamic(
+      this, &UFPMCharacterCreationWidget::OnSpeciesChanged);
+  if (auto *S = T0->AddChildToVerticalBox(SpeciesComboBox))
+    S->SetPadding(FMargin(0, 0, 0, 8));
+  StyleComboBox(SpeciesComboBox);
   // Gender toggle
-  AddSubLabel(LV, TEXT("Gender"));
+  AddSubLabel(T0, TEXT("Gender"));
   UHorizontalBox *GRow = NewObject<UHorizontalBox>(this);
   GenderMaleBtn = MakeButton(TEXT("MALE"), false);
   GenderFemaleBtn = MakeButton(TEXT("FEMALE"), false);
@@ -265,39 +345,81 @@ void UFPMCharacterCreationWidget::BuildUI() {
     S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
   if (auto *S = GRow->AddChildToHorizontalBox(GenderFemaleBtn))
     S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-  if (auto *S = LV->AddChildToVerticalBox(GRow))
+  if (auto *S = T0->AddChildToVerticalBox(GRow))
     S->SetPadding(FMargin(0, 0, 0, 4));
-  AddSubLabel(LV, TEXT("Body Type"));
-  BodyTypeSlider = AddSliderRow(LV, TEXT(""), 0, 3, 0);
+
+  // ==== TAB 1: BODY ====
+  UVerticalBox *T1 = TabPanels[1];
+  AddSectionLabel(T1, TEXT("BODY"));
+  AddSubLabel(T1, TEXT("Body Type"));
+  BodyTypeSlider = AddSliderRow(T1, TEXT(""), 0, 3, 0);
   BodyTypeSlider->SetStepSize(1);
-  AddSubLabel(LV, TEXT("Skin Color"));
-  static const TCHAR *RGB[] = {TEXT("R"), TEXT("G"), TEXT("B")};
+  AddSubLabel(T1, TEXT("Skin Color"));
+  {
+    USizeBox *SB = NewObject<USizeBox>(this);
+    SB->SetHeightOverride(24);
+    SkinColorPreview = NewObject<UImage>(this);
+    SkinColorPreview->SetColorAndOpacity(FLinearColor(0.8f, 0.6f, 0.5f, 1.f));
+    SB->AddChild(SkinColorPreview);
+    if (auto *S = T1->AddChildToVerticalBox(SB))
+      S->SetPadding(FMargin(0, 0, 0, 4));
+  }
+  static const TCHAR *HSV[] = {TEXT("Hue"), TEXT("Sat"), TEXT("Brt")};
   SkinSliders.SetNum(3);
+  float SkinD[] = {0.06f, 0.4f, 0.8f};
   for (int i = 0; i < 3; ++i)
-    SkinSliders[i] = AddSliderRow(LV, RGB[i], 0, 1, .6f - i * .1f);
-  AddSubLabel(LV, TEXT("Eye Color"));
+    SkinSliders[i] = AddSliderRow(T1, HSV[i], 0, 1, SkinD[i]);
+
+  // ==== TAB 2: FACE ====
+  UVerticalBox *T2 = TabPanels[2];
+  AddSectionLabel(T2, TEXT("FACE"));
+  AddSubLabel(T2, TEXT("Eye Color"));
+  {
+    USizeBox *SB = NewObject<USizeBox>(this);
+    SB->SetHeightOverride(24);
+    EyeColorPreview = NewObject<UImage>(this);
+    EyeColorPreview->SetColorAndOpacity(FLinearColor(0.3f, 0.5f, 0.8f, 1.f));
+    SB->AddChild(EyeColorPreview);
+    if (auto *S = T2->AddChildToVerticalBox(SB))
+      S->SetPadding(FMargin(0, 0, 0, 4));
+  }
   EyeSliders.SetNum(3);
-  float ED[] = {.3f, .5f, .8f};
+  float EyeD[] = {0.6f, 0.6f, 0.8f};
   for (int i = 0; i < 3; ++i)
-    EyeSliders[i] = AddSliderRow(LV, RGB[i], 0, 1, ED[i]);
-  AddSubLabel(LV, TEXT("Hair Style"));
-  HairStyleComboBox = NewObject<UComboBoxString>(this);
-  if (auto *S = LV->AddChildToVerticalBox(HairStyleComboBox))
-    S->SetPadding(FMargin(0, 0, 0, 4));
-  HairStyleComboBox->OnSelectionChanged.AddDynamic(
-      this, &UFPMCharacterCreationWidget::OnHairStyleChanged);
-  AddSubLabel(LV, TEXT("Hair Color"));
-  HairColorSliders.SetNum(3);
-  float HD[] = {.3f, .2f, .1f};
-  for (int i = 0; i < 3; ++i)
-    HairColorSliders[i] = AddSliderRow(LV, RGB[i], 0, 1, HD[i]);
-  AddSubLabel(LV, TEXT("Facial Features"));
+    EyeSliders[i] = AddSliderRow(T2, HSV[i], 0, 1, EyeD[i]);
+  AddSubLabel(T2, TEXT("Facial Features"));
   MorphSliders.SetNum(4);
   static const TCHAR *ML[] = {TEXT("Jaw"), TEXT("Nose"), TEXT("Brow"),
                               TEXT("Lips")};
   for (int i = 0; i < 4; ++i)
-    MorphSliders[i] = AddSliderRow(LV, ML[i], 0, 1, .5f);
-  // Bind all appearance sliders
+    MorphSliders[i] = AddSliderRow(T2, ML[i], 0, 1, .5f);
+
+  // ==== TAB 3: HAIR ====
+  UVerticalBox *T3 = TabPanels[3];
+  AddSectionLabel(T3, TEXT("HAIR"));
+  AddSubLabel(T3, TEXT("Hair Style"));
+  HairStyleComboBox = NewObject<UComboBoxString>(this);
+  if (auto *S = T3->AddChildToVerticalBox(HairStyleComboBox))
+    S->SetPadding(FMargin(0, 0, 0, 4));
+  HairStyleComboBox->OnSelectionChanged.AddDynamic(
+      this, &UFPMCharacterCreationWidget::OnHairStyleChanged);
+  StyleComboBox(HairStyleComboBox);
+  AddSubLabel(T3, TEXT("Hair Color"));
+  {
+    USizeBox *SB = NewObject<USizeBox>(this);
+    SB->SetHeightOverride(24);
+    HairColorPreview = NewObject<UImage>(this);
+    HairColorPreview->SetColorAndOpacity(FLinearColor(0.2f, 0.15f, 0.1f, 1.f));
+    SB->AddChild(HairColorPreview);
+    if (auto *S = T3->AddChildToVerticalBox(SB))
+      S->SetPadding(FMargin(0, 0, 0, 4));
+  }
+  HairColorSliders.SetNum(3);
+  float HairD[] = {0.08f, 0.5f, 0.2f};
+  for (int i = 0; i < 3; ++i)
+    HairColorSliders[i] = AddSliderRow(T3, HSV[i], 0, 1, HairD[i]);
+
+  // ==== BIND ALL APPEARANCE SLIDERS ====
   auto Bind = [this](USlider *S) {
     if (S)
       S->OnValueChanged.AddDynamic(

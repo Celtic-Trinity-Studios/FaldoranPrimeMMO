@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+
 #include "FPMGameMode.generated.h"
 
 /**
@@ -33,6 +34,13 @@ public:
    * Players start in UI (login screen). Pawn spawned on character select.
    */
   virtual void PostLogin(APlayerController *NewPlayer) override;
+
+  /**
+   * Called on EVERY disconnect (PIE stop, network drop, explicit logout,
+   * Alt+F4). Auto-saves the pawn's world position to the database so
+   * returning characters always resume where they left off.
+   */
+  virtual void Logout(AController *Exiting) override;
 
   /**
    * Override to return nullptr — pawn class is determined at spawn time.

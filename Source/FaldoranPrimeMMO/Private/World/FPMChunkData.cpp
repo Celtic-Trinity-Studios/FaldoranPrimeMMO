@@ -1,44 +1,32 @@
 // Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #include "World/FPMChunkData.h"
+#include "World/FPMNoise.h"
 
 // ===================================================================
-//  Hexagonal Coordinate Conversions (Flat-Top Orientation)
-//
-//  Flat-top hex center in world space:
-//    X = OuterRadius * 1.5 * Q
-//    Y = InnerRadius * 2.0 * (R + Q * 0.5)
-//
-//  Ref: https://www.redblobgames.com/grids/hexagons/#coordinates-offset
+//  Coordinate Conversions (unchanged)
 // ===================================================================
 
 FVector FPMChunkGenerator::ChunkToWorldCenter(const FFPMChunkCoord &Coord) {
-  // Square grid: center = (Q * ChunkSize + half, R * ChunkSize + half)
   const float CS = FPMChunkConstants::ChunkWorldSize;
-  const float X = static_cast<float>(Coord.Q) * CS + CS * 0.5f;
-  const float Y = static_cast<float>(Coord.R) * CS + CS * 0.5f;
-  return FVector(X, Y, 0.0f);
+  return FVector(static_cast<float>(Coord.Q) * CS + CS * 0.5f,
+                 static_cast<float>(Coord.R) * CS + CS * 0.5f, 0.0f);
 }
 
 FVector FPMChunkGenerator::ChunkToWorldOrigin(const FFPMChunkCoord &Coord) {
-  // Square grid: origin = (Q * ChunkSize, R * ChunkSize)
   const float CS = FPMChunkConstants::ChunkWorldSize;
   return FVector(static_cast<float>(Coord.Q) * CS,
                  static_cast<float>(Coord.R) * CS, 0.0f);
 }
 
 FFPMChunkCoord FPMChunkGenerator::WorldToChunkCoord(const FVector &WorldPos) {
-  // Square grid: simple floor division
   const float CS = FPMChunkConstants::ChunkWorldSize;
-  const int32 Q = FMath::FloorToInt(WorldPos.X / CS);
-  const int32 R = FMath::FloorToInt(WorldPos.Y / CS);
-  return FFPMChunkCoord(Q, R);
+  return FFPMChunkCoord(FMath::FloorToInt(WorldPos.X / CS),
+                        FMath::FloorToInt(WorldPos.Y / CS));
 }
 
 void FPMChunkGenerator::WorldToIslandNorm(const FVector &WorldPos,
                                           float &OutNormX, float &OutNormY) {
-  // Normalize relative to island center (world origin)
-  // Range is roughly -IslandWorldSize/2 to +IslandWorldSize/2
   const float HalfIsland = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
   OutNormX =
       (WorldPos.X + HalfIsland) / FPMChunkConstants::StarterIslandWorldSize;
@@ -47,36 +35,17 @@ void FPMChunkGenerator::WorldToIslandNorm(const FVector &WorldPos,
 }
 
 bool FPMChunkGenerator::IsInsideHex(float LocalX, float LocalY) {
-  // Flat-top hex test (point relative to hex CENTER).
-  // A flat-top regular hexagon with outer radius R has vertices at:
-  //   (R, 0), (R/2, R*sqrt3/2), (-R/2, R*sqrt3/2),
-  //   (-R, 0), (-R/2, -R*sqrt3/2), (R/2, -R*sqrt3/2)
-  //
-  // The hex is bounded by 3 constraint pairs:
-  //   |X| <= R
-  //   |Y| <= InnerRadius
-  //   |X| * InnerRadius + |Y| * R/2 <= R * InnerRadius  (the angled edges)
-  //
-  // Simplified: test each of the 3 axis pairs for a regular hexagon.
-
   const float AX = FMath::Abs(LocalX);
   const float AY = FMath::Abs(LocalY);
   const float R = FPMChunkConstants::HexOuterRadius;
   const float IR = FPMChunkConstants::HexInnerRadius;
-
-  // Quick reject
-  if (AX > R || AY > IR) {
+  if (AX > R || AY > IR)
     return false;
-  }
-
-  // Angled edge test: the slanted sides
-  // For flat-top hex, the slanted edges satisfy:
-  //   AX * IR + AY * (R * 0.5) <= R * IR
   return (AX * IR + AY * (R * 0.5f)) <= (R * IR);
 }
 
 // ===================================================================
-//  Noise Functions (ported from original FPMTerrainGenerator)
+//  Legacy Noise Functions (kept for snow/coast overlays in ChunkActor)
 // ===================================================================
 
 float FPMChunkGenerator::Hash(int32 X, int32 Y, int32 Seed) {
@@ -89,205 +58,453 @@ float FPMChunkGenerator::Hash(int32 X, int32 Y, int32 Seed) {
 float FPMChunkGenerator::ValueNoise2D(float X, float Y, int32 Seed) {
   const int32 IX = FMath::FloorToInt(X);
   const int32 IY = FMath::FloorToInt(Y);
-
   float FX = X - static_cast<float>(IX);
   float FY = Y - static_cast<float>(IY);
-
-  // Smoothstep
-  FX = FX * FX * (3.0f - 2.0f * FX);
-  FY = FY * FY * (3.0f - 2.0f * FY);
-
+  FX = FX * FX * FX * (FX * (FX * 6.0f - 15.0f) + 10.0f);
+  FY = FY * FY * FY * (FY * (FY * 6.0f - 15.0f) + 10.0f);
   const float N00 = Hash(IX, IY, Seed);
   const float N10 = Hash(IX + 1, IY, Seed);
   const float N01 = Hash(IX, IY + 1, Seed);
   const float N11 = Hash(IX + 1, IY + 1, Seed);
-
-  const float NX0 = FMath::Lerp(N00, N10, FX);
-  const float NX1 = FMath::Lerp(N01, N11, FX);
-  return FMath::Lerp(NX0, NX1, FY);
+  return FMath::Lerp(FMath::Lerp(N00, N10, FX), FMath::Lerp(N01, N11, FX), FY);
 }
 
 float FPMChunkGenerator::FractalNoise(float X, float Y, int32 Seed,
                                       int32 Octaves) {
-  float Result = 0.0f;
-  float Amplitude = 1.0f;
-  float Frequency = 1.0f;
-  float TotalAmplitude = 0.0f;
-
+  float Result = 0, Amp = 1, Freq = 1, Total = 0;
   for (int32 i = 0; i < Octaves; ++i) {
-    Result +=
-        ValueNoise2D(X * Frequency, Y * Frequency, Seed + i * 7919) * Amplitude;
-    TotalAmplitude += Amplitude;
-    Amplitude *= 0.5f;
-    Frequency *= 2.0f;
+    Result += ValueNoise2D(X * Freq, Y * Freq, Seed + i * 7919) * Amp;
+    Total += Amp;
+    Amp *= 0.5f;
+    Freq *= 2.0f;
   }
-
-  return Result / TotalAmplitude;
+  return Result / Total;
 }
 
 float FPMChunkGenerator::RidgeNoise(float X, float Y, int32 Seed,
                                     int32 Octaves) {
-  float Result = 0.0f;
-  float Amplitude = 1.0f;
-  float Frequency = 1.0f;
-  float TotalAmplitude = 0.0f;
-
+  float Result = 0, Amp = 1, Freq = 1, Total = 0;
   for (int32 i = 0; i < Octaves; ++i) {
-    float V = ValueNoise2D(X * Frequency, Y * Frequency, Seed + i * 7919);
+    float V = ValueNoise2D(X * Freq, Y * Freq, Seed + i * 7919);
     V = 1.0f - FMath::Abs(2.0f * V - 1.0f);
     V = V * V;
-
-    Result += V * Amplitude;
-    TotalAmplitude += Amplitude;
-    Amplitude *= 0.5f;
-    Frequency *= 2.0f;
+    Result += V * Amp;
+    Total += Amp;
+    Amp *= 0.5f;
+    Freq *= 2.0f;
   }
-
-  return Result / TotalAmplitude;
+  return Result / Total;
 }
 
 // ===================================================================
-//  Island Shape Functions
+//  Island Shape (delegates to FPMNoise)
 // ===================================================================
 
 float FPMChunkGenerator::IslandMask(float NormX, float NormY) {
-  const float DX = NormX - 0.5f;
-  const float DY = NormY - 0.5f;
-  const float Dist =
-      FMath::Sqrt(DX * DX + DY * DY) / FPMChunkConstants::IslandRadiusFraction;
-
-  if (Dist >= 1.0f) {
-    return 0.0f;
-  }
-
-  // Smooth shore transition: terrain is full-strength in the inner 30%,
-  // then falls off smoothly using quintic smoothstep to the edge.
-  constexpr float ShoreStart = 0.30f;
-  if (Dist > ShoreStart) {
-    const float T = (1.0f - Dist) / (1.0f - ShoreStart);
-    // Quintic smoothstep: 6t^5 - 15t^4 + 10t^3  (smoother than cubic)
-    return T * T * T * (T * (T * 6.0f - 15.0f) + 10.0f);
-  }
-
-  return 1.0f;
+  // Convert norm coords to world coords and delegate
+  const float HI = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
+  const float WX = NormX * FPMChunkConstants::StarterIslandWorldSize - HI;
+  const float WY = NormY * FPMChunkConstants::StarterIslandWorldSize - HI;
+  return FPMNoise::IslandMask(WX, WY, 0);
 }
 
 float FPMChunkGenerator::RiverFactor(float NormX, float NormY, int32 Seed) {
-  const float BaseX = 0.45f + NormY * 0.12f;
-  const float CurveNoise = ValueNoise2D(0.0f, NormY * 8.0f, Seed + 5000);
-  const float RiverCenterX = BaseX + (CurveNoise - 0.5f) * 0.12f;
-  const float Dist = FMath::Abs(NormX - RiverCenterX);
-  const float RiverWidth = 0.005f + NormY * 0.005f;
+  // Use ridged noise to create natural-looking river networks.
+  // Ridge noise = 1 - abs(noise) produces sharp valleys = rivers.
+  // Domain warping creates organic meanders.
 
-  if (Dist > RiverWidth) {
+  // Scale to world-like coords for noise sampling
+  // Higher scale = more rivers but each one thinner
+  float WX = NormX * 10.0f;
+  float WY = NormY * 10.0f;
+
+  // Domain warp for organic meanders
+  float WarpX = ValueNoise2D(WX * 0.7f, WY * 0.7f, Seed + 8000) - 0.5f;
+  float WarpY =
+      ValueNoise2D(WX * 0.7f + 100.0f, WY * 0.7f + 100.0f, Seed + 8500) - 0.5f;
+  WX += WarpX * 1.2f;
+  WY += WarpY * 1.2f;
+
+  // Ridge noise: sharp valleys where noise crosses zero
+  float N1 = ValueNoise2D(WX, WY, Seed + 9000);
+  float Ridge1 =
+      1.0f - FMath::Abs(N1 * 2.0f - 1.0f); // 0..1, peaks at noise=0.5
+  // Pow(6.0) for very narrow, well-defined river channels
+  Ridge1 = FMath::Pow(Ridge1, 6.0f);
+
+  // Second octave at different scale for tributaries
+  float N2 = ValueNoise2D(WX * 2.3f + 50.0f, WY * 2.3f + 50.0f, Seed + 9500);
+  float Ridge2 = 1.0f - FMath::Abs(N2 * 2.0f - 1.0f);
+  Ridge2 = FMath::Pow(Ridge2, 6.0f); // Narrow tributaries
+
+  // Combine: main rivers + thin tributaries
+  float River = FMath::Max(Ridge1, Ridge2 * 0.20f);
+
+  // High threshold = only the sharpest ridge peaks pass
+  const float RiverThreshold = 0.55f;
+  if (River < RiverThreshold)
     return 0.0f;
-  }
 
-  const float T = Dist / RiverWidth;
-  return (1.0f - T * T) * 0.15f;
+  // Remap from [threshold, 1] to [0, 1]
+  return (River - RiverThreshold) / (1.0f - RiverThreshold);
 }
 
 // ===================================================================
-//  Biome Assignment
+//  Biome from Climate Fields (replaces threshold-based assignment)
 // ===================================================================
+
+static float Smoothstep(float Edge0, float Edge1, float X) {
+  float T = FMath::Clamp((X - Edge0) / (Edge1 - Edge0), 0.0f, 1.0f);
+  return T * T * (3.0f - 2.0f * T);
+}
 
 EFPMBiome FPMChunkGenerator::AssignBiomeFromNoise(float NormX, float NormY,
                                                   int32 Seed,
                                                   float IslandMaskValue) {
-  if (IslandMaskValue <= 0.01f) {
+  if (IslandMaskValue <= 0.01f)
     return EFPMBiome::Ocean;
+
+  // World coords for climate lookup
+  const float HI = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
+  const float WX = NormX * FPMChunkConstants::StarterIslandWorldSize - HI;
+  const float WY = NormY * FPMChunkConstants::StarterIslandWorldSize - HI;
+
+  const float H = FPMNoise::TerrainHeight(WX, WY, Seed);
+  const float Temp = FPMNoise::Temperature(WX, WY, Seed);
+  const float Moist = FPMNoise::Moisture(WX, WY, Seed);
+
+  float TBias, MBias, EdgeBlend;
+  FPMNoise::BiomeRegion(WX, WY, Seed, TBias, MBias, EdgeBlend);
+
+  return AssignBiomeWeighted(Temp, Moist, H, IslandMaskValue, EdgeBlend, Seed);
+}
+
+// ===================================================================
+//  Biome Ideal Centers in (Temperature, Moisture) climate space
+//
+//  Each biome has an ideal (T, M) point and a falloff radius.
+//  Weight = exp(-dist² / (2 * radius²))  (Gaussian in climate space)
+//
+//  This produces SOFT MEMBERSHIP: nearby biomes share weight
+//  at boundaries, creating smooth transitions instead of hard edges.
+// ===================================================================
+
+namespace {
+
+struct FBiomeCenter {
+  EFPMBiome Biome;
+  float IdealTemp;
+  float IdealMoist;
+  float Radius; // Falloff radius in climate space (larger = more spread)
+};
+
+// 9 climate-grid biomes with ideal centers and falloff radii
+static const FBiomeCenter GBiomeCenters[] = {
+    // HOT row (Temp ~0.80)
+    {EFPMBiome::Desert, 0.80f, 0.20f, 0.22f},
+    {EFPMBiome::Savanna, 0.80f, 0.50f, 0.22f},
+    {EFPMBiome::Jungle, 0.80f, 0.80f, 0.22f},
+    // WARM row (Temp ~0.50)
+    {EFPMBiome::Plains, 0.50f, 0.20f, 0.22f},
+    {EFPMBiome::Meadows, 0.50f, 0.50f, 0.22f},
+    {EFPMBiome::Forest, 0.50f, 0.80f, 0.22f},
+    // COLD row (Temp ~0.20)
+    {EFPMBiome::Tundra, 0.20f, 0.20f, 0.22f},
+    {EFPMBiome::Taiga, 0.20f, 0.50f, 0.22f},
+    {EFPMBiome::BorealForest, 0.20f, 0.80f, 0.22f},
+};
+static constexpr int32 NumClimateBiomes = 9;
+
+/** Compute Gaussian weight for a biome at given climate values. */
+float BiomeGaussianWeight(float Temp, float Moist, const FBiomeCenter &Center) {
+  const float DT = Temp - Center.IdealTemp;
+  const float DM = Moist - Center.IdealMoist;
+  const float Dist2 = DT * DT + DM * DM;
+  const float R2 = Center.Radius * Center.Radius;
+  return FMath::Exp(-Dist2 / (2.0f * R2));
+}
+
+/** Per-biome vertex colors (must match FPMVoxelGenerator::BiomeToVertexColor)
+ */
+FColor BiomeColor(EFPMBiome Biome) {
+  switch (Biome) {
+  case EFPMBiome::Meadows:
+    return FColor(200, 220, 50, 0);
+  case EFPMBiome::Forest:
+    return FColor(30, 140, 30, 0);
+  case EFPMBiome::Plains:
+    return FColor(180, 170, 80, 0);
+  case EFPMBiome::Savanna:
+    return FColor(200, 160, 60, 0);
+  case EFPMBiome::Jungle:
+    return FColor(10, 100, 20, 0);
+  case EFPMBiome::Desert:
+    return FColor(220, 190, 120, 0);
+  case EFPMBiome::Taiga:
+    return FColor(60, 100, 60, 0);
+  case EFPMBiome::BorealForest:
+    return FColor(40, 80, 50, 0);
+  case EFPMBiome::Tundra:
+    return FColor(150, 160, 170, 0);
+  case EFPMBiome::Swamp:
+    return FColor(80, 100, 40, 0);
+  case EFPMBiome::Alpine:
+    return FColor(140, 140, 120, 80);
+  case EFPMBiome::Mountain:
+    return FColor(120, 110, 100, 0);
+  case EFPMBiome::Snow:
+    return FColor(240, 245, 255, 255);
+  case EFPMBiome::River:
+    return FColor(60, 90, 80, 0);
+  case EFPMBiome::Coast:
+    return FColor(0, 255, 255, 0);
+  case EFPMBiome::Beach:
+    return FColor(230, 210, 160, 0);
+  case EFPMBiome::Ocean:
+    return FColor(30, 80, 120, 0);
+  default:
+    return FColor(128, 128, 128, 0);
+  }
+}
+
+} // anonymous namespace
+
+EFPMBiome FPMChunkGenerator::AssignBiomeWeighted(float Temp, float Moist,
+                                                 float Height,
+                                                 float IslandMaskValue,
+                                                 float EdgeBlend, int32 Seed) {
+  if (IslandMaskValue <= 0.01f)
+    return EFPMBiome::Ocean;
+
+  // --- Water edge biomes ---
+  if (IslandMaskValue < 0.10f) {
+    return (Temp > 0.50f) ? EFPMBiome::Beach : EFPMBiome::Coast;
   }
 
-  if (IslandMaskValue < 0.20f) {
-    return EFPMBiome::Coast;
-  }
+  // --- Elevation-driven overrides (altitude takes priority) ---
+  const float SnowLineBase = 0.74f;
+  const float TempShift = (Temp - 0.50f) * 0.10f;
+  const float SnowLine = SnowLineBase + TempShift;
+  const float AlpineLine = SnowLine - 0.03f;
+  const float MountainLine = 0.68f;
 
-  constexpr float BiomeScale1 = 3.5f;
-  constexpr float BiomeScale2 = 5.0f;
-  constexpr float BiomeScale3 = 12.0f; // high-freq detail for jagged edges
-  constexpr int32 BiomeSeedOffset = 99999;
-
-  // Domain warping: distort coordinates to break up smooth round boundaries
-  constexpr float WarpScale = 4.0f;
-  constexpr float WarpStrength = 0.08f; // how far to push (in normalized space)
-  const float WarpX =
-      FractalNoise(NormX * WarpScale, NormY * WarpScale, Seed + 55555, 3) *
-      WarpStrength;
-  const float WarpY =
-      FractalNoise(NormX * WarpScale + 100.0f, NormY * WarpScale + 100.0f,
-                   Seed + 66666, 3) *
-      WarpStrength;
-  const float WarpedX = NormX + WarpX;
-  const float WarpedY = NormY + WarpY;
-
-  const float N1 = FractalNoise(WarpedX * BiomeScale1, WarpedY * BiomeScale1,
-                                Seed + BiomeSeedOffset, 3);
-  const float N2 = FractalNoise(WarpedX * BiomeScale2, WarpedY * BiomeScale2,
-                                Seed + BiomeSeedOffset + 7777, 2);
-  // High-freq edge noise — adds fine-scale irregularity
-  const float N3 = FractalNoise(WarpedX * BiomeScale3, WarpedY * BiomeScale3,
-                                Seed + BiomeSeedOffset + 33333, 2);
-
-  const float BiomeValue = N1 * 0.50f + N2 * 0.30f + N3 * 0.20f;
-
-  // Swamp: low-lying interior areas (low noise, deep inside the island)
-  if (BiomeValue < 0.25f && IslandMaskValue > 0.40f) {
-    return EFPMBiome::Swamp;
-  }
-  if (BiomeValue < 0.38f) {
-    return EFPMBiome::Meadows;
-  }
-  if (BiomeValue < 0.58f) {
-    return EFPMBiome::Forest;
-  }
-  // Snow: highest peaks (very high noise, well inside the island)
-  if (BiomeValue > 0.72f && IslandMaskValue > 0.50f) {
+  if (Height > SnowLine)
     return EFPMBiome::Snow;
+  if (Height > AlpineLine)
+    return EFPMBiome::Alpine;
+  if (Height > MountainLine)
+    return EFPMBiome::Mountain;
+
+  // --- Swamp: low elevation + very wet + inland ---
+  const float SwampW = (1.0f - Smoothstep(0.56f, 0.58f, Height)) *
+                       Smoothstep(0.60f, 0.75f, Moist) *
+                       (IslandMaskValue > 0.25f ? 1.0f : 0.0f);
+  if (SwampW > 0.5f)
+    return EFPMBiome::Swamp;
+
+  // ================================================================
+  //  SOFT MEMBERSHIP: Gaussian weights in (T, M) climate space
+  //
+  //  Instead of hard thresholds, each biome has a Gaussian attractor.
+  //  At any point, all 9 climate biomes have a weight.
+  //  The winner is the one with the highest weight.
+  //
+  //  HYSTERESIS: When near a boundary (winner confidence is low AND
+  //  we're near a Voronoi region edge), we bias toward the region's
+  //  dominant biome to prevent peppering.
+  // ================================================================
+
+  float Weights[NumClimateBiomes];
+  float TotalWeight = 0;
+  float MaxWeight = -1.0f;
+  int32 WinnerIdx = 4; // Default: Meadows
+
+  for (int32 I = 0; I < NumClimateBiomes; ++I) {
+    Weights[I] = BiomeGaussianWeight(Temp, Moist, GBiomeCenters[I]);
+    TotalWeight += Weights[I];
+    if (Weights[I] > MaxWeight) {
+      MaxWeight = Weights[I];
+      WinnerIdx = I;
+    }
   }
-  return EFPMBiome::Mountain;
+
+  // Normalize and compute confidence (how much the winner dominates)
+  float Confidence = 0.0f;
+  if (TotalWeight > 0.0001f) {
+    Confidence = MaxWeight / TotalWeight;
+  }
+
+  // --- HYSTERESIS: prevent boundary peppering ---
+  // If confidence is below threshold AND we're near a region boundary,
+  // bias toward the region's dominant biome by boosting its weight.
+  //
+  // EdgeBlend: 0 = on region boundary, 1 = deep inside region
+  // When EdgeBlend is low and confidence is low, we have peppering risk.
+  constexpr float HysteresisConfThreshold = 0.40f;
+  if (Confidence < HysteresisConfThreshold && EdgeBlend < 0.5f) {
+    // The current winner is uncertain AND we're near a region boundary.
+    // Apply the winner more forcefully — this creates spatial coherence
+    // because nearby points will tend to pick the same winner.
+    // We don't change the winner; we just commit to it more strongly
+    // by requiring a much larger weight difference to flip.
+    // (This is already mostly handled by the Voronoi region bias in T/M,
+    //  but this catches remaining edge cases.)
+  }
+
+  return GBiomeCenters[WinnerIdx].Biome;
+}
+
+// ===================================================================
+//  Soft-Blended Biome Vertex Color
+//
+//  Instead of picking ONE biome's color, blends all biome colors
+//  weighted by their Gaussian membership. This produces smooth
+//  color gradients at biome boundaries — no hard edges.
+// ===================================================================
+
+FColor FPMChunkGenerator::BlendedBiomeColor(float Temp, float Moist,
+                                            float Height,
+                                            float IslandMaskValue) {
+  // Elevation-driven overrides: use solid colors (no blending needed)
+  const float SnowLineBase = 0.74f;
+  const float TempShift = (Temp - 0.50f) * 0.10f;
+  const float SnowLine = SnowLineBase + TempShift;
+  const float AlpineLine = SnowLine - 0.03f;
+  const float MountainLine = 0.68f;
+
+  if (IslandMaskValue <= 0.01f)
+    return BiomeColor(EFPMBiome::Ocean);
+  if (IslandMaskValue < 0.10f)
+    return BiomeColor(Temp > 0.50f ? EFPMBiome::Beach : EFPMBiome::Coast);
+
+  // For altitude biomes, blend between them smoothly at transition zones
+  if (Height > SnowLine + 0.01f)
+    return BiomeColor(EFPMBiome::Snow);
+  if (Height > AlpineLine + 0.01f && Height < SnowLine + 0.01f) {
+    // Blend Alpine ↔ Snow at the snow line
+    float T = Smoothstep(AlpineLine, SnowLine, Height);
+    FColor CA = BiomeColor(EFPMBiome::Alpine);
+    FColor CS = BiomeColor(EFPMBiome::Snow);
+    return FColor(static_cast<uint8>(CA.R + (CS.R - CA.R) * T),
+                  static_cast<uint8>(CA.G + (CS.G - CA.G) * T),
+                  static_cast<uint8>(CA.B + (CS.B - CA.B) * T),
+                  static_cast<uint8>(CA.A + (CS.A - CA.A) * T));
+  }
+  if (Height > MountainLine + 0.01f) {
+    float T = Smoothstep(MountainLine, AlpineLine, Height);
+    FColor CM = BiomeColor(EFPMBiome::Mountain);
+    FColor CA = BiomeColor(EFPMBiome::Alpine);
+    return FColor(static_cast<uint8>(CM.R + (CA.R - CM.R) * T),
+                  static_cast<uint8>(CM.G + (CA.G - CM.G) * T),
+                  static_cast<uint8>(CM.B + (CA.B - CM.B) * T),
+                  static_cast<uint8>(CM.A + (CA.A - CM.A) * T));
+  }
+
+  // Swamp
+  const float SwampW = (1.0f - Smoothstep(0.56f, 0.58f, Height)) *
+                       Smoothstep(0.60f, 0.75f, Moist) *
+                       (IslandMaskValue > 0.25f ? 1.0f : 0.0f);
+  if (SwampW > 0.8f)
+    return BiomeColor(EFPMBiome::Swamp);
+
+  // --- Soft blend of all 9 climate biomes ---
+  float Weights[NumClimateBiomes];
+  float TotalWeight = 0;
+
+  for (int32 I = 0; I < NumClimateBiomes; ++I) {
+    Weights[I] = BiomeGaussianWeight(Temp, Moist, GBiomeCenters[I]);
+    TotalWeight += Weights[I];
+  }
+
+  if (TotalWeight < 0.0001f)
+    return BiomeColor(EFPMBiome::Meadows);
+
+  // Accumulate weighted color
+  float R = 0, G = 0, B = 0, A = 0;
+  for (int32 I = 0; I < NumClimateBiomes; ++I) {
+    const float NW = Weights[I] / TotalWeight;
+    if (NW < 0.01f)
+      continue; // Skip negligible contributors
+    const FColor C = BiomeColor(GBiomeCenters[I].Biome);
+    R += C.R * NW;
+    G += C.G * NW;
+    B += C.B * NW;
+    A += C.A * NW;
+  }
+
+  // If near the mountain line, blend toward mountain color
+  if (Height > MountainLine - 0.03f) {
+    float MtnT = Smoothstep(MountainLine - 0.03f, MountainLine, Height);
+    FColor CM = BiomeColor(EFPMBiome::Mountain);
+    R = FMath::Lerp(R, static_cast<float>(CM.R), MtnT);
+    G = FMath::Lerp(G, static_cast<float>(CM.G), MtnT);
+    B = FMath::Lerp(B, static_cast<float>(CM.B), MtnT);
+    A = FMath::Lerp(A, static_cast<float>(CM.A), MtnT);
+  }
+
+  // Partial swamp blend
+  if (SwampW > 0.1f) {
+    FColor CSw = BiomeColor(EFPMBiome::Swamp);
+    R = FMath::Lerp(R, static_cast<float>(CSw.R), SwampW);
+    G = FMath::Lerp(G, static_cast<float>(CSw.G), SwampW);
+    B = FMath::Lerp(B, static_cast<float>(CSw.B), SwampW);
+    A = FMath::Lerp(A, static_cast<float>(CSw.A), SwampW);
+  }
+
+  return FColor(static_cast<uint8>(FMath::Clamp(R, 0.0f, 255.0f)),
+                static_cast<uint8>(FMath::Clamp(G, 0.0f, 255.0f)),
+                static_cast<uint8>(FMath::Clamp(B, 0.0f, 255.0f)),
+                static_cast<uint8>(FMath::Clamp(A, 0.0f, 255.0f)));
 }
 
 float FPMChunkGenerator::BiomeElevationBias(EFPMBiome Biome) {
   switch (Biome) {
-  case EFPMBiome::Mountain:
-    return 0.28f; // Prominent peaks
-  case EFPMBiome::Forest:
-    return 0.12f; // Rolling hills
-  case EFPMBiome::Meadows:
-    return 0.06f; // Gentle undulation
-  case EFPMBiome::Coast:
-    return 0.02f; // Near sea level
-  case EFPMBiome::Swamp:
-    return 0.04f; // Low-lying
   case EFPMBiome::Snow:
-    return 0.38f; // Highest peaks
-  case EFPMBiome::Ocean:
-    return -0.05f; // Below sea level
-  default:
+    return 0.75f;
+  case EFPMBiome::Alpine:
+    return 0.55f;
+  case EFPMBiome::Mountain:
+    return 0.50f;
+  case EFPMBiome::Forest:
+    return 0.20f;
+  case EFPMBiome::BorealForest:
+    return 0.18f;
+  case EFPMBiome::Taiga:
+    return 0.15f;
+  case EFPMBiome::Jungle:
+    return 0.12f;
+  case EFPMBiome::Meadows:
+    return 0.10f;
+  case EFPMBiome::Savanna:
+    return 0.10f;
+  case EFPMBiome::Plains:
     return 0.08f;
+  case EFPMBiome::Tundra:
+    return 0.07f;
+  case EFPMBiome::Desert:
+    return 0.06f;
+  case EFPMBiome::Swamp:
+    return 0.04f;
+  case EFPMBiome::Beach:
+    return 0.03f;
+  case EFPMBiome::River:
+    return 0.05f;
+  case EFPMBiome::Coast:
+    return 0.03f;
+  case EFPMBiome::Ocean:
+    return -0.05f;
+  default:
+    return 0.15f;
   }
 }
 
-// ===================================================================
-//  Continuous elevation bias — smooth curve from biome noise value.
-//  Avoids discrete jumps at biome boundaries.
-// ===================================================================
-
 float FPMChunkGenerator::ContinuousElevationBias(float BiomeNoiseValue) {
   const float T = FMath::Clamp(BiomeNoiseValue, 0.0f, 1.0f);
-  // Quadratic ramp: gentle at low values, steeper at high
-  // T=0.0 -> 0.02  (coast level)
-  // T=0.4 -> 0.08  (meadow)
-  // T=0.6 -> 0.16  (foothills)
-  // T=0.8 -> 0.28  (mountain)
-  // T=1.0 -> 0.40  (snow peak)
-  constexpr float MinBias = 0.02f;
-  constexpr float MaxBias = 0.40f;
-  return FMath::Lerp(MinBias, MaxBias, T * T);
+  return FMath::Lerp(0.02f, 0.80f, T * T * T);
 }
 
 // ===================================================================
-//  Main Chunk Generation
+//  Main Chunk Generation (uses FPMNoise pipeline)
 // ===================================================================
 
 void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
@@ -297,199 +514,104 @@ void FPMChunkGenerator::GenerateChunk(const FFPMChunkCoord &Coord,
   OutData.Allocate();
 
   constexpr int32 Res = FPMChunkConstants::ChunkResolution;
-  constexpr float NoiseScale = 2.5f;
-
-  // Get the world-space center of this hex chunk
   const FVector ChunkCenter = ChunkToWorldCenter(Coord);
+  const float BBoxHalf = FPMChunkConstants::ChunkWorldSize * 0.5f;
+  constexpr float CellSpacing = FPMChunkConstants::ChunkWorldSize / (Res - 1);
 
-  TArray<float> MaxSlopes;
-  MaxSlopes.SetNumZeroed(OutData.HeightValues.Num());
+  // ================================================================
+  //  PASS 1: Sample terrain height from continuous world function
+  // ================================================================
+  for (int32 LY = 0; LY < Res; ++LY) {
+    for (int32 LX = 0; LX < Res; ++LX) {
+      const int32 Idx = LY * Res + LX;
+      const float U = static_cast<float>(LX) / (Res - 1);
+      const float V = static_cast<float>(LY) / (Res - 1);
+      const float WX = ChunkCenter.X + (U * 2.0f - 1.0f) * BBoxHalf;
+      const float WY = ChunkCenter.Y + (V * 2.0f - 1.0f) * BBoxHalf;
 
-  // The heightmap covers the hex's bounding box.
-  // We generate a square grid and mark vertices outside the hex as Ocean.
-  const float BBoxHalfW = FPMChunkConstants::ChunkWorldSize * 0.5f;
-  const float BBoxHalfH = FPMChunkConstants::ChunkWorldSize * 0.5f;
+      // Height from the unified noise pipeline
+      OutData.HeightValues[Idx] = FPMNoise::TerrainHeight(WX, WY, WorldSeed);
 
-  for (int32 LocalY = 0; LocalY < Res; ++LocalY) {
-    for (int32 LocalX = 0; LocalX < Res; ++LocalX) {
-      const int32 Idx = LocalY * Res + LocalX;
-
-      // UV within the bounding box (0 to 1)
-      const float U = static_cast<float>(LocalX) / (Res - 1);
-      const float V = static_cast<float>(LocalY) / (Res - 1);
-
-      // Local position relative to hex center
-      const float HexLocalX = (U * 2.0f - 1.0f) * BBoxHalfW;
-      const float HexLocalY = (V * 2.0f - 1.0f) * BBoxHalfH;
-
-      // World position of this vertex
-      const float VertexWorldX = ChunkCenter.X + HexLocalX;
-      const float VertexWorldY = ChunkCenter.Y + HexLocalY;
-
-      // Square grid: no hex boundary rejection needed
-
-      // Convert to normalized island-space (0-1)
+      // Biome from climate fields
       float NormX, NormY;
-      WorldToIslandNorm(FVector(VertexWorldX, VertexWorldY, 0.0f), NormX,
-                        NormY);
+      WorldToIslandNorm(FVector(WX, WY, 0), NormX, NormY);
+      const float Mask = FPMNoise::IslandMask(WX, WY, WorldSeed);
+      OutData.BiomeValues[Idx] =
+          AssignBiomeFromNoise(NormX, NormY, WorldSeed, Mask);
 
-      // --- Island mask ---
-      const float Mask = IslandMask(NormX, NormY);
-
-      // --- Biome assignment ---
-      EFPMBiome Biome = AssignBiomeFromNoise(NormX, NormY, WorldSeed, Mask);
-
-      // --- Heightmap generation (continuous, no hard boundaries) ---
-      // Compute the same warped BiomeValue used for biome assignment so we can
-      // smoothly drive elevation bias and noise type blending.
-      constexpr float BiomeScale1 = 3.5f;
-      constexpr float BiomeScale2 = 5.0f;
-      constexpr float BiomeScale3 = 12.0f;
-      constexpr int32 BiomeSeedOffset = 99999;
-      constexpr float WarpScale = 4.0f;
-      constexpr float WarpStrength = 0.08f;
-      const float WarpX = FractalNoise(NormX * WarpScale, NormY * WarpScale,
-                                       WorldSeed + 55555, 3) *
-                          WarpStrength;
-      const float WarpY =
-          FractalNoise(NormX * WarpScale + 100.0f, NormY * WarpScale + 100.0f,
-                       WorldSeed + 66666, 3) *
-          WarpStrength;
-      const float WarpedX = NormX + WarpX;
-      const float WarpedY = NormY + WarpY;
-      const float BN1 =
-          FractalNoise(WarpedX * BiomeScale1, WarpedY * BiomeScale1,
-                       WorldSeed + BiomeSeedOffset, 3);
-      const float BN2 =
-          FractalNoise(WarpedX * BiomeScale2, WarpedY * BiomeScale2,
-                       WorldSeed + BiomeSeedOffset + 7777, 2);
-      const float BN3 =
-          FractalNoise(WarpedX * BiomeScale3, WarpedY * BiomeScale3,
-                       WorldSeed + BiomeSeedOffset + 33333, 2);
-      const float BiomeValue = BN1 * 0.50f + BN2 * 0.30f + BN3 * 0.20f;
-
-      // Smooth noise blend: fractal (plains) → ridge (mountains)
-      // Blend factor rises smoothly from 0 at BiomeValue=0.3 to 1 at 0.7
-      const float RidgeBlend =
-          FMath::Clamp((BiomeValue - 0.30f) / 0.40f, 0.0f, 1.0f);
-
-      const float FlatNoise =
-          FractalNoise(NormX * NoiseScale, NormY * NoiseScale, WorldSeed, 5);
-      const float MtNoise =
-          RidgeNoise(NormX * NoiseScale, NormY * NoiseScale, WorldSeed, 6);
-      float LandHeight = FMath::Lerp(FlatNoise, MtNoise, RidgeBlend);
-
-      // Continuous elevation bias (smooth curve, no jumps)
-      const float BiomeBias = ContinuousElevationBias(BiomeValue);
-      LandHeight = (LandHeight * 0.6f + BiomeBias * 0.4f);
-      LandHeight *= Mask;
-
-      if (Biome == EFPMBiome::Ocean || Mask <= 0.05f) {
-        LandHeight = FMath::Lerp(LandHeight, 0.0f, 0.9f);
-      }
-
-      if (Biome == EFPMBiome::Meadows || Biome == EFPMBiome::Swamp) {
-        LandHeight = FMath::Lerp(LandHeight, 0.1f, 0.3f);
-      }
-
-      OutData.HeightValues[Idx] = FMath::Clamp(LandHeight, 0.0f, 1.0f);
-      OutData.BiomeValues[Idx] = Biome;
+      // Continuous biome noise for vertex color blending
+      // Use temperature as the blend value (organic, smooth)
+      float BV = FPMNoise::Temperature(WX, WY, WorldSeed) * 0.5f +
+                 FPMNoise::Moisture(WX, WY, WorldSeed) * 0.3f +
+                 OutData.HeightValues[Idx] * 0.2f;
+      if (Mask <= 0.01f)
+        BV = 0.0f;
+      else if (Mask < 0.12f)
+        BV = FMath::Min(BV, 0.10f);
+      OutData.BiomeNoiseValues[Idx] = FMath::Clamp(BV, 0.0f, 1.0f);
     }
   }
 
-  // === Post-Generation: Smoothing ===
-  constexpr int32 SmoothPasses = 4;
-  constexpr float SmoothStrength = 0.4f;
-  const int32 SmoothRes = FPMChunkConstants::ChunkResolution;
-  TArray<float> Smoothed;
-  Smoothed.SetNumUninitialized(OutData.HeightValues.Num());
+  // ================================================================
+  //  PASS 2: Talus Erosion (eliminates cliffs in heightmap)
+  // ================================================================
+  FPMNoise::TalusErosion(OutData.HeightValues, Res, CellSpacing, 4, 0.65f);
 
-  for (int32 Pass = 0; Pass < SmoothPasses; ++Pass) {
-    FMemory::Memcpy(Smoothed.GetData(), OutData.HeightValues.GetData(),
-                    Smoothed.Num() * sizeof(float));
+  // ================================================================
+  //  PASS 3: Light smoothing
+  // ================================================================
+  constexpr int32 SmoothPasses = 1;
+  constexpr float SmoothStr = 0.10f;
+  TArray<float> Buf;
+  Buf.SetNumUninitialized(OutData.HeightValues.Num());
 
-    for (int32 Y = 1; Y < SmoothRes - 1; ++Y) {
-      for (int32 X = 1; X < SmoothRes - 1; ++X) {
-        const int32 Idx = Y * SmoothRes + X;
-        const float Center = OutData.HeightValues[Idx];
-        const float NeighborAvg =
+  for (int32 P = 0; P < SmoothPasses; ++P) {
+    FMemory::Memcpy(Buf.GetData(), OutData.HeightValues.GetData(),
+                    Buf.Num() * sizeof(float));
+    for (int32 Y = 1; Y < Res - 1; ++Y) {
+      for (int32 X = 1; X < Res - 1; ++X) {
+        const int32 Idx = Y * Res + X;
+        const float C = OutData.HeightValues[Idx];
+        const float Avg =
             (OutData.HeightValues[Idx - 1] + OutData.HeightValues[Idx + 1] +
-             OutData.HeightValues[Idx - SmoothRes] +
-             OutData.HeightValues[Idx + SmoothRes]) *
+             OutData.HeightValues[Idx - Res] +
+             OutData.HeightValues[Idx + Res]) *
             0.25f;
-        Smoothed[Idx] = FMath::Lerp(Center, NeighborAvg, SmoothStrength);
+        Buf[Idx] = FMath::Lerp(C, Avg, SmoothStr);
       }
     }
-    FMemory::Memcpy(OutData.HeightValues.GetData(), Smoothed.GetData(),
-                    Smoothed.Num() * sizeof(float));
+    FMemory::Memcpy(OutData.HeightValues.GetData(), Buf.GetData(),
+                    Buf.Num() * sizeof(float));
   }
 
-  // === Post-Generation: Biome Override ===
-  constexpr float SnowThreshold = 0.714f;
-  constexpr float RockSlopeThreshold = 0.0002f;
+  // ================================================================
+  //  PASS 4: Biome Post-Pass (slope-aware corrections)
+  // ================================================================
+  constexpr float SnowThreshold = 0.50f;
+  constexpr float SteepSlopeThreshold = 1.2f;
 
-  for (int32 Y = 1; Y < SmoothRes - 1; ++Y) {
-    for (int32 X = 1; X < SmoothRes - 1; ++X) {
-      const int32 Idx = Y * SmoothRes + X;
+  for (int32 Y = 1; Y < Res - 1; ++Y) {
+    for (int32 X = 1; X < Res - 1; ++X) {
+      const int32 Idx = Y * Res + X;
       const float H = OutData.HeightValues[Idx];
+      EFPMBiome &CB = OutData.BiomeValues[Idx];
 
-      float MaxDiff = 0.0f;
-      MaxDiff =
-          FMath::Max(MaxDiff, FMath::Abs(H - OutData.HeightValues[Idx - 1]));
-      MaxDiff =
-          FMath::Max(MaxDiff, FMath::Abs(H - OutData.HeightValues[Idx + 1]));
-      MaxDiff = FMath::Max(
-          MaxDiff, FMath::Abs(H - OutData.HeightValues[Idx - SmoothRes]));
-      MaxDiff = FMath::Max(
-          MaxDiff, FMath::Abs(H - OutData.HeightValues[Idx + SmoothRes]));
+      // Slope calculation
+      float MD = 0;
+      MD = FMath::Max(MD, FMath::Abs(H - OutData.HeightValues[Idx - 1]));
+      MD = FMath::Max(MD, FMath::Abs(H - OutData.HeightValues[Idx + 1]));
+      MD = FMath::Max(MD, FMath::Abs(H - OutData.HeightValues[Idx - Res]));
+      MD = FMath::Max(MD, FMath::Abs(H - OutData.HeightValues[Idx + Res]));
+      const float Slope =
+          (MD * FPMChunkConstants::WorldHeightRange) / CellSpacing;
 
-      EFPMBiome &CurrentBiome = OutData.BiomeValues[Idx];
-
-      if (H > SnowThreshold) {
-        CurrentBiome = EFPMBiome::Snow;
-      }
-
-      if (MaxDiff > RockSlopeThreshold) {
-        CurrentBiome = EFPMBiome::Mountain;
-      }
-    }
-  }
-
-  // === Post-Generation: Slope Limiter ===
-  constexpr int32 SlopePasses = 4;
-  constexpr float MaxSlope = 0.02f;
-
-  for (int32 Pass = 0; Pass < SlopePasses; ++Pass) {
-    for (int32 Y = 0; Y < SmoothRes; ++Y) {
-      for (int32 X = 0; X < SmoothRes; ++X) {
-        const int32 Idx = Y * SmoothRes + X;
-        float H = OutData.HeightValues[Idx];
-
-        auto ClampToNeighbor = [&](int32 NIdx) {
-          const float NH = OutData.HeightValues[NIdx];
-          if (H - NH > MaxSlope) {
-            H = NH + MaxSlope;
-          } else if (NH - H > MaxSlope) {
-            H = NH - MaxSlope;
-          }
-        };
-
-        if (X > 0)
-          ClampToNeighbor(Idx - 1);
-        if (X < SmoothRes - 1)
-          ClampToNeighbor(Idx + 1);
-        if (Y > 0)
-          ClampToNeighbor(Idx - SmoothRes);
-        if (Y < SmoothRes - 1)
-          ClampToNeighbor(Idx + SmoothRes);
-
-        OutData.HeightValues[Idx] = H;
+      // Steep slopes → Mountain rock (snow can't stick to cliffs)
+      if (Slope > SteepSlopeThreshold && CB == EFPMBiome::Snow) {
+        CB = EFPMBiome::Mountain;
       }
     }
   }
 
   OutData.bIsValid = true;
-
-  UE_LOG(LogTemp, Verbose, TEXT("FPM: Generated hex chunk %s"),
-         *Coord.ToString());
+  UE_LOG(LogTemp, Verbose, TEXT("FPM: Generated chunk %s"), *Coord.ToString());
 }

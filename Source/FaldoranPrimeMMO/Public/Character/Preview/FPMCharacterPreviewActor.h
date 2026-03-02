@@ -86,6 +86,10 @@ public:
   /** Get current gender selection. */
   bool GetIsFemale() const { return bIsFemale; }
 
+  /** Scale the preview mesh to match species proportions. */
+  UFUNCTION(BlueprintCallable, Category = "FPM|Preview")
+  void SetSpeciesScale(float UniformScale);
+
   // --- Camera Orbit Controls ---
 
   /**
@@ -167,6 +171,10 @@ private:
   /** Hair material instance (slot 0 on hair mesh). */
   UPROPERTY()
   TObjectPtr<UMaterialInstanceDynamic> HairMID;
+
+  /** All body MIDs — used for per-slot tinting. */
+  UPROPERTY()
+  TArray<TObjectPtr<UMaterialInstanceDynamic>> AllBodyMIDs;
 
   // --- Internal Helpers ---
 

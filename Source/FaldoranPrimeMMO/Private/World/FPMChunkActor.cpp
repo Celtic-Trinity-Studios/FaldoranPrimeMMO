@@ -1,10 +1,13 @@
 // Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #include "World/FPMChunkActor.h"
+#include "Engine/Engine.h"
+#include "Misc/PackageName.h"
 #include "UObject/ConstructorHelpers.h"
 #include "World/FPMBiomePCGConfig.h"
 #include "World/FPMBiomePCGSpawner.h"
 #include "World/FPMChunkData.h"
+#include "World/FPMNoise.h"
 
 // =====================================================================
 //  Constructor
@@ -26,19 +29,27 @@ AFPMChunkActor::AFPMChunkActor() {
   // Per-triangle collision (not convex hull).
   TerrainMesh->bUseComplexAsSimpleCollision = true;
 
-  // Async collision cooking — prevents game-thread stalls.
-  TerrainMesh->bUseAsyncCooking = true;
+  // Synchronous collision cooking — collision is available immediately
+  // when CreateMeshSection is called. This prevents the character from
+  // falling through terrain while async collision cooks in the background.
+  // The per-chunk stall (~1-2ms) is negligible vs mesh generation cost.
+  TerrainMesh->bUseAsyncCooking = false;
 
   TerrainMesh->SetCastShadow(true);
   TerrainMesh->SetCollisionProfileName(TEXT("BlockAll"));
   TerrainMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 
-  // Load the terrain material (uses vertex colors for biome splatting)
-  static ConstructorHelpers::FObjectFinder<UMaterialInterface> TerrainMatFinder(
-      TEXT("/Game/Materials/Landscape/M_ChunkTerrain"));
-  if (TerrainMatFinder.Succeeded()) {
-    TerrainMaterial = TerrainMatFinder.Object;
-  }
+  // DEBUG MODE: Skip texture-based material, use vertex-color-only material.
+  // This avoids loading heavy landscape textures during testing.
+  // To restore textures, uncomment the M_ChunkTerrain loader below.
+  //
+  // static ConstructorHelpers::FObjectFinder<UMaterialInterface>
+  // TerrainMatFinder(
+  //     TEXT("/Game/Materials/Landscape/M_ChunkTerrain"));
+  // if (TerrainMatFinder.Succeeded()) {
+  //   TerrainMaterial = TerrainMatFinder.Object;
+  // }
+  TerrainMaterial = nullptr; // Will use GEngine->VertexColorMaterial at runtime
 }
 
 // =====================================================================
@@ -51,23 +62,51 @@ float AFPMChunkActor::HeightToWorldZ(float NormalizedHeight) {
 }
 
 FColor AFPMChunkActor::BiomeToVertexColor(EFPMBiome Biome) {
+  // Flat debug colors — each biome gets a distinct, intuitive color.
+  // No texture splatting, just raw vertex color for fast testing.
   switch (Biome) {
+  // --- Climate biomes (lowland) ---
   case EFPMBiome::Meadows:
-    return FColor(255, 0, 0, 0);
+    return FColor(120, 200, 80, 255); // Bright grass green
   case EFPMBiome::Forest:
-    return FColor(0, 255, 0, 0);
-  case EFPMBiome::Mountain:
-    return FColor(0, 0, 255, 0);
-  case EFPMBiome::Coast:
-    return FColor(51, 0, 0, 0);
+    return FColor(34, 120, 34, 255); // Dark forest green
+  case EFPMBiome::Plains:
+    return FColor(210, 190, 100, 255); // Dry golden grass
+  case EFPMBiome::Savanna:
+    return FColor(200, 170, 60, 255); // Warm savanna gold
+  case EFPMBiome::Jungle:
+    return FColor(15, 90, 25, 255); // Deep tropical green
+  case EFPMBiome::Desert:
+    return FColor(220, 195, 130, 255); // Sandy tan
+  case EFPMBiome::Taiga:
+    return FColor(70, 110, 70, 255); // Muted cold green
+  case EFPMBiome::BorealForest:
+    return FColor(45, 85, 55, 255); // Dark spruce green
+  case EFPMBiome::Tundra:
+    return FColor(160, 170, 175, 255); // Cold grey-blue
   case EFPMBiome::Swamp:
-    return FColor(128, 0, 128, 0);
+    return FColor(75, 95, 45, 255); // Murky olive-brown
+
+  // --- Elevation biomes ---
+  case EFPMBiome::Alpine:
+    return FColor(150, 155, 130, 255); // Rocky green-grey
+  case EFPMBiome::Mountain:
+    return FColor(130, 120, 110, 255); // Grey-brown rock
   case EFPMBiome::Snow:
-    return FColor(0, 0, 0, 255);
+    return FColor(245, 248, 255, 255); // Pure white snow
+
+  // --- Water biomes ---
+  case EFPMBiome::River:
+    return FColor(50, 120, 200, 255); // Clear blue river
+  case EFPMBiome::Coast:
+    return FColor(170, 160, 140, 255); // Rocky shore tan
+  case EFPMBiome::Beach:
+    return FColor(235, 215, 165, 255); // Warm sand
   case EFPMBiome::Ocean:
-    return FColor(0, 0, 0, 0);
+    return FColor(25, 70, 150, 255); // Deep ocean blue
+
   default:
-    return FColor(128, 128, 128, 0);
+    return FColor(180, 50, 200, 255); // Magenta = unmapped (debug)
   }
 }
 
@@ -264,85 +303,82 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
                     HeightToWorldZ(ChunkData.HeightValues[SrcIdx]));
       UVs.Emplace(U, V);
       VColors.Add(BiomeToVertexColor(ChunkData.BiomeValues[SrcIdx]));
+
+      // Override colour with winner-biome display colour if climate data
+      // available
+      if (ChunkData.BiomeNoiseValues.Num() > SrcIdx) {
+        const float H = ChunkData.HeightValues[SrcIdx];
+        const FVector CC =
+            FPMChunkGenerator::ChunkToWorldCenter(ChunkData.Coord);
+        const float BH = FPMChunkConstants::ChunkWorldSize * 0.5f;
+        const float VWX = CC.X + (U * 2.0f - 1.0f) * BH;
+        const float VWY = CC.Y + (V * 2.0f - 1.0f) * BH;
+
+        const float IslandMask = FPMNoise::IslandMask(VWX, VWY, 0);
+        const EFPMBiome WinnerBiome = FPMChunkGenerator::AssignBiomeWeighted(
+            FPMNoise::Temperature(VWX, VWY, 0), FPMNoise::Moisture(VWX, VWY, 0),
+            H, IslandMask, 0.5f, 0);
+        VColors.Last() = BiomeToVertexColor(WinnerBiome);
+      }
     }
   }
 
   // ---- 1b. Smooth vertex colors (biome transition blending) ----
-  // Box blur on the grid: average each vertex color with its cardinal
-  // neighbors.  Run multiple iterations for a wider gradient.
-  constexpr int32 BlurPasses = 2;
+  // Full 3x3 box blur: averages with all 8 neighbors for organic blending.
+  constexpr int32 BlurPasses = 3; // Reduced from 5 — prevents over-averaging
   for (int32 Pass = 0; Pass < BlurPasses; ++Pass) {
     TArray<FColor> Blurred;
     Blurred.SetNum(NumVerts);
-
     for (int32 Y = 0; Y < Res; ++Y) {
       for (int32 X = 0; X < Res; ++X) {
         const int32 Idx = Y * Res + X;
-        int32 SumR = VColors[Idx].R;
-        int32 SumG = VColors[Idx].G;
-        int32 SumB = VColors[Idx].B;
-        int32 SumA = VColors[Idx].A;
-        int32 Count = 1;
-
-        // Cardinal neighbors
-        if (X > 0) {
-          const FColor &C = VColors[Idx - 1];
-          SumR += C.R;
-          SumG += C.G;
-          SumB += C.B;
-          SumA += C.A;
+        int32 SumR = VColors[Idx].R * 2;
+        int32 SumG = VColors[Idx].G * 2;
+        int32 SumB = VColors[Idx].B * 2;
+        int32 SumA = VColors[Idx].A * 2;
+        int32 Count = 2;
+        auto AddN = [&](int32 NIdx) {
+          SumR += VColors[NIdx].R;
+          SumG += VColors[NIdx].G;
+          SumB += VColors[NIdx].B;
+          SumA += VColors[NIdx].A;
           ++Count;
-        }
-        if (X < Res - 1) {
-          const FColor &C = VColors[Idx + 1];
-          SumR += C.R;
-          SumG += C.G;
-          SumB += C.B;
-          SumA += C.A;
-          ++Count;
-        }
-        if (Y > 0) {
-          const FColor &C = VColors[Idx - Res];
-          SumR += C.R;
-          SumG += C.G;
-          SumB += C.B;
-          SumA += C.A;
-          ++Count;
-        }
-        if (Y < Res - 1) {
-          const FColor &C = VColors[Idx + Res];
-          SumR += C.R;
-          SumG += C.G;
-          SumB += C.B;
-          SumA += C.A;
-          ++Count;
-        }
-
-        Blurred[Idx] = FColor(
-            static_cast<uint8>(SumR / Count), static_cast<uint8>(SumG / Count),
-            static_cast<uint8>(SumB / Count), static_cast<uint8>(SumA / Count));
+        };
+        if (X > 0)
+          AddN(Idx - 1);
+        if (X < Res - 1)
+          AddN(Idx + 1);
+        if (Y > 0)
+          AddN(Idx - Res);
+        if (Y < Res - 1)
+          AddN(Idx + Res);
+        if (X > 0 && Y > 0)
+          AddN(Idx - Res - 1);
+        if (X < Res - 1 && Y > 0)
+          AddN(Idx - Res + 1);
+        if (X > 0 && Y < Res - 1)
+          AddN(Idx + Res - 1);
+        if (X < Res - 1 && Y < Res - 1)
+          AddN(Idx + Res + 1);
+        Blurred[Idx] = FColor(uint8(SumR / Count), uint8(SumG / Count),
+                              uint8(SumB / Count), uint8(SumA / Count));
       }
     }
     VColors = MoveTemp(Blurred);
   }
 
-  // ---- 2. Triangles (alternating diagonal to prevent sawtooth) ----
+  // ---- 2. Triangles ----
   const int32 NumQuads = (Res - 1) * (Res - 1);
   TArray<int32> Tris;
   Tris.Reserve(NumQuads * 6);
-
   for (int32 Y = 0; Y < Res - 1; ++Y) {
     for (int32 X = 0; X < Res - 1; ++X) {
-      const int32 BL = Y * Res + X;
-      const int32 BR = BL + 1;
-      const int32 TL = BL + Res;
-      const int32 TR = TL + 1;
-
+      const int32 BL = Y * Res + X, BR = BL + 1;
+      const int32 TL = BL + Res, TR = TL + 1;
       if ((X + Y) % 2 == 0) {
         Tris.Add(BL);
         Tris.Add(TR);
         Tris.Add(TL);
-
         Tris.Add(BL);
         Tris.Add(BR);
         Tris.Add(TR);
@@ -350,7 +386,6 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
         Tris.Add(BL);
         Tris.Add(BR);
         Tris.Add(TL);
-
         Tris.Add(BR);
         Tris.Add(TR);
         Tris.Add(TL);
@@ -361,19 +396,14 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
   // ---- 3. Normals ----
   TArray<FVector> Normals;
   Normals.SetNumZeroed(NumVerts);
-
   for (int32 i = 0; i < Tris.Num(); i += 3) {
-    const FVector &A = Verts[Tris[i]];
-    const FVector &B = Verts[Tris[i + 1]];
-    const FVector &C = Verts[Tris[i + 2]];
-
+    const FVector &A = Verts[Tris[i]], &B = Verts[Tris[i + 1]],
+                  &C = Verts[Tris[i + 2]];
     FVector FaceN = FVector::CrossProduct(B - A, C - A).GetSafeNormal();
-
     Normals[Tris[i]] += FaceN;
     Normals[Tris[i + 1]] += FaceN;
     Normals[Tris[i + 2]] += FaceN;
   }
-
   for (FVector &N : Normals) {
     N = N.GetSafeNormal();
     if (N.IsNearlyZero())
@@ -381,40 +411,25 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
   }
 
   // ---- 4. Skirts ----
-  constexpr float SkirtDrop = 200.f;
-
+  constexpr float SkirtDrop = 3200.f;
   auto AddSkirtQuad = [&](int32 IdxA, int32 IdxB) {
-    const FVector PA = Verts[IdxA];
-    const FVector PB = Verts[IdxB];
-    const FVector2D UvA = UVs[IdxA];
-    const FVector2D UvB = UVs[IdxB];
-    const FColor ColA = VColors[IdxA];
-    const FColor ColB = VColors[IdxB];
-
-    const FVector NormalA = Normals[IdxA];
-    const FVector NormalB = Normals[IdxB];
-
     const int32 BotA = Verts.Num();
-    Verts.Emplace(PA.X, PA.Y, PA.Z - SkirtDrop);
-    UVs.Add(UvA);
-    VColors.Add(ColA);
-    Normals.Add(NormalA);
-
+    Verts.Emplace(Verts[IdxA].X, Verts[IdxA].Y, Verts[IdxA].Z - SkirtDrop);
+    UVs.Add(UVs[IdxA]);
+    VColors.Add(VColors[IdxA]);
+    Normals.Add(Normals[IdxA]);
     const int32 BotB = Verts.Num();
-    Verts.Emplace(PB.X, PB.Y, PB.Z - SkirtDrop);
-    UVs.Add(UvB);
-    VColors.Add(ColB);
-    Normals.Add(NormalB);
-
+    Verts.Emplace(Verts[IdxB].X, Verts[IdxB].Y, Verts[IdxB].Z - SkirtDrop);
+    UVs.Add(UVs[IdxB]);
+    VColors.Add(VColors[IdxB]);
+    Normals.Add(Normals[IdxB]);
     Tris.Add(IdxA);
     Tris.Add(BotA);
     Tris.Add(BotB);
-
     Tris.Add(IdxA);
     Tris.Add(BotB);
     Tris.Add(IdxB);
   };
-
   for (int32 X = 0; X < Res - 1; ++X)
     AddSkirtQuad(X + 1, X);
   for (int32 X = 0; X < Res - 1; ++X) {
@@ -429,19 +444,37 @@ void AFPMChunkActor::BuildMesh(int32 LODStep, bool bCollision) {
   }
 
   TArray<FProcMeshTangent> Tangents;
-
   TerrainMesh->CreateMeshSection(0, Verts, Tris, Normals, UVs, VColors,
                                  Tangents, bCollision);
 
-  // Apply terrain material (vertex color biome splatting)
-  if (TerrainMaterial) {
-    TerrainMesh->SetMaterial(0, TerrainMaterial);
+  // Apply material: editor-assigned > M_TerrainBiome auto-load > fallback
+  // NOTE: We retry load until it succeeds — avoids the startup race where the
+  // auto-builder hasn't created the asset yet when the first chunk is built.
+  UMaterialInterface *MatToUse = TerrainMaterial;
+  if (!MatToUse) {
+    static UMaterialInterface *SCachedMat = nullptr;
+    if (!SCachedMat) {
+      SCachedMat = Cast<UMaterialInterface>(
+          StaticLoadObject(UMaterialInterface::StaticClass(), nullptr,
+                           TEXT("/Game/Materials/M_TerrainBiome")));
+      // Only fall back to GEngine vertex-color material if the named asset
+      // genuinely doesn't exist (not just a timing failure).  We keep
+      // SCachedMat == nullptr so we retry on the next chunk build.
+      if (!SCachedMat && GEngine &&
+          !FPackageName::DoesPackageExist(
+              TEXT("/Game/Materials/M_TerrainBiome"))) {
+        SCachedMat = GEngine->VertexColorMaterial;
+      }
+    }
+    MatToUse = SCachedMat;
   }
+  if (MatToUse)
+    TerrainMesh->SetMaterial(0, MatToUse);
 
   TerrainMesh->SetCollisionEnabled(bCollision
                                        ? ECollisionEnabled::QueryAndPhysics
                                        : ECollisionEnabled::NoCollision);
-}
+} // end AFPMChunkActor::BuildMesh
 
 // =====================================================================
 //  Voxel Chunk Initialization (Marching Cubes mesh)
@@ -469,9 +502,24 @@ void AFPMChunkActor::InitializeVoxelChunk(const FFPMVoxelMeshData &MeshData,
                                  MeshData.Normals, MeshData.UVs,
                                  MeshData.Colors, Tangents, true);
 
-  // Apply terrain material (vertex color biome splatting)
-  if (TerrainMaterial) {
-    TerrainMesh->SetMaterial(0, TerrainMaterial);
+  // Apply material: same retry-until-success pattern as BuildMesh.
+  UMaterialInterface *VoxelMat = TerrainMaterial;
+  if (!VoxelMat) {
+    static UMaterialInterface *SCachedVoxelMat = nullptr;
+    if (!SCachedVoxelMat) {
+      SCachedVoxelMat = Cast<UMaterialInterface>(
+          StaticLoadObject(UMaterialInterface::StaticClass(), nullptr,
+                           TEXT("/Game/Materials/M_TerrainBiome")));
+      if (!SCachedVoxelMat && GEngine &&
+          !FPackageName::DoesPackageExist(
+              TEXT("/Game/Materials/M_TerrainBiome"))) {
+        SCachedVoxelMat = GEngine->VertexColorMaterial;
+      }
+    }
+    VoxelMat = SCachedVoxelMat;
+  }
+  if (VoxelMat) {
+    TerrainMesh->SetMaterial(0, VoxelMat);
   }
 
   TerrainMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);

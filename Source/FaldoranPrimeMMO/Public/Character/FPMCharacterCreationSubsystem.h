@@ -5,6 +5,7 @@
 #include "Character/FPMCharacterCreationDataContract.h"
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
+
 #include "FPMCharacterCreationSubsystem.generated.h"
 
 /**
@@ -12,15 +13,17 @@
  *
  * Server-authoritative subsystem that handles character creation requests.
  * Validates all input, enforces rate limits, checks name uniqueness,
- * enforces character count limits, and persists to PostgreSQL.
+ * enforces one-character-per-account limits, and persists to PostgreSQL.
  *
  * This subsystem only operates on the dedicated server. All methods are
  * no-ops on clients. Client input is NEVER trusted.
  *
+ * Design: One character per account (classless skill-based system).
+ *
  * Flow:
  *   1. Rate limit check (max 5 requests per minute per account)
  *   2. Validate request via FFPMCharacterCreationValidator
- *   3. Check character count (max 5 per account)
+ *   3. Check character exists (only 1 allowed per account)
  *   4. Check name uniqueness in database
  *   5. Insert character into database
  *   6. Audit log the attempt (success or failure)

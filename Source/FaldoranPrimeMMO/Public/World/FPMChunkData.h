@@ -8,19 +8,46 @@
 /**
  * EFPMBiome
  *
- * Biome types used across the world. Assigned procedurally via noise.
- * Snow requires high elevation, Swamp requires low elevation near water.
- * All other biomes are placed by noise cells and are NOT elevation-locked.
+ * 16 biome types based on real-world biome classification.
+ * Selected via continuous Temperature × Moisture × Height fields.
+ *
+ * Climate grid (low/med elevation):
+ *   HOT+DRY=Desert, HOT+MED=Savanna, HOT+WET=Jungle
+ *   WARM+DRY=Plains, WARM+MED=Meadows, WARM+WET=Forest
+ *   COLD+DRY=Tundra, COLD+MED=Taiga, COLD+WET=BorealForest
+ *   Any+VERYWET+LOW=Swamp
+ *
+ * Elevation overrides:
+ *   HIGH+MODERATE=Alpine, HIGH+STEEP=Mountain, HIGH+COLD=Snow
+ *
+ * Water:
+ *   Ocean, Coast, Beach
  */
 UENUM(BlueprintType)
 enum class EFPMBiome : uint8 {
-  Meadows = 0 UMETA(DisplayName = "Meadows"),
-  Forest UMETA(DisplayName = "Forest"),
-  Mountain UMETA(DisplayName = "Mountain"),
-  Coast UMETA(DisplayName = "Coast"),
-  Swamp UMETA(DisplayName = "Swamp"),
-  Snow UMETA(DisplayName = "Snow"),
-  Ocean UMETA(DisplayName = "Ocean"),
+  // --- Climate-driven (Temperature × Moisture) ---
+  Meadows = 0 UMETA(DisplayName = "Meadows"),        // Warm, medium moisture
+  Forest UMETA(DisplayName = "Forest"),              // Warm, high moisture
+  Plains UMETA(DisplayName = "Plains"),              // Warm, dry
+  Savanna UMETA(DisplayName = "Savanna"),            // Hot, medium moisture
+  Jungle UMETA(DisplayName = "Jungle"),              // Hot, high moisture
+  Desert UMETA(DisplayName = "Desert"),              // Hot, dry
+  Taiga UMETA(DisplayName = "Taiga"),                // Cold, medium moisture
+  BorealForest UMETA(DisplayName = "Boreal Forest"), // Cold, high moisture
+  Tundra UMETA(DisplayName = "Tundra"),              // Cold, dry
+  Swamp UMETA(DisplayName = "Swamp"), // Any temp, very wet, low elevation
+
+  // --- Elevation-driven ---
+  Alpine UMETA(DisplayName = "Alpine"),     // High elevation, moderate temp
+  Mountain UMETA(DisplayName = "Mountain"), // High elevation, rocky/steep
+  Snow UMETA(DisplayName = "Snow"),         // High elevation, cold
+
+  // --- Water features ---
+  River UMETA(DisplayName = "River"), // Carved river channel
+  Coast UMETA(DisplayName = "Coast"), // Island edge transition
+  Beach UMETA(DisplayName = "Beach"), // Sandy shoreline (warm coast)
+  Ocean UMETA(DisplayName = "Ocean"), // Deep water
+
   MAX UMETA(Hidden)
 };
 
@@ -138,61 +165,63 @@ enum class EFPMChunkLOD : uint8 {
 namespace FPMChunkConstants {
 
 // --- Hex Geometry ---
+// World-simulation scale with 1.28km chunks
 // HexOuterRadius = distance from center to any vertex
 // HexInnerRadius = distance from center to mid-edge = OuterRadius * sqrt(3)/2
-// We define OuterRadius so that hex "diameter" ≈ old ChunkWorldSize (3200cm /
-// 32m)
 
 /** Outer radius of each hex chunk (center-to-vertex) in cm */
-constexpr float HexOuterRadius = 1600.0f; // 16m
+constexpr float HexOuterRadius = 64000.0f; // 640m
 
 /** Inner radius (center-to-edge, "apothem") */
-constexpr float HexInnerRadius = 1385.64f; // 1600 * sqrt(3)/2 ≈ 1385.64
+constexpr float HexInnerRadius = 55425.63f; // 64000 * sqrt(3)/2
 
 /** Hex width (flat-top) = 2 * OuterRadius */
-constexpr float HexWidth = 2.0f * HexOuterRadius; // 3200cm
+constexpr float HexWidth = 2.0f * HexOuterRadius; // 128000cm = 1.28km
 
-/** Hex height (flat-top) = 2 * InnerRadius */
-constexpr float HexHeight = 2.0f * HexInnerRadius; // ~2771cm
-
-/** Legacy: ChunkWorldSize is now the hex width for backward compat in some code
- */
+/** Legacy Alias: ChunkWorldSize remains for backward compatibility */
 constexpr float ChunkWorldSize = HexWidth;
 
-/** Number of heightmap vertices per chunk edge (129 = 128 quads + 1 for
- * stitching). At 32m chunk size this gives ~25cm vertex spacing. */
-constexpr int32 ChunkResolution = 129;
+/** Hex bounding box height = 2 * InnerRadius */
+constexpr float HexHeight = 2.0f * HexInnerRadius; // 110851.26cm
 
-/** Total heightmap vertices per chunk (square grid covering hex bounding box)
- */
+/** Hex horizontal spacing between centers (3/4 of width) */
+constexpr float HexSpacingX = HexWidth * 0.75f; // 96000cm
+
+/** Total heightmap vertices per chunk (square grid covering hex bbox) */
+constexpr int32 ChunkResolution = 33; // Keep memory low
 constexpr int32 ChunkVertexCount = ChunkResolution * ChunkResolution;
 
-/** Starter island radius in hex rings from center */
-constexpr int32 StarterIslandRings = 78; // 5km diameter (~2.5km radius)
+/** Starter island radius in hex rings from center.
+ *  At 1.28km per chunk, 400 rings = 512km radius = 1024km diameter. */
+constexpr int32 StarterIslandRings = 400;
 
-/** Maximum number of chunks per "axis" (for legacy compat, diameter in rings)
- */
-constexpr int32 StarterIslandChunksPerAxis = StarterIslandRings * 2 + 1; // 157
+/** Maximum number of chunks per axis (diameter in rings) */
+constexpr int32 StarterIslandChunksPerAxis = StarterIslandRings * 2 + 1;
 
-/** Approximate starter island world size for water plane etc. */
+/** Approximate starter island world size for island mask etc. */
 constexpr float StarterIslandWorldSize = StarterIslandChunksPerAxis * HexWidth;
 
 /** View distance rings (in hex distance from player chunk).
- *  IMPORTANT: total chunk count scales as ~뿯ν뿯½R뿯½.  Keep ranges modest!
- *  These are defaults; override in Config/WorldGen.ini [WorldGen] section
- *  with FullDetailRange / MediumDetailRange / LowDetailRange keys. */
-inline int32 FullDetailRange = 6;  // ~96m   (~113 chunks) — collision + foliage
-inline int32 MediumDetailRange = 12; // ~192m  (~452 chunks) — mid-res mesh
-inline int32 LowDetailRange = 20;    // ~320m  (~1256 chunks) — low-res mesh
+ *  Actors are half-scale, so terrain visually reads as larger — we can
+ *  load fewer chunks and still feel like a big world.
+ *  Full:   2 rings ≈ 2.6km  — collision + foliage
+ *  Medium: 5 rings ≈ 6.4km  — mid-res mesh
+ *  Low:    9 rings ≈ 11.5km — low-res silhouettes */
+inline int32 FullDetailRange = 2;
+inline int32 MediumDetailRange = 5;
+inline int32 LowDetailRange = 9;
 
-/** Island radius as a fraction of the island grid (for the circular mask).
- *  Override in Config/WorldGen.ini [Terrain] with IslandRadiusFraction=0.48 */
-inline float IslandRadiusFraction = 0.48f;
+/** Island radius as a fraction of the island grid.
+ *  Override in Config/WorldGen.ini [Terrain] with IslandRadiusFraction. */
+inline float IslandRadiusFraction = 0.55f;
 
-// --- Vertical Scale ---
-constexpr float MinWorldZ = -20000.0f; // -200m Ocean floor (H=0.0)
-constexpr float MaxWorldZ = 330000.0f; // +3300m Peaks (H=1.0)
-constexpr float WorldHeightRange = MaxWorldZ - MinWorldZ;
+// --- Vertical Scale (World Simulation Scale) ---
+// Sea Level is at Z=0.
+// Depth: -11,000m (Mariana Trench)
+// Height: +9,000m (Mount Everest)
+constexpr float MinWorldZ = -1100000.0f;                  // -11km
+constexpr float MaxWorldZ = 900000.0f;                    // +9km
+constexpr float WorldHeightRange = MaxWorldZ - MinWorldZ; // 20km total
 } // namespace FPMChunkConstants
 
 /**
@@ -216,6 +245,11 @@ struct FFPMChunkHeightmapData {
   /** Biome at each vertex. Indexed same as HeightValues. */
   TArray<EFPMBiome> BiomeValues;
 
+  /** Continuous biome noise value (0-1) per vertex for smooth color blending.
+   *  This drives gradient vertex colors so biome transitions are organic
+   *  rather than hard-edged. Indexed same as HeightValues. */
+  TArray<float> BiomeNoiseValues;
+
   /** The chunk coordinate this data belongs to */
   FFPMChunkCoord Coord;
 
@@ -225,6 +259,7 @@ struct FFPMChunkHeightmapData {
   void Reset() {
     HeightValues.Empty();
     BiomeValues.Empty();
+    BiomeNoiseValues.Empty();
     bIsValid = false;
   }
 
@@ -233,6 +268,7 @@ struct FFPMChunkHeightmapData {
     BiomeValues.SetNum(FPMChunkConstants::ChunkVertexCount);
     FMemory::Memset(BiomeValues.GetData(), 0,
                     BiomeValues.Num() * sizeof(EFPMBiome));
+    BiomeNoiseValues.SetNumZeroed(FPMChunkConstants::ChunkVertexCount);
   }
 };
 
@@ -329,6 +365,19 @@ public:
   /** Assign biome from noise at a given normalized position. */
   static EFPMBiome AssignBiomeFromNoise(float NormX, float NormY, int32 Seed,
                                         float IslandMaskValue);
+
+  /** Assign biome from pre-computed climate values.
+   *  Used by the voxel pipeline after climate grid smoothing.
+   *  EdgeBlend is from BiomeRegion (0=boundary, 1=deep inside). */
+  static EFPMBiome AssignBiomeWeighted(float Temp, float Moist, float Height,
+                                       float IslandMaskValue, float EdgeBlend,
+                                       int32 Seed);
+
+  /** Compute a soft-blended vertex color from climate values.
+   *  Instead of picking one biome's color, blends nearby biome colors
+   *  weighted by climate-space proximity. Eliminates hard color boundaries. */
+  static FColor BlendedBiomeColor(float Temp, float Moist, float Height,
+                                  float IslandMaskValue);
 
   /** Get elevation bias for a biome type. */
   static float BiomeElevationBias(EFPMBiome Biome);

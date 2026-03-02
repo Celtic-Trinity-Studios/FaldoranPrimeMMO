@@ -1,106 +1,72 @@
-# Faldoran Prime MMO — Master Development Plan
+# Faldoran Prime MMO — Master Plan
 
-**Status:** A consolidation of all prior phase plans into a single execution roadmap.
-**Vision:** A "Light No Fire" inspired MMO emphasizing extreme verticality, species variety, and visual density.  
-**Core Pillars:**
-1.  **Vertical World:** Procedural terrain with massive scale (Alpine peaks, deep valleys).
-2.  **Living Ecosystem:** Dense, biome-aware PCG population (flora/fauna).
-3.  **Refined Characters:** CC5-based high-fidelity characters with distinct species scales (Giants to Smallfolk).
-4.  **Immersive Systems:** Classless affinity progression and deep world interaction.
+**Vision:** Light No Fire-inspired MMO. Extreme verticality, PCG ecosystems, classless depth.  
+**Studio:** Celtic Trinity Studios | **Engine:** UE 5.7.1 Custom | **Stack:** C++ / PostgreSQL / Dedicated Server
+
+> Completed work → [DONE.md](file:///e:/FaldoranPrimeMMO/Documents/DONE.md)
 
 ---
 
-## 🟢 PHASE I: Foundation (COMPLETED)
+## Current Sprint — The Living World
 
-These systems are implemented and functional.
+### 🏙️ Nexus System (Starter Cities)
+- [x] **CODE:** `AFPMNexusManager` — singleton, loads from `WorldGen.ini [Nexus]`
+- [x] **CODE:** New characters always spawn at Nexus; returning players restore saved position
+- [x] **CODE:** PCG vegetation suppressed inside Nexus safe radius (512m)
+- [x] **CONFIG:** `WorldGen.ini [Nexus]` — Aelvorn Nexus defined at origin
+- [x] **DB SCHEMA:** `spawn_x / spawn_y / spawn_z` columns added to `characters`
+- [ ] **DB MIGRATE:** Run [Migration_002_AddNexusSpawnPos.sql](file:///e:/FaldoranPrimeMMO/Documents/Technical/Migration_002_AddNexusSpawnPos.sql) in pgAdmin
+- [ ] **CODE:** Save player position on logout / disconnect (update `spawn_x/y/z` in DB)
+- [ ] **EDITOR:** Place Nexus marker/landmark in the world at (0,0) — placeholder rocks/ruins
 
-### 1.1 Remote Database Infrastructure (Pillar 02)
--   **Status:** ✅ COMPLETE
--   **Outcome:** PostgreSQL running on dedicated server (Remote IP).
--   **Schema:** Basic character tables + `character_affinities` table.
--   **Access:** Configured for multi-client testing.
+### 🌿 PCG Population Polish
+- [ ] **EDITOR:** Import tree/rock meshes → assign to `DA_BiomePCGConfig`
 
-### 1.2 Basic Chunk System (Pillar 03 / New Plan)
--   **Status:** ✅ COMPLETE
--   **Outcome:** 
-    -   `FPMChunkData`, `FPMChunkActor`, `FPMWorldChunkManager` classes implemented.
-    -   Deterministic procedural generation foundation.
-    -   Replaced static Landscape actor with runtime procedural mesh chunks.
-
-### 1.3 CC5 Character Pipeline (Pillar 04A / 04B)
--   **Status:** ✅ COMPLETE
--   **Outcome:**
-    -   Reallusion Auto Setup plugin integrated.
-    -   Base CC5 Male/Female meshes imported with full morph targets (240+).
-    -   `AFPMCharacterPreviewActor` implemented for creation screen with real-time morph/material updates.
-    -   Lighting and camera controls for character preview.
+### 🌅 Login Level
+- [ ] **EDITOR:** Create `Content/Maps/L_LoginLevel`, set as Game Default Map
+- [ ] **EDITOR:** Import splash art → assign to `BackgroundTexture` on `WBP_LoginScreen`
 
 ---
 
-## 🔵 PHASE II: The Living World (CURRENT FOCUS)
+## Near Horizon — Character Depth
 
-**Objective:** Transform the flat procedural terrain into a dramatic, vertical, and populated world, then showcase it immediately upon login.
+### Species Data Assets
+- [ ] **EDITOR:** Create `DA_SpeciesRegistry` + one `DA_Species_*` per species in `Content/Data/Species/`
+- [ ] Assign registry to `BP_PlayerCharacter` class defaults
 
-### Step 2.1: Terrain 2.0 — "Extreme Verticality"
-**Ref:** `Phase_Refactor_Plan.md` & `New_Plan.md`
--   [ ] **Refactor Height Calculation:** Modify `FPMTerrainGenerator::CalculateHeight` to use **Ridge Noise** (absolute value Perlin) for sharp peaks.
--   [ ] **Scale Increase:** Tune `MaxHeightCm` to allow for 1km+ vertical range.
--   [ ] **Biome Logic:** Ensure biomes map correctly to new steep slopes (e.g., rock faces on cliffs, snow only at high altitude).
+### Animation & Locomotion
+- [ ] **EDITOR:** Build `ABP_CC5_Character` for CC5 skeleton
+- [ ] State machine: Idle → Walk → Run → Jump
+- [ ] IK Retarget across species heights
 
-### Step 2.2: Biome Population (PCG)
-**Ref:** `Phase_Refactor_Plan.md`
--   [x] **PCG Spawner Creation:** Created `FPMBiomePCGSpawner` (HISM-based, C++ driven — more deterministic and performant than PCG Graph assets).
--   [x] **Chunk Integration:** Bound spawner to `FPMChunkActor`; generates *after* terrain mesh build at Full LOD only.
--   [x] **Config Data Asset:** Created `UFPMBiomePCGConfig` for artist-editable mesh/density settings.
--   [ ] **Density Pass:** Tune for "movie-quality" forest density (requires tree/rock static mesh assets imported into Content Browser).
--   **NOTE:** Requires tree/rock static meshes. Import meshes, create `DA_BiomePCGConfig` Data Asset, assign meshes, then assign to `AFPMWorldChunkManager`.
+### Inventory UI
+- [ ] `UFPMInventoryWidget`: 8×5 grid, drag-and-drop, rarity borders
+- [ ] `ToggleInventory()` shows/hides widget (I key)
+- [ ] Save changes to PostgreSQL via `FPMDatabaseSubsystem`
 
-### Step 2.3: Visual Integration & Login
-**Ref:** `Phase_Refactor_Plan.md`
--   [ ] **Showcase Chunk:** Place a `CameraRig_Rail` in a generated "Showcase Chunk" of the new terrain.
--   [ ] **Login Screen:** Update `FPMLoginWidget` / Level to use this live 3D background instead of static images.
--   [ ] **Lighting:** Ensure Day/Night cycle and Atmosphere look premium in this view.
+### Character Creation
+- [ ] `FFPMCharacterCreationRequest` / `UFPMCharacterCreationSubsystem` code
+- [ ] Tabbed UI: Race, Body, Face, Style, Affinities
+- [ ] DB persistence: `characters` table, name uniqueness, one-per-account check
 
 ---
 
-## 🟡 PHASE III: Character Depth
+## Roadmap — Gameplay Loops
 
-**Objective:** Expand the character system to support diverse species sizes and detailed creation options.
+### Crafting & Construction
+- [ ] `FFPMCraftingRecipe` data-driven system; 3+ starter recipes
+- [ ] Ghost placement building system with grid snap + server validation
 
-### Step 3.1: The "Species" Refactor
-**Ref:** `Phase_Refactor_Plan.md`
--   [ ] **Data Asset:** Create `DA_Species` (BaseHealth, WalkSpeed, Scale, MorphTargetName).
--   [ ] **Dynamic Scaling:** Modify `AFPCharacter` to apply mesh/capsule scale based on Species ID (Giant vs. Gnome).
--   [ ] **Verification:** Ensure animations retarget correctly at different scales.
-
-### Step 3.2: Animation Pipeline (CC5)
-**Ref:** `Pillar_04_CC5_Character_Creation.md` (Phase 4C)
--   [ ] **Locomotion:** Implement full Animation Blueprint (Idle -> Walk -> Run -> Sprint -> Jump).
--   [ ] **Retargeting:** Finalize IK Rigs for Mixamo/ActorCore to CC5 skeleton.
--   [ ] **Combat:** Add combat stance and basic attack animations.
-
-### Step 3.3: Full Creation UI & Affinities
-**Ref:** `Pillar_01_Character_Creation.md`
--   [ ] **UI Layout:** Build tabbed UI (Race, Body, Face, Hair, Skin, Affinities).
--   [ ] **Affinity Logic:** Connect `FPMCharacterCreationDataContract` to UI sliders for Playstyle/Magical affinities.
--   [ ] **Persist:** Ensure all new data (Species, Affinities, Appearance) saves correctly to the remote DB.
+### Combat & AI
+- [ ] Affinity → stats pipeline (6 Playstyle + 8 Magical)
+- [ ] Biome-based NPC spawning; safe-zone radius from Nexuses (AFPMNexusManager::IsInNexusSafeZone)
 
 ---
 
-## ⚪ PHASE IV: Gameplay Loop (FUTURE)
+## Reference
+- [DONE.md](file:///e:/FaldoranPrimeMMO/Documents/DONE.md) — all completed work
+- [Agent Prompt Library](file:///e:/FaldoranPrimeMMO/Documents/Workflows/Agent_Prompt_Library.md) — ready-to-paste agent prompts
+- [Database Schema](file:///e:/FaldoranPrimeMMO/Documents/Technical/Database_Schema_v1.sql)
+- **F key** = toggle flight in PIE
 
-**Objective:** Implement the core "Survive & Thrive" loop.
-
-### 4.1 Gameplay Systems
--   **Inventory System:** Server-authoritative item management.
--   **Resource Gathering:** Mining, Woodcutting (interacting with PCG elements).
--   **Crafting:** Recipe system and UI.
--   **Building:** Player-placed structures in the open world.
-
----
-
-## 📂 Reference & Resources
-
--   **Database Setup:** See `Workflows/Reference/Guide_Database_Setup.md` (formerly Pillar 02).
--   **CC5 Pipeline:** See `Workflows/Reference/Guide_CC5_Pipeline.md` (formerly Pillar 04).
--   **Legacy Plans:** See `Workflows/Archive/Legacy_Plans/` for old detailed breakdowns.
+*Copyright Celtic Trinity Studios, 2026.*

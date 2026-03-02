@@ -11,23 +11,25 @@
 
 class UFPMCharacterCreationWidget;
 class UFPMCharacterSelectWidget;
+class UFPMEscMenuWidget;
 class UFPMLoginWidget;
 
 /**
  * AFPMPlayerController
  *
  * Base PlayerController for Faldoran Prime. Handles:
- *   - Client UI management (login, character select, character creation)
+ *   - Client UI management (login, character creation)
  *   - Server RPCs for all account and character operations
  *   - Authenticated account tracking (server-side only)
  *   - Character spawn/possess flow (server-authoritative)
  *
- * UI flow:
+ * UI flow (one character per account — no character select):
  *   1. Client BeginPlay -> show login widget
  *   2. Login success -> request character list
- *   3. Character list received -> show character select
- *      a. If no characters -> auto-transition to character creation
- *   4. Enter world -> server spawns + possesses AFPMPlayerCharacter
+ *   3. Character list received:
+ *      a. If character exists -> auto-enter world (skip select)
+ *      b. If no character    -> show character creation
+ *   4. Character created -> auto-enter world
  *   5. Hide all UI, set input mode to Game
  *
  * PROTOTYPE NOTE: Credentials are sent via RPC (unencrypted UE channel).
@@ -57,6 +59,21 @@ public:
   /** Request entering the world with the given character. */
   void RequestEnterWorld(const FGuid &CharacterId);
 
+  /**
+   * Initiate the save-and-logout sequence.
+   * Called by the ESC widget's "Logout & Save" button.
+   * Fires ServerSaveAndLogout RPC which persists position then
+   * confirms via ClientSaveComplete.
+   */
+  void RequestSaveAndLogout();
+
+  /**
+   * Perform the actual client disconnect.
+   * Called by the ESC widget countdown OR by ClientSaveComplete after
+   * the player has read the "✓ Saved" message.
+   */
+  void ExecuteLogout();
+
   /** Return to the login screen (from character creation Back button). */
   void ReturnToLogin();
 
@@ -66,9 +83,27 @@ public:
   /** Transition from character creation back to character select. */
   void TransitionToCharacterSelect();
 
+  // --- ESC Menu ---
+
+  /** Show the in-game ESC / pause menu over the world. */
+  void ShowEscMenu();
+
+  /** Hide and destroy the ESC menu, restoring game input. */
+  void HideEscMenu();
+
+  /** Toggle the ESC menu open/closed. Bound to the ESC key action. */
+  void ToggleEscMenu();
+
 protected:
   virtual void BeginPlay() override;
   virtual void OnPossess(APawn *InPawn) override;
+  virtual void OnUnPossess() override;
+
+  /**
+   * Bind the "OpenEscMenu" input action (mapped to ESC key in the
+   * DefaultInput.ini [/Script/Engine.InputSettings] AxisMappings section).
+   */
+  virtual void SetupInputComponent() override;
 
   // --- Server RPCs (executed on the dedicated server) ---
 
@@ -110,6 +145,30 @@ protected:
   UFUNCTION(Client, Reliable)
   void ClientEnterWorldFailed(const FString &ErrorMessage);
 
+  /**
+   * Server: save current pawn position to the database, then
+   * confirm via ClientSaveComplete.
+   * Reliable: position MUST be persisted before logout.
+   */
+  UFUNCTION(Server, Reliable)
+  void ServerSaveAndLogout();
+
+  /**
+   * Client: called when the server has finished (or failed) the DB save.
+   * Tells the ESC widget to show "✓ Saved" and starts the disconnect.
+   */
+  UFUNCTION(Client, Reliable)
+  void ClientSaveComplete(bool bSuccess);
+
+public:
+  // --- Server-side state accessors (read-only, for GameMode use) ---
+
+  /** Returns true if this connection has been authenticated server-side. */
+  bool IsAuthenticated() const { return bIsAuthenticated; }
+
+  /** Returns the active character GUID (invalid if not in-world). */
+  const FGuid &GetActiveCharacterId() const { return ActiveCharacterId; }
+
 private:
   // --- Login Widget ---
 
@@ -143,6 +202,14 @@ private:
 
   void ShowCharacterSelectWidget();
   void HideCharacterSelectWidget();
+
+  // --- ESC Menu Widget ---
+
+  UPROPERTY(EditDefaultsOnly, Category = "FPM|UI")
+  TSubclassOf<UFPMEscMenuWidget> EscMenuWidgetClass;
+
+  UPROPERTY()
+  TObjectPtr<UFPMEscMenuWidget> EscMenuWidget;
 
   /** Hide ALL UI widgets and switch input to game mode. */
   void HideAllUIAndEnterGame();

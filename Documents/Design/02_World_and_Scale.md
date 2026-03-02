@@ -43,3 +43,4 @@ The planet's crust is finite. This drives the geopolitical engine.
 - **Metals & Minerals:** Iron, Coal, and Gold veins **do not respawn**. Once a mountain is stripped, it is empty forever.
 - **Trade Towns:** Depletion turns mining rigs into "Trade Hubs" or eventually "Ghost Towns," forcing guilds to secure new territory or trade for essentials.
 - **Flora & Fauna:** Trees and wildlife use a "Biological Tick" system. They regrow/reproduce slowly if not over-harvested. Over-harvesting leads to local extinction.
+- **Monster Spawning:** Dynamic, biome-based spawning with NO set spawn points. Spawning is automatically disabled within a certain radius of a town anchor.

@@ -1,8 +1,28 @@
 # Flowing Water System — Design Document
 
-**Status:** Planned (Future Pillar)
+**Status:** 🟡 In Progress — Phase 2A (Data + Simulation + Mesh) implemented
 **Inspiration:** Enshrouded's flowing water — spawns from source points and flows downhill like real water
 **Dependencies:** Voxel terrain system (✅ Complete), Terraforming system (planned)
+
+### Implementation Status
+| Phase | Status | Files |
+|-------|--------|-------|
+| 2A: Water Data Layer | ✅ Done | `FPMWaterChunkData.h` |
+| 2B: Water Source Actor | ✅ Done | `FPMWaterSource.h/cpp` |
+| 2C: Pipe Model Simulation | ✅ Done | `FPMWaterSimulation.h/cpp` |
+| 2D: Water Mesh Builder | ✅ Done | `FPMWaterMeshBuilder.h/cpp` |
+| 2E: WorldChunkManager Integration | ✅ Done | `FPMWorldChunkManager.h/cpp` |
+| 2F: INI Configuration | ✅ Done | `Config/WorldGen.ini` |
+| 3A: Water Material (UE5) | ⬜ Pending | *Needs Blueprint/Material editor* |
+| 3B: Terraforming Integration | ⬜ Pending | *Requires terraforming system* |
+| 3C: Multiplayer Replication | ⬜ Pending | *Water state sync* |
+
+### Anti-Flood Mechanisms (all implemented)
+1. **Evaporation** — `EvaporationRate` in INI (primary control, default 0.001)
+2. **Ocean Drain** — Coast/Ocean biomes absorb all water instantly
+3. **Flow Range Limit** — Water beyond `MaxFlowHops` decays rapidly
+4. **Max Water Depth Cap** — `MaxWaterDepth` prevents unrealistic pooling
+5. **Volume Conservation** — Can't outflow more water than available per cell
 
 ---
 

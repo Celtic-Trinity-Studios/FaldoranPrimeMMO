@@ -28,3 +28,22 @@ Faldoran Prime is the Ultimate MMO-Survival Hybrid, designed to maximize engagem
 
 > [!IMPORTANT]
 > **The Social Contract:** The game is not about the individual character; it is about the Civilization. For detailed design lessons on modern MMO evolution, see [01b Modern Adaptation Principles](file:///e:/FaldoranPrimeMMO/Documents/Design/01b_Modern_Adaptation_Principles.md).
+
+### 6. AAA Visual Standard
+Faldoran Prime must be **visually stunning at first glance**. Visual quality is not a polish item — it is a first-impression requirement.
+
+**Benchmark titles:**
+| Game | What to match |
+|------|--------------|
+| **No Man's Sky** | Vibrant alien skies, atmospheric scattering, god rays, lush procedural biomes |
+| **Aska** | Dense hand-crafted-feeling forests, warm lighting, cosy yet grand scale |
+| **Enshrouded** | Rich terrain colour variety, volumetric fog, dramatic cliff landscapes |
+| **Horizon Forbidden West** | Biome diversity and detail, realistic foliage density, water quality |
+
+**Minimum visual bars to hit before any Early Access release:**
+- Per-biome terrain texture blending (vertex-colour driven)
+- Distance fog + atmospheric scattering
+- Dynamic time-of-day and sky system
+- Dense procedural foliage with LOD
+- High-quality water (reflections, caustics, flow)
+- Particle systems: weather, fire, dust

@@ -9,9 +9,23 @@ description: How to build and deploy the dedicated server
 - Project at `e:\FaldoranPrimeMMO`
 - Server target file exists: `Source/FaldoranPrimeMMOServer.Target.cs`
 
-## 1. Build the Dedicated Server Binary
+## 1. Build the Editor + Server Binaries
 
-The server is a headless (no GPU/rendering) executable.  Build it with:
+Both targets must be built — the **Editor** target is used for PIE testing, and the **Server** target is the headless dedicated server.
+
+### 1a. Build the Editor (for PIE / in-editor testing)
+
+// turbo
+```powershell
+& "E:\UEInstalled\Windows\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe" FaldoranPrimeMMOEditor Win64 Development "-Project=e:\FaldoranPrimeMMO\FaldoranPrimeMMO.uproject" -WaitMutex -NoHotReloadFromIDE
+```
+
+The editor DLL will be at:
+`e:\FaldoranPrimeMMO\Binaries\Win64\UnrealEditor-FaldoranPrimeMMO.dll`
+
+> **Note:** You must restart the editor after rebuilding for constructor changes (mesh/asset loading) to take effect.
+
+### 1b. Build the Dedicated Server
 
 // turbo
 ```powershell

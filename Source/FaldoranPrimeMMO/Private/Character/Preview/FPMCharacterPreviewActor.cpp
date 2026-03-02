@@ -329,6 +329,28 @@ void AFPMCharacterPreviewActor::ApplyCurrentBody() {
 }
 
 // -------------------------------------------------------------------
+// Species Scaling (preview mesh)
+// -------------------------------------------------------------------
+
+void AFPMCharacterPreviewActor::SetSpeciesScale(float UniformScale) {
+  if (!PreviewMesh)
+    return;
+
+  PreviewMesh->SetRelativeScale3D(FVector(UniformScale));
+
+  // Adjust camera target Y offset to keep the character framed.
+  // Shorter races (scale < 1) should shift the camera down, taller up.
+  if (CameraBoom) {
+    const float BaseHeight = 10.0f;
+    CameraBoom->SetRelativeLocation(
+        FVector(0.0f, 0.0f, BaseHeight * UniformScale));
+  }
+
+  UE_LOG(LogFPMCharacterPreview, Log,
+         TEXT("FPM: Preview species scale set to %.2f"), UniformScale);
+}
+
+// -------------------------------------------------------------------
 // Render Target Access
 // -------------------------------------------------------------------
 
@@ -344,19 +366,53 @@ UTextureRenderTarget2D *AFPMCharacterPreviewActor::GetRenderTarget() const {
 // -------------------------------------------------------------------
 
 void AFPMCharacterPreviewActor::CreateDynamicMaterials() {
-  // DISABLED for Phase 4B — CC5 Reallusion HQ shader materials use
-  // subsurface scattering profiles and custom shader graphs that do NOT
-  // expose simple "SkinColor"/"IrisColor"/"HairColor" vector parameters.
-  // Creating MIDs from these materials strips the SSS profile, causing the
-  // head to render blue/gray while the body keeps its original materials.
-  //
-  // Phase 4D will add custom color tint parameters (or material functions)
-  // to the CC5 materials, at which point this function will be re-enabled
-  // with the correct parameter names.
+  if (!PreviewMesh || !PreviewMesh->GetSkeletalMeshAsset())
+    return;
+
+  AllBodyMIDs.Empty();
+  SkinMID = nullptr;
+  EyeMID = nullptr;
+
+  const int32 NumMats = PreviewMesh->GetNumMaterials();
+  AllBodyMIDs.Reserve(NumMats);
+
+  for (int32 i = 0; i < NumMats; ++i) {
+    UMaterialInterface *BaseMat = PreviewMesh->GetMaterial(i);
+    if (!BaseMat)
+      continue;
+
+    UMaterialInstanceDynamic *MID =
+        UMaterialInstanceDynamic::Create(BaseMat, this);
+    PreviewMesh->SetMaterial(i, MID);
+    AllBodyMIDs.Add(MID);
+
+    // Identify skin and eye slots by name
+    const FName SlotName =
+        PreviewMesh->GetSkeletalMeshAsset()->GetMaterials()[i].MaterialSlotName;
+    const FString SlotStr = SlotName.ToString().ToLower();
+    if (SlotStr.Contains(TEXT("skin")) || SlotStr.Contains(TEXT("body"))) {
+      SkinMID = MID;
+    } else if (SlotStr.Contains(TEXT("eye")) ||
+               SlotStr.Contains(TEXT("iris"))) {
+      EyeMID = MID;
+    }
+  }
+
+  // Hair MID from hair mesh comp
+  if (HairMeshComp && HairMeshComp->GetSkeletalMeshAsset()) {
+    UMaterialInterface *HairMat = HairMeshComp->GetMaterial(0);
+    if (HairMat) {
+      HairMID = UMaterialInstanceDynamic::Create(HairMat, this);
+      HairMeshComp->SetMaterial(0, HairMID);
+    }
+  }
 
   UE_LOG(LogFPMCharacterPreview, Log,
-         TEXT("FPM: CreateDynamicMaterials skipped — CC5 materials do not yet "
-              "support runtime color parameters. (Phase 4D)"));
+         TEXT("FPM: CreateDynamicMaterials — %d body MIDs created. "
+              "Skin=%s, Eye=%s, Hair=%s"),
+         AllBodyMIDs.Num(), SkinMID ? TEXT("found") : TEXT("none"),
+         EyeMID ? TEXT("found") : TEXT("none"),
+         HairMID ? TEXT("found") : TEXT("none"));
 }
 
 int32 AFPMCharacterPreviewActor::FindMaterialSlotByKeyword(
