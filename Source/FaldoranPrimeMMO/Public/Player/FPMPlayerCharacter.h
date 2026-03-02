@@ -13,6 +13,7 @@ class UCameraComponent;
 class USpringArmComponent;
 class UFPMInventoryComponent;
 class UFPMInteractionComponent;
+class UFPMPlanetTraversal;
 
 /**
  * AFPMPlayerCharacter
@@ -118,9 +119,13 @@ private:
   UPROPERTY(VisibleAnywhere, Category = "FPM|Gameplay")
   TObjectPtr<UFPMInventoryComponent> InventoryComponent;
 
-  /** Interaction detector — line traces from camera to find interactables. */
+  /** Interaction detector – line traces from camera to find interactables. */
   UPROPERTY(VisibleAnywhere, Category = "FPM|Gameplay")
   TObjectPtr<UFPMInteractionComponent> InteractionComponent;
+
+  /** Rift Runner – high-speed planet traversal. Activated via F5/F6. */
+  UPROPERTY(VisibleAnywhere, Category = "FPM|Traversal")
+  TObjectPtr<UFPMPlanetTraversal> PlanetTraversalComponent;
 
   // --- Replicated Appearance ---
 

@@ -82,6 +82,10 @@ struct FPMNoise {
   static void TalusErosion(TArray<float> &Heights, int32 Res, float CellSpacing,
                            int32 Iters = 4, float MaxSlopeRad = 0.65f);
 
+  /** World-space terrain surface Z at a given XY (cm).
+   *  Pure math, safe for any thread. */
+  static float TerrainSurfaceZ(float WorldX, float WorldY, int32 Seed);
+
 private:
   static int32 GradHash(int32 X, int32 Y, int32 Seed);
   static float GradDot(int32 Hash, float X, float Y);

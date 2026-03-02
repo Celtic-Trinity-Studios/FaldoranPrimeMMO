@@ -1,4 +1,4 @@
-// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+﻿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #pragma once
 
@@ -270,4 +270,11 @@ private:
 
   /** Clamp an FString to MaxLen characters. */
   static FString ClampString(const FString &Input, int32 MaxLen);
+
+  // --- Rift Runner input handlers ---
+  void OnToggleRiftRunner();
+  void OnCycleRiftSpeed();
+
+  // --- World Map input handler ---
+  void OnOpenWorldMap();
 };

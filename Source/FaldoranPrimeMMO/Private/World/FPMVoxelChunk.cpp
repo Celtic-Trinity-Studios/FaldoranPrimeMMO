@@ -147,46 +147,9 @@ float FPMVoxelGenerator::TerrainSurfaceZ(float WorldX, float WorldY,
   if (S.bEnableRivers) {
     const float River = FPMChunkGenerator::RiverFactor(NormX, NormY, WorldSeed);
     if (River > 0.01f && Mask > S.RiverMaskThreshold) {
-      // Carve DOWN from local terrain by RiverCarveDepth.
-      // River factor (0-1) acts as a cross-section profile:
-      //   center of river (River≈1) gets full depth,
-      //   edges (River≈0) get a shallow bank.
       const float CarveAmount =
           S.RiverCarveDepth * River * S.RiverCarveStrength;
-
-      // One-time debug: log actual carving values
-      static bool bCarveDebug = false;
-      if (!bCarveDebug) {
-        bCarveDebug = true;
-        UE_LOG(LogTemp, Warning,
-               TEXT("FPM RIVER CARVE: LandHeight=%.6f, River=%.4f, "
-                    "CarveDepth=%.4f, CarveStrength=%.2f, CarveAmount=%.6f, "
-                    "NewHeight=%.6f, WorldZ=%.1f -> %.1f (delta=%.1fcm)"),
-               LandHeight, River, S.RiverCarveDepth, S.RiverCarveStrength,
-               CarveAmount, LandHeight - CarveAmount,
-               S.HeightBase + LandHeight * S.HeightScale,
-               S.HeightBase + (LandHeight - CarveAmount) * S.HeightScale,
-               CarveAmount * S.HeightScale);
-      }
-
       LandHeight -= CarveAmount;
-    }
-    // One-time diagnostic: sample near player spawn
-    static bool bRiverDiag = false;
-    if (!bRiverDiag && FMath::Abs(WorldX) < 200000.0f &&
-        FMath::Abs(WorldY) < 200000.0f) {
-      bRiverDiag = true;
-      // Test multiple points along R=3 river direction (315 degrees)
-      for (int32 D = 0; D < 20; ++D) {
-        float TestDist = D * 0.02f; // 0 to 0.38 in normalized
-        float TX = 0.5f + TestDist * 0.707f;
-        float TY = 0.5f - TestDist * 0.707f;
-        float RF = FPMChunkGenerator::RiverFactor(TX, TY, WorldSeed);
-        UE_LOG(LogTemp, Warning,
-               TEXT("FPM RIVER DIAG: Norm(%.3f,%.3f) RF=%.4f Mask=%.3f "
-                    "MaskThresh=%.3f bEnable=%d"),
-               TX, TY, RF, Mask, S.RiverMaskThreshold, S.bEnableRivers);
-      }
     }
   }
 
@@ -232,20 +195,6 @@ EFPMBiome FPMVoxelGenerator::BiomeAtWorldXY(float WorldX, float WorldY,
     if (River > 0.3f && Mask > GTerrainSettings.RiverMaskThreshold) {
       Biome = EFPMBiome::River;
     }
-  }
-
-  // --- Altitude Diagnostic ---
-  static bool bAltDiag = false;
-  if (!bAltDiag) {
-    bAltDiag = true;
-    const float ExpectedSurfaceZ = TerrainSurfaceZ(WorldX, WorldY, WorldSeed);
-    UE_LOG(LogTemp, Warning,
-           TEXT("FPM PLAYER ALT DIAG: WorldX=%.1f WorldP.Z=%.1f, NormH=%.4f, "
-                "ExpectedSurfaceZ=%.1f (Delta=%.1f) BiomeIdx=%d"),
-           WorldX, (NormalizedHeight * 2000000.0f) - 1100000.0f,
-           NormalizedHeight, ExpectedSurfaceZ,
-           ((NormalizedHeight * 2000000.0f) - 1100000.0f) - ExpectedSurfaceZ,
-           static_cast<int32>(Biome));
   }
 
   return Biome;
@@ -298,7 +247,7 @@ FColor FPMVoxelGenerator::BiomeToVertexColor(EFPMBiome Biome) {
   case EFPMBiome::River:
     return FColor(60, 90, 80, 0); // Dark brown-green riverbed/banks
   case EFPMBiome::Coast:
-    return FColor(0, 255, 255, 0); // DEBUG: bright cyan for rivers
+    return FColor(120, 150, 140, 0);
   case EFPMBiome::Beach:
     return FColor(230, 210, 160, 0);
   case EFPMBiome::Ocean:
@@ -524,32 +473,58 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
           OutMesh.Triangles.Add(BaseIdx + 1);
           OutMesh.Triangles.Add(BaseIdx + 2);
 
-          // UVs: world-space XY projected
+          // UVs + vertex colors: computed per-vertex for smooth
+          // interpolation (avoids per-triangle centroid striations).
+          // Bilinear-interpolate the diffusion-smoothed climate grids
+          // at each vertex position individually.
+          auto BilerpGrid = [&](const TArray<float>& Grid, float LX, float LY) -> float {
+            const float GFX = (LX + OverlapOff) / VS;
+            const float GFY = (LY + OverlapOff) / VS;
+            const int32 GX0 = FMath::Clamp(FMath::FloorToInt(GFX), 0, GridX - 2);
+            const int32 GY0 = FMath::Clamp(FMath::FloorToInt(GFY), 0, GridY - 2);
+            const float FX = FMath::Clamp(GFX - GX0, 0.0f, 1.0f);
+            const float FY = FMath::Clamp(GFY - GY0, 0.0f, 1.0f);
+            const float V00 = Grid[GY0 * GridX + GX0];
+            const float V10 = Grid[GY0 * GridX + GX0 + 1];
+            const float V01 = Grid[(GY0 + 1) * GridX + GX0];
+            const float V11 = Grid[(GY0 + 1) * GridX + GX0 + 1];
+            return FMath::Lerp(
+                FMath::Lerp(V00, V10, FX),
+                FMath::Lerp(V01, V11, FX),
+                FY);
+          };
+
           for (int32 VI = 0; VI < 3; ++VI) {
             const FVector &VP = OutMesh.Vertices[BaseIdx + VI];
             OutMesh.UVs.Emplace((ChunkOrigin.X + VP.X) / 100.0f,
                                 (ChunkOrigin.Y + VP.Y) / 100.0f);
+
+            const float VTemp = BilerpGrid(TempGrid, VP.X, VP.Y);
+            const float VMoist = BilerpGrid(MoistGrid, VP.X, VP.Y);
+            const float VHeight = BilerpGrid(HeightGrid, VP.X, VP.Y);
+            const float VMask = BilerpGrid(MaskGrid, VP.X, VP.Y);
+
+            FColor VColor;
+            if (GTerrainSettings.bEnableRivers) {
+              const float WorldVX = ChunkOrigin.X + VP.X;
+              const float WorldVY = ChunkOrigin.Y + VP.Y;
+              const float HI = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
+              const float ISZ = FPMChunkConstants::StarterIslandWorldSize;
+              const float RNormX = (WorldVX + HI) / ISZ;
+              const float RNormY = (WorldVY + HI) / ISZ;
+              const float River = FPMChunkGenerator::RiverFactor(RNormX, RNormY, WorldSeed);
+              if (River > 0.3f && VMask > GTerrainSettings.RiverMaskThreshold) {
+                VColor = FPMVoxelGenerator::BiomeToVertexColor(EFPMBiome::River);
+              } else {
+                VColor = FPMChunkGenerator::BlendedBiomeColor(
+                    VTemp, VMoist, VHeight, VMask);
+              }
+            } else {
+              VColor = FPMChunkGenerator::BlendedBiomeColor(
+                  VTemp, VMoist, VHeight, VMask);
+            }
+            OutMesh.Colors.Add(VColor);
           }
-
-          // Use the SAME biome code path as the HUD so terrain colour always
-          // matches the displayed biome name.
-          // WorldToIslandNorm converts world cm → normalised [0,1] island
-          // coords. AssignBiomeFromNoise uses those same coords internally
-          // (matching HUD).
-          const FVector TriCentroid = (V0 + V1 + V2) / 3.0f;
-          const float WorldCX = ChunkOrigin.X + TriCentroid.X;
-          const float WorldCY = ChunkOrigin.Y + TriCentroid.Y;
-
-          float NormX, NormY;
-          FPMChunkGenerator::WorldToIslandNorm(FVector(WorldCX, WorldCY, 0.0f),
-                                               NormX, NormY);
-
-          const EFPMBiome WBiome = FPMChunkGenerator::AssignBiomeFromNoise(
-              NormX, NormY, WorldSeed, 0.5f);
-          const FColor BColor = FPMVoxelGenerator::BiomeToVertexColor(WBiome);
-          OutMesh.Colors.Add(BColor);
-          OutMesh.Colors.Add(BColor);
-          OutMesh.Colors.Add(BColor);
         }
       }
     }
@@ -558,26 +533,9 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
   // --- 3. Smooth normals (average across shared vertices) ---
   SmoothNormals(OutMesh);
 
-  // --- 4. Smooth vertex colors (biome blending at boundaries) ---
-  SmoothVertexColors(OutMesh);
+  // --- 4. Vertex colors are now computed per-vertex (no post-smooth needed) ---
 
   UE_LOG(LogTemp, Verbose, TEXT("FPM Voxel: Chunk %s -> %d verts, %d tris"),
          *Coord.ToString(), OutMesh.Vertices.Num(),
          OutMesh.Triangles.Num() / 3);
-
-  // One-time diagnostic: scan vertex Z range to verify carving
-  static bool bMeshZDiag = false;
-  if (!bMeshZDiag && OutMesh.Vertices.Num() > 0) {
-    bMeshZDiag = true;
-    float MinZ = TNumericLimits<float>::Max();
-    float MaxZ = TNumericLimits<float>::Lowest();
-    for (const FVector &V : OutMesh.Vertices) {
-      MinZ = FMath::Min(MinZ, V.Z);
-      MaxZ = FMath::Max(MaxZ, V.Z);
-    }
-    UE_LOG(LogTemp, Warning,
-           TEXT("FPM MESH DIAG: Chunk %s -> %d verts, Z range [%.1f .. %.1f] "
-                "(span=%.1fcm)"),
-           *Coord.ToString(), OutMesh.Vertices.Num(), MinZ, MaxZ, MaxZ - MinZ);
-  }
 }

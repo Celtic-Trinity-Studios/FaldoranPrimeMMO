@@ -282,11 +282,14 @@ void AFPMWorldChunkManager::BeginPlay() {
 
   UE_LOG(LogTemp, Warning,
          TEXT("FPM: ========================================"));
-  UE_LOG(LogTemp, Warning, TEXT("FPM: Chunk-based world system initialized"));
   UE_LOG(LogTemp, Warning,
-         TEXT("FPM: Seed=%d, ChunkSize=%.0fm, Island=%d rings"), WorldSeed,
-         FPMChunkConstants::ChunkWorldSize / 100.0f,
-         FPMChunkConstants::StarterIslandRings);
+         TEXT("FPM: Toroidal planet world system initialized"));
+  UE_LOG(LogTemp, Warning,
+         TEXT("FPM: Seed=%d, ChunkSize=%.0fm, Planet=%d chunks/axis "
+              "(%.0fkm circumference)"),
+         WorldSeed, FPMChunkConstants::ChunkWorldSize / 100.0f,
+         FPMChunkConstants::PlanetChunksPerAxis,
+         FPMChunkConstants::PlanetCircumferenceKm);
   UE_LOG(LogTemp, Warning,
          TEXT("FPM: LOD ranges: Full=%d, Medium=%d, Low=%d rings"),
          FPMChunkConstants::FullDetailRange,
@@ -363,6 +366,28 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
     return;
   }
 
+  // --- TOROIDAL WRAP: keep player inside [0, PlanetCircumference) ---
+  {
+    APawn *Pawn = PC->GetPawn();
+    if (Pawn) {
+      FVector Pos = Pawn->GetActorLocation();
+      const float Circ = FPMChunkConstants::PlanetCircumferenceCm;
+      bool bNeedsWrap = false;
+      if (Pos.X < 0.0f || Pos.X >= Circ) {
+        Pos.X = FPMChunkConstants::WrapWorldCoord(Pos.X);
+        bNeedsWrap = true;
+      }
+      if (Pos.Y < 0.0f || Pos.Y >= Circ) {
+        Pos.Y = FPMChunkConstants::WrapWorldCoord(Pos.Y);
+        bNeedsWrap = true;
+      }
+      if (bNeedsWrap) {
+        Pawn->SetActorLocation(Pos, false, nullptr,
+                               ETeleportType::TeleportPhysics);
+      }
+    }
+  }
+
   TimeSinceLastUpdate += DeltaTime;
 
   // Throttled update check
@@ -402,7 +427,7 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
       for (auto It = LoadedChunks.CreateIterator(); It; ++It) {
         if (!DesiredChunks.Contains(It->Key)) {
           const int32 HexDist =
-              FFPMChunkCoord::HexDistance(It->Key, PlayerChunk);
+              FFPMChunkCoord::WrappedHexDistance(It->Key, PlayerChunk);
           // Only unload if 2 rings beyond the desired range (hysteresis)
           if (HexDist > FPMChunkConstants::LowDetailRange + 2) {
             ChunkUnloadQueue.AddUnique(It->Key);
@@ -497,6 +522,12 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
     DrawDebugChunks();
   }
 
+  // Keep water plane centered on the player
+  if (WaterPlaneMesh) {
+    const FVector PP = GetPlayerPosition();
+    WaterPlaneMesh->SetWorldLocation(FVector(PP.X, PP.Y, WaterZHeight));
+  }
+
   // --- Flowing Water Simulation ---
   if (bEnableFlowingWater && bInitialLoadDone) {
     const float SimInterval = 1.0f / FPMWaterConstants::SimulationRate;
@@ -529,17 +560,12 @@ void AFPMWorldChunkManager::GatherDesiredChunks(
   const int32 Range = FPMChunkConstants::LowDetailRange;
 
   // Square grid: iterate over all chunks within Range of PlayerChunk.
+  // Coords wrap toroidally — no bounds check needed.
   for (int32 DQ = -Range; DQ <= Range; ++DQ) {
     for (int32 DR = -Range; DR <= Range; ++DR) {
-      const FFPMChunkCoord Coord(PlayerChunk.Q + DQ, PlayerChunk.R + DR);
-
-      // Skip chunks outside starter island bounds
-      if (FFPMChunkCoord::HexDistance(Coord, FFPMChunkCoord(0, 0)) >
-          FPMChunkConstants::StarterIslandRings) {
-        continue;
-      }
-
-      OutDesiredChunks.Add(Coord);
+      const int32 WQ = FPMChunkConstants::WrapChunkCoord(PlayerChunk.Q + DQ);
+      const int32 WR = FPMChunkConstants::WrapChunkCoord(PlayerChunk.R + DR);
+      OutDesiredChunks.Add(FFPMChunkCoord(WQ, WR));
     }
   }
 }
@@ -551,7 +577,7 @@ void AFPMWorldChunkManager::GatherDesiredChunks(
 EFPMChunkLOD
 AFPMWorldChunkManager::DetermineLOD(const FFPMChunkCoord &ChunkCoord,
                                     const FFPMChunkCoord &PlayerChunk) const {
-  const int32 HexDist = FFPMChunkCoord::HexDistance(ChunkCoord, PlayerChunk);
+  const int32 HexDist = FFPMChunkCoord::WrappedHexDistance(ChunkCoord, PlayerChunk);
 
   if (HexDist <= FPMChunkConstants::FullDetailRange) {
     return EFPMChunkLOD::Full;
@@ -855,12 +881,9 @@ void AFPMWorldChunkManager::EnsureChunkLoadedAtWorldPos(FVector WorldPos) {
 
   for (int32 DQ = -ForceLoadRadius; DQ <= ForceLoadRadius; ++DQ) {
     for (int32 DR = -ForceLoadRadius; DR <= ForceLoadRadius; ++DR) {
-      const FFPMChunkCoord Coord(Center.Q + DQ, Center.R + DR);
-
-      if (FFPMChunkCoord::HexDistance(Coord, FFPMChunkCoord(0, 0)) >
-          FPMChunkConstants::StarterIslandRings) {
-        continue;
-      }
+      const int32 WQ = FPMChunkConstants::WrapChunkCoord(Center.Q + DQ);
+      const int32 WR = FPMChunkConstants::WrapChunkCoord(Center.R + DR);
+      const FFPMChunkCoord Coord(WQ, WR);
 
       if (LoadedChunks.Contains(Coord)) {
         AFPMChunkActor *Existing = LoadedChunks[Coord];

@@ -1,4 +1,4 @@
-// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+﻿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #include "Player/FPMPlayerController.h"
 #include "Account/FPMAccountSubsystem.h"
@@ -21,6 +21,8 @@
 #include "World/FPMChunkData.h"
 #include "World/FPMNexusManager.h"
 #include "World/FPMNoise.h"
+#include "UI/FPMHUD.h"
+#include "World/FPMPlanetTraversal.h"
 #include "World/FPMVoxelChunk.h"
 #include "World/FPMWorldChunkManager.h"
 
@@ -72,10 +74,13 @@ void AFPMPlayerController::BeginPlay() {
 
 void AFPMPlayerController::SetupInputComponent() {
   Super::SetupInputComponent();
-  // ESC toggles the in-game menu. Only meaningful once the player is in-world.
   if (InputComponent) {
     InputComponent->BindAction(TEXT("OpenEscMenu"), IE_Pressed, this,
                                &AFPMPlayerController::ToggleEscMenu);
+    InputComponent->BindAction(TEXT("ToggleRiftRunner"), IE_Pressed, this,
+                               &AFPMPlayerController::OnToggleRiftRunner);
+    InputComponent->BindAction(TEXT("CycleRiftSpeed"), IE_Pressed, this,
+                               &AFPMPlayerController::OnCycleRiftSpeed);
   }
 }
 
@@ -83,6 +88,19 @@ void AFPMPlayerController::OnPossess(APawn *InPawn) {
   Super::OnPossess(InPawn);
   UE_LOG(LogFPMPlayerController, Log, TEXT("FPM Server: Possessed pawn %s"),
          *GetNameSafe(InPawn));
+
+  // Pass world seed to PlanetTraversal component for terrain altitude lookups.
+  // The component lives on the character (created in its constructor) so it
+  // exists on both client and server — we just need to supply the seed here.
+  if (InPawn) {
+    if (UFPMPlanetTraversal *Traversal =
+            InPawn->FindComponentByClass<UFPMPlanetTraversal>()) {
+      if (AFPMWorldChunkManager *WCM =
+              AFPMWorldChunkManager::GetOrCreate(GetWorld())) {
+        Traversal->SetWorldSeed(WCM->WorldSeed);
+      }
+    }
+  }
 }
 
 void AFPMPlayerController::OnUnPossess() {
@@ -616,22 +634,27 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
   FRotator SpawnRot = FRotator(0.0f, 0.0f, 0.0f);
 
   if (bHasSavedPos) {
-    // Validate: confirm saved position is proper land (above sea level)
-    const float RawH = FPMNoise::TerrainHeight(SavedX, SavedY, ActualWorldSeed);
-    const bool bIsLand = (RawH >= 0.56f && RawH <= 0.95f);
+    // Validate: confirm saved position is on land using TerrainSurfaceZ
+    // (the single source of truth that includes river/lake carving).
+    // Sea level is Z=0. Any terrain surface > 50cm is land.
+    const float SurfaceZ =
+        FPMVoxelGenerator::TerrainSurfaceZ(SavedX, SavedY, ActualWorldSeed);
+    const bool bIsLand = (SurfaceZ > 50.0f);
     if (bIsLand) {
-      const float SurfaceZ =
-          FPMVoxelGenerator::TerrainSurfaceZ(SavedX, SavedY, ActualWorldSeed);
-      SpawnLoc = FVector(SavedX, SavedY, SurfaceZ);
+      // Use the higher of saved Z and terrain surface Z:
+      //  - Prevents spawning underground if terrain was regenerated
+      //  - Respects saved Z when player was on a structure above terrain
+      const float RestoreZ = FMath::Max(SavedZ, SurfaceZ);
+      SpawnLoc = FVector(SavedX, SavedY, RestoreZ);
       UE_LOG(LogFPMPlayerController, Log,
              TEXT("FPM: Returning character '%s' — restoring to saved pos "
-                  "(%.0f, %.0f, %.0f)"),
-             *Name, SavedX, SavedY, SavedZ);
+                  "(%.0f, %.0f, %.0f) [savedZ=%.0f, surfaceZ=%.0f]"),
+             *Name, SavedX, SavedY, RestoreZ, SavedZ, SurfaceZ);
     } else {
       UE_LOG(LogFPMPlayerController, Warning,
-             TEXT("FPM: Saved position (%.0f, %.0f) is over water/invalid — "
-                  "redirecting to Nexus."),
-             SavedX, SavedY);
+             TEXT("FPM: Saved position (%.0f, %.0f) surfaceZ=%.0f is over "
+                  "water/invalid — redirecting to Nexus."),
+             SavedX, SavedY, SurfaceZ);
       bHasSavedPos = false; // fall through to Nexus
     }
   }
@@ -1059,4 +1082,46 @@ FString AFPMPlayerController::ClampString(const FString &Input, int32 MaxLen) {
     return Input;
   }
   return Input.Left(MaxLen);
+}
+
+// -------------------------------------------------------------------
+// Rift Runner Handlers
+// -------------------------------------------------------------------
+
+void AFPMPlayerController::OnToggleRiftRunner() {
+  if (GetPawn()) {
+    if (UFPMPlanetTraversal *T =
+            GetPawn()->FindComponentByClass<UFPMPlanetTraversal>()) {
+      T->ToggleRiftRunner();
+    }
+  }
+}
+
+void AFPMPlayerController::OnCycleRiftSpeed() {
+  if (GetPawn()) {
+    if (UFPMPlanetTraversal *T =
+            GetPawn()->FindComponentByClass<UFPMPlanetTraversal>()) {
+      T->CycleSpeedTier();
+    }
+  }
+}
+
+// -------------------------------------------------------------------
+// World Map Handler
+// -------------------------------------------------------------------
+
+void AFPMPlayerController::OnOpenWorldMap() {
+  // Only available in-game (pawn possessed)
+  if (!GetPawn()) return;
+
+  // Get the HUD and toggle the map
+  if (AFPMHUD* HUD = Cast<AFPMHUD>(GetHUD())) {
+    // Pass world seed from WorldChunkManager
+    int32 Seed = 42;
+    if (AFPMWorldChunkManager* WCM =
+            AFPMWorldChunkManager::GetOrCreate(GetWorld())) {
+      Seed = WCM->WorldSeed;
+    }
+    HUD->ToggleWorldMap(Seed);
+  }
 }

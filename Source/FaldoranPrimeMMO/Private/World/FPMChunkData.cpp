@@ -7,6 +7,15 @@
 //  Coordinate Conversions (unchanged)
 // ===================================================================
 
+int32 FFPMChunkCoord::WrappedHexDistance(const FFPMChunkCoord &A,
+                                         const FFPMChunkCoord &B) {
+  const int32 DQ =
+      FMath::Abs(FPMChunkConstants::WrappedChunkDelta(A.Q, B.Q));
+  const int32 DR =
+      FMath::Abs(FPMChunkConstants::WrappedChunkDelta(A.R, B.R));
+  return FMath::Max(DQ, DR);
+}
+
 FVector FPMChunkGenerator::ChunkToWorldCenter(const FFPMChunkCoord &Coord) {
   const float CS = FPMChunkConstants::ChunkWorldSize;
   return FVector(static_cast<float>(Coord.Q) * CS + CS * 0.5f,
@@ -161,9 +170,6 @@ static float Smoothstep(float Edge0, float Edge1, float X) {
 EFPMBiome FPMChunkGenerator::AssignBiomeFromNoise(float NormX, float NormY,
                                                   int32 Seed,
                                                   float IslandMaskValue) {
-  if (IslandMaskValue <= 0.01f)
-    return EFPMBiome::Ocean;
-
   // World coords for climate lookup
   const float HI = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
   const float WX = NormX * FPMChunkConstants::StarterIslandWorldSize - HI;
@@ -172,6 +178,13 @@ EFPMBiome FPMChunkGenerator::AssignBiomeFromNoise(float NormX, float NormY,
   const float H = FPMNoise::TerrainHeight(WX, WY, Seed);
   const float Temp = FPMNoise::Temperature(WX, WY, Seed);
   const float Moist = FPMNoise::Moisture(WX, WY, Seed);
+
+  // Ocean: terrain below sea level
+  constexpr float SeaLevel = FPMChunkConstants::SeaLevelNormalized;
+  if (H < SeaLevel - 0.02f)
+    return EFPMBiome::Ocean;
+  if (H < SeaLevel + 0.005f)
+    return (Temp > 0.50f) ? EFPMBiome::Beach : EFPMBiome::Coast;
 
   float TBias, MBias, EdgeBlend;
   FPMNoise::BiomeRegion(WX, WY, Seed, TBias, MBias, EdgeBlend);
@@ -257,7 +270,7 @@ FColor BiomeColor(EFPMBiome Biome) {
   case EFPMBiome::River:
     return FColor(60, 90, 80, 0);
   case EFPMBiome::Coast:
-    return FColor(0, 255, 255, 0);
+    return FColor(120, 150, 140, 0);
   case EFPMBiome::Beach:
     return FColor(230, 210, 160, 0);
   case EFPMBiome::Ocean:
@@ -276,10 +289,12 @@ EFPMBiome FPMChunkGenerator::AssignBiomeWeighted(float Temp, float Moist,
   if (IslandMaskValue <= 0.01f)
     return EFPMBiome::Ocean;
 
-  // --- Water edge biomes ---
-  if (IslandMaskValue < 0.10f) {
+  // --- Water biomes from elevation (planet mode) ---
+  constexpr float SeaLevel = FPMChunkConstants::SeaLevelNormalized;
+  if (Height < SeaLevel - 0.02f)
+    return EFPMBiome::Ocean;
+  if (Height < SeaLevel + 0.005f)
     return (Temp > 0.50f) ? EFPMBiome::Beach : EFPMBiome::Coast;
-  }
 
   // --- Elevation-driven overrides (altitude takes priority) ---
   const float SnowLineBase = 0.74f;

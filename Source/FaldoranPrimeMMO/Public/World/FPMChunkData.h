@@ -107,10 +107,17 @@ struct FFPMChunkCoord {
 
   FString ToString() const { return FString::Printf(TEXT("(%d,%d)"), Q, R); }
 
-  /** Grid distance (Chebyshev on square coords) */
+  /** Grid distance (Chebyshev on square coords).
+   *  For toroidal wrap-aware distance, callers should use
+   *  FPMChunkConstants::WrappedChunkDelta before calling this. */
   static int32 HexDistance(const FFPMChunkCoord &A, const FFPMChunkCoord &B) {
     return FMath::Max(FMath::Abs(A.Q - B.Q), FMath::Abs(A.R - B.R));
   }
+
+  /** Grid distance accounting for toroidal wrap.
+   *  Requires FPMChunkConstants to be defined (call sites in .cpp files). */
+  static int32 WrappedHexDistance(const FFPMChunkCoord &A,
+                                  const FFPMChunkCoord &B);
 
   /** Number of neighbor directions */
   static constexpr int32 NumDirections = 8;
@@ -191,15 +198,30 @@ constexpr float HexSpacingX = HexWidth * 0.75f; // 96000cm
 constexpr int32 ChunkResolution = 33; // Keep memory low
 constexpr int32 ChunkVertexCount = ChunkResolution * ChunkResolution;
 
-/** Starter island radius in hex rings from center.
- *  At 1.28km per chunk, 400 rings = 512km radius = 1024km diameter. */
-constexpr int32 StarterIslandRings = 400;
+// --- Toroidal Planet Geometry ---
+// The world wraps seamlessly in both X and Y. Walking in any direction
+// eventually returns you to where you started — no edges, no ocean dropoff.
 
-/** Maximum number of chunks per axis (diameter in rings) */
-constexpr int32 StarterIslandChunksPerAxis = StarterIslandRings * 2 + 1;
+/** Number of unique chunks along each axis before the world wraps. */
+constexpr int32 PlanetChunksPerAxis = 10001;
 
-/** Approximate starter island world size for island mask etc. */
-constexpr float StarterIslandWorldSize = StarterIslandChunksPerAxis * HexWidth;
+/** Planet circumference in cm (the wrap distance on each axis). */
+constexpr float PlanetCircumferenceCm =
+    static_cast<float>(PlanetChunksPerAxis) * HexWidth;
+
+/** Half-circumference — used for shortest-path distance calculations. */
+constexpr float HalfCircumferenceCm = PlanetCircumferenceCm * 0.5f;
+
+/** Planet circumference in km (convenience for UI display). */
+constexpr float PlanetCircumferenceKm = PlanetCircumferenceCm / 100000.0f;
+
+/** Legacy aliases for backward compat with existing biome/climate code. */
+constexpr int32 StarterIslandRings = PlanetChunksPerAxis / 2;
+constexpr int32 StarterIslandChunksPerAxis = PlanetChunksPerAxis;
+constexpr float StarterIslandWorldSize = PlanetCircumferenceCm;
+
+/** Normalized sea level (0.55 = Z=0 in world space). */
+constexpr float SeaLevelNormalized = 0.55f;
 
 /** View distance rings (in hex distance from player chunk).
  *  Actors are half-scale, so terrain visually reads as larger — we can
@@ -222,6 +244,53 @@ inline float IslandRadiusFraction = 0.55f;
 constexpr float MinWorldZ = -1100000.0f;                  // -11km
 constexpr float MaxWorldZ = 900000.0f;                    // +9km
 constexpr float WorldHeightRange = MaxWorldZ - MinWorldZ; // 20km total
+
+// --- Coordinate Wrapping Helpers ---
+
+/** Wrap a world-space X or Y coordinate into [0, PlanetCircumferenceCm). */
+inline float WrapWorldCoord(float V) {
+  V = FMath::Fmod(V, PlanetCircumferenceCm);
+  if (V < 0.0f)
+    V += PlanetCircumferenceCm;
+  return V;
+}
+
+/** Wrap a chunk-axis index into [0, PlanetChunksPerAxis). */
+inline int32 WrapChunkCoord(int32 C) {
+  C = C % PlanetChunksPerAxis;
+  if (C < 0)
+    C += PlanetChunksPerAxis;
+  return C;
+}
+
+/** Shortest signed distance between two world coords on one axis. */
+inline float WrappedDelta(float A, float B) {
+  float D = B - A;
+  if (D > HalfCircumferenceCm)
+    D -= PlanetCircumferenceCm;
+  else if (D < -HalfCircumferenceCm)
+    D += PlanetCircumferenceCm;
+  return D;
+}
+
+/** Shortest signed distance between two chunk coords on one axis. */
+inline int32 WrappedChunkDelta(int32 A, int32 B) {
+  const int32 Half = PlanetChunksPerAxis / 2;
+  int32 D = B - A;
+  if (D > Half)
+    D -= PlanetChunksPerAxis;
+  else if (D < -Half)
+    D += PlanetChunksPerAxis;
+  return D;
+}
+
+/** Shortest wrapped world-space distance between two 2D positions. */
+inline float WrappedDistance2D(const FVector &A, const FVector &B) {
+  const float DX = WrappedDelta(A.X, B.X);
+  const float DY = WrappedDelta(A.Y, B.Y);
+  return FMath::Sqrt(DX * DX + DY * DY);
+}
+
 } // namespace FPMChunkConstants
 
 /**

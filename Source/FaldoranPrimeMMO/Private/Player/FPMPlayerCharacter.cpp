@@ -1,4 +1,4 @@
-// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+﻿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #include "Player/FPMPlayerCharacter.h"
 #include "Animation/AnimationAsset.h"
@@ -17,6 +17,7 @@
 #include "Gameplay/FPMInventoryComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "World/FPMChunkData.h"
+#include "World/FPMPlanetTraversal.h"
 #include "World/FPMVoxelChunk.h"
 #include "World/FPMWorldChunkManager.h"
 
@@ -161,6 +162,9 @@ AFPMPlayerCharacter::AFPMPlayerCharacter() {
 
   InteractionComponent = CreateDefaultSubobject<UFPMInteractionComponent>(
       TEXT("InteractionComponent"));
+
+  PlanetTraversalComponent = CreateDefaultSubobject<UFPMPlanetTraversal>(
+      TEXT("PlanetTraversalComponent"));
 }
 
 void AFPMPlayerCharacter::BeginPlay() {
@@ -172,6 +176,7 @@ void AFPMPlayerCharacter::BeginPlay() {
 }
 
 // --- Compass helper ---
+
 static FString YawToCompass(float Yaw) {
   // Normalize to 0-360
   while (Yaw < 0.f)
@@ -225,10 +230,15 @@ void AFPMPlayerCharacter::Tick(float DeltaTime) {
   }
 
   // --- Velocity clamp (prevent collision ejection launches) ---
+  // Suppressed when Rift Runner is active (it uses SetActorLocation, not CMC
+  // velocity, but residual CMC velocity could falsely trigger this).
   if (UCharacterMovementComponent *CMC = GetCharacterMovement()) {
+    const UFPMPlanetTraversal *Rift =
+        FindComponentByClass<UFPMPlanetTraversal>();
+    const bool bRiftActive = Rift && Rift->IsRiftRunnerActive();
     const FVector Vel = CMC->Velocity;
     constexpr float MaxSafeSpeed = 60000.0f; // 600 m/s (turbo flight)
-    if (Vel.Size() > MaxSafeSpeed) {
+    if (!bRiftActive && Vel.Size() > MaxSafeSpeed) {
       CMC->StopMovementImmediately();
       UE_LOG(LogFPMPlayerCharacter, Warning,
              TEXT("FPM: Velocity clamp — killed extreme velocity (%.0f cm/s)"),
@@ -239,14 +249,18 @@ void AFPMPlayerCharacter::Tick(float DeltaTime) {
   // --- Fall-through recovery ---
   // Runs on locally controlled character for immediate correction.
   // Uses TeleportTo (not SetActorLocation) so the CMC doesn't override it.
+  // Suppressed when Rift Runner is active (it manages its own altitude).
   {
+    const UFPMPlanetTraversal *Rift =
+        FindComponentByClass<UFPMPlanetTraversal>();
+    const bool bRiftActive = Rift && Rift->IsRiftRunnerActive();
     const FVector Loc = GetActorLocation();
     // Only trigger if below sea level minus a generous buffer.
     // Legitimate terrain can be at negative Z (ocean floor), but if the
     // character is falling with high negative velocity, something went wrong.
     constexpr float FallThroughThreshold = -50000.0f; // -500m
 
-    if (Loc.Z < FallThroughThreshold) {
+    if (!bRiftActive && Loc.Z < FallThroughThreshold) {
       // Cooldown: avoid repeated triggers each frame
       const double Now = FPlatformTime::Seconds();
       if (Now - LastFallRecoveryTime < 5.0) {
@@ -648,14 +662,18 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
     return;
   }
 
-  // --- Flight toggle (F key with debounce) ---
+  // --- Middle Mouse Button: toggle first-person / third-person camera ---
   {
-    static bool bFKeyWasDown = false;
-    const bool bFKeyIsDown = PC->IsInputKeyDown(EKeys::F);
-    if (bFKeyIsDown && !bFKeyWasDown) {
-      ToggleFlight();
+    static bool bMMBWasDown = false;
+    const bool bMMBIsDown = PC->IsInputKeyDown(EKeys::MiddleMouseButton);
+    if (bMMBIsDown && !bMMBWasDown) {
+      if (CameraBoom) {
+        const bool bIsFirstPerson = CameraBoom->TargetArmLength < 10.f;
+        CameraBoom->TargetArmLength = bIsFirstPerson ? 400.f : 0.f;
+        CameraBoom->bEnableCameraLag = !bIsFirstPerson;
+      }
     }
-    bFKeyWasDown = bFKeyIsDown;
+    bMMBWasDown = bMMBIsDown;
   }
 
   // --- HUD cursor mode (Tab key with debounce) ---
@@ -684,21 +702,14 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
   }
 
   // --- Run / flight-boost (Left Shift) ---
-  // On ground: toggle walk vs run speed.
-  // In flight: dynamically raise MaxFlySpeed (debug feature, will be removed).
+  // Sync bIsFlying from PlanetTraversal so pitch-movement logic stays correct.
   {
+    if (const UFPMPlanetTraversal *Rift = FindComponentByClass<UFPMPlanetTraversal>())
+      bIsFlying = Rift->IsFlying();
+
     const bool bShiftHeld = PC->IsInputKeyDown(EKeys::LeftShift);
     if (bIsFlying) {
-      // Boost flight speed while Shift is held
-      if (UCharacterMovementComponent *CMC = GetCharacterMovement()) {
-        const float DesiredFlySpeed = bShiftHeld ? 10000.0f : 2000.0f;
-        if (!FMath::IsNearlyEqual(CMC->MaxFlySpeed, DesiredFlySpeed, 1.0f)) {
-          CMC->MaxFlySpeed = DesiredFlySpeed;
-          UE_LOG(LogFPMPlayerCharacter, Verbose,
-                 TEXT("FPM: Flight speed %s (%.0f cm/s)"),
-                 bShiftHeld ? TEXT("BOOST") : TEXT("normal"), DesiredFlySpeed);
-        }
-      }
+      // PlanetTraversal owns MaxFlySpeed -- don't override it here
     } else {
       // Ground run: toggle CMC walk speed
       if (bShiftHeld != bIsRunning) {

@@ -1,4 +1,4 @@
-// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+﻿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #pragma once
 
@@ -93,6 +93,7 @@ private:
   static FVector InterpolateEdge(const FVector &P1, const FVector &P2, float D1,
                                  float D2);
 
+public:
   /** Map biome enum to vertex color for material splatting. */
   static FColor BiomeToVertexColor(EFPMBiome Biome);
 };

@@ -228,28 +228,9 @@ void FPMNoise::BiomeRegion(float WorldX, float WorldY, int32 Seed,
 // ===================================================================
 
 float FPMNoise::IslandMask(float WorldX, float WorldY, int32 Seed) {
-  const float HI = FPMChunkConstants::StarterIslandWorldSize * 0.5f;
-  const float ISZ = FPMChunkConstants::StarterIslandWorldSize;
-
-  const float NX = (WorldX + HI) / ISZ;
-  const float NY = (WorldY + HI) / ISZ;
-  const float DX = NX - 0.5f;
-  const float DY = NY - 0.5f;
-  float Dist =
-      FMath::Sqrt(DX * DX + DY * DY) / FPMChunkConstants::IslandRadiusFraction;
-
-  // Perturb coastline with low-frequency noise
-  Dist += Simplex2D(NX * 4.0f, NY * 4.0f, Seed + 12345) * 0.08f;
-  Dist += Simplex2D(NX * 10.0f, NY * 10.0f, Seed + 54321) * 0.03f;
-
-  if (Dist >= 1.0f)
-    return 0.0f;
-  if (Dist < 0.30f)
-    return 1.0f;
-
-  // Quintic smoothstep falloff
-  const float T = (1.0f - Dist) / 0.70f;
-  return T * T * T * (T * (T * 6.0f - 15.0f) + 10.0f);
+  // Planet mode: no island edges. The entire surface generates terrain.
+  // Ocean biomes exist where continental noise puts terrain below sea level.
+  return 1.0f;
 }
 
 // ===================================================================
@@ -296,10 +277,12 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
   float MedTerrain =
       FBM(MedX * 0.0000001f, MedY * 0.0000001f, Seed + 1500, 4, 0.45f, 2.0f);
 
-  // --- LAYER 3: Mountain ranges (RidgeFBM strictly masked to high elevations)
+  // --- LAYER 3: Mountain ranges (RidgeFBM masked to highlands)
   // ---
-  float MountainMask = FMath::Clamp((Continental - 0.60f) / 0.25f, 0.0f, 1.0f);
-  MountainMask = MountainMask * MountainMask * MountainMask; // tight onset
+  // Onset at Continental 0.52 → mountains begin building at moderate
+  // continental heights, creating broad ranges like real Earth.
+  float MountainMask = FMath::Clamp((Continental - 0.52f) / 0.30f, 0.0f, 1.0f);
+  MountainMask = MountainMask * MountainMask; // quadratic onset for natural ramp
 
   float MX = WX, MY = WY;
   DomainWarp(MX, MY, Seed + 7000, 8000000.0f, 0.00000012f);
@@ -307,7 +290,8 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
       RidgeFBM(MX * 0.00000012f, MY * 0.00000012f, Seed + 2000, 4, 0.45f, 2.1f);
 
   // --- LAYER 3b: Foothills (plain FBM, no shaping) ---
-  float FoothillMask = FMath::Clamp((Continental - 0.42f) / 0.35f, 0.0f, 1.0f);
+  // Begin at Continental 0.38 for a gradual highland approach.
+  float FoothillMask = FMath::Clamp((Continental - 0.38f) / 0.30f, 0.0f, 1.0f);
   FoothillMask = FoothillMask * FoothillMask;
   float FX = WX, FY = WY;
   DomainWarp(FX, FY, Seed + 5555, 4000000.0f, 0.00000025f);
@@ -344,8 +328,9 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
       FBM(SMX * 0.0000065f, SMY * 0.0000065f, Seed + 4700, 2, 0.40f, 2.0f);
 
   // --- Compose terrain height ---
-  const float Mask = IslandMask(WorldX, WorldY, Seed);
-  constexpr float LandBase = 0.56f;
+  // Planet mode: no island mask. Oceans form where H < 0.55 (sea level).
+  // LandBase lowered to 0.52 so continental noise can push below sea level.
+  constexpr float LandBase = 0.52f;
 
   // ================================================================
   //  REGIONALLY-GATED HILLINESS
@@ -354,17 +339,22 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
   //  only in upland zones. We simulate this without actual erosion by
   //  using the REGIONAL layer (MedTerrain, ~100km scale) as a gatekeeper:
   //
-  //    MedTerrain < 0.42  →  LocalHillAmp ≈ 0  →  flat valley floor
-  //    MedTerrain 0.42-0.62 →  LocalHillAmp 0→1  →  transition hillside
-  //    MedTerrain > 0.62  →  LocalHillAmp = 1  →  full rolling hills
+  //    MedTerrain < 0.38  →  LocalHillAmp ≈ 0  →  flat valley floor
+  //    MedTerrain 0.38-0.55 →  LocalHillAmp 0→1  →  transition hillside
+  //    MedTerrain > 0.55  →  LocalHillAmp = 1  →  full rolling hills
   //
-  //  Result: ~40% of land is flat-ish (buildable valley floors),
-  //          ~35% gentle rolling hills,
-  //          ~25% proper hill country / foothills / mountains.
+  //  Earth-like target amplitudes (in normalized height units):
+  //    Continental: 0.10  → 2000m range (broad continental shelves vs highlands)
+  //    Regional:    0.08  → ±1600m (valleys vs plateaus)
+  //    Mountains:   0.30  → up to 6000m peaks (masked to highlands only)
+  //    Foothills:   0.04  → 800m (highland approach zones)
+  //    Hills:       0.035 → ±700m (rolling terrain in uplands)
+  //    HillsMed:    0.015 → ±300m (secondary undulation)
+  //    HillsMicro:  0.005 → ±100m (surface texture)
   // ================================================================
 
   // LocalHillAmp: how hilly should local terrain be here?
-  const float LocalHillAmp = FMath::SmoothStep(0.42f, 0.62f, MedTerrain);
+  const float LocalHillAmp = FMath::SmoothStep(0.38f, 0.55f, MedTerrain);
 
   // Asymmetric erosion on HillsBroad: flatten downslopes (valleys), keep
   // upslopes (crests). This gives hill crests character while valley sides are
@@ -374,32 +364,18 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
   const float ErodedHills = 0.5f + LH;
 
   float H =
-      LandBase + Continental * 0.040f // continental tilt (0-800m)
-      + (MedTerrain - 0.5f) * 0.055f  // REGIONAL valleys vs uplands (±1100m)
-      + Ridges * MountainMask * 0.22f // mountain ridgelines (tightly masked)
-      + Foothills * FoothillMask * 0.028f // highland approach (0-560m, masked)
+      LandBase + Continental * 0.10f  // continental tilt (0-2000m)
+      + (MedTerrain - 0.5f) * 0.08f   // REGIONAL valleys vs uplands (±1600m)
+      + Ridges * MountainMask * 0.30f  // mountain ridgelines (up to 6000m)
+      + Foothills * FoothillMask * 0.04f // highland approach (0-800m, masked)
       // Local hills gated by regional height:
-      + (ErodedHills - 0.5f) * 0.024f *
-            LocalHillAmp // main hills (±480m in uplands)
-      +
-      (HillsMed - 0.5f) * 0.010f * LocalHillAmp; // secondary (±200m in uplands)
+      + (ErodedHills - 0.5f) * 0.035f *
+            LocalHillAmp // main hills (±700m in uplands)
+      + (HillsMed - 0.5f) * 0.015f * LocalHillAmp // secondary (±300m)
+      + (HillsMicro - 0.5f) * 0.005f * LocalHillAmp; // micro detail (±100m)
 
-  // Blend toward ocean floor at edges.
-  constexpr float ShallowOceanHeight = 0.50f;
-  constexpr float DeepOceanHeight = 0.0f;
-
-  float OceanFloor = (Mask > 0.15f) ? ShallowOceanHeight : DeepOceanHeight;
-  if (Mask < 0.50f && Mask > 0.15f) {
-    float ShelfT = (Mask - 0.15f) / 0.35f;
-    ShelfT = ShelfT * ShelfT * (3.0f - 2.0f * ShelfT);
-    OceanFloor = FMath::Lerp(ShallowOceanHeight, H, ShelfT);
-  } else if (Mask <= 0.15f) {
-    float AbyssT = Mask / 0.15f;
-    AbyssT = AbyssT * AbyssT * (3.0f - 2.0f * AbyssT);
-    OceanFloor = FMath::Lerp(DeepOceanHeight, ShallowOceanHeight, AbyssT);
-  }
-
-  H = (Mask >= 0.50f) ? H : OceanFloor;
+  // Planet mode: no island-edge ocean blend.
+  // Low continental noise naturally produces sub-sea-level terrain = oceans.
   return FMath::Clamp(H, 0.0f, 1.0f);
 }
 
@@ -563,4 +539,14 @@ void FPMNoise::TalusErosion(TArray<float> &Heights, int32 Res,
       }
     }
   }
+}
+
+// ===================================================================
+//  World-space terrain surface Z (convenience)
+// ===================================================================
+
+float FPMNoise::TerrainSurfaceZ(float WorldX, float WorldY, int32 Seed) {
+  const float H = TerrainHeight(WorldX, WorldY, Seed);
+  return FPMChunkConstants::MinWorldZ +
+         H * FPMChunkConstants::WorldHeightRange;
 }
