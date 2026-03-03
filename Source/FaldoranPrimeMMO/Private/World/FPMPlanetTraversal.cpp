@@ -271,28 +271,3 @@ void UFPMPlanetTraversal::TickComponent(
                         TotalDistanceCm / 100000.f, CircPct));
   }
 }
-
-// ===================================================================
-//  CalcCompassHeading
-// ===================================================================
-FString UFPMPlanetTraversal::CalcCompassHeading(const FVector &Dir) const {
-  if (Dir.Size2D() < 0.01f)
-    return TEXT("--");
-  const float A = FMath::Atan2(Dir.X, -Dir.Y) * (180.f / PI);
-  const float H = FMath::Fmod(A + 360.f, 360.f);
-  if (H < 22.5f || H >= 337.5f)
-    return TEXT("N");
-  if (H < 67.5f)
-    return TEXT("NE");
-  if (H < 112.5f)
-    return TEXT("E");
-  if (H < 157.5f)
-    return TEXT("SE");
-  if (H < 202.5f)
-    return TEXT("S");
-  if (H < 247.5f)
-    return TEXT("SW");
-  if (H < 292.5f)
-    return TEXT("W");
-  return TEXT("NW");
-}

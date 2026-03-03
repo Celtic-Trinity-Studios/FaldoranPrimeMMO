@@ -175,38 +175,6 @@ void AFPMPlayerCharacter::BeginPlay() {
          *CharacterName, IsLocallyControlled() ? TEXT("true") : TEXT("false"));
 }
 
-// --- Compass helper ---
-
-static FString YawToCompass(float Yaw) {
-  // Normalize to 0-360
-  while (Yaw < 0.f)
-    Yaw += 360.f;
-  while (Yaw >= 360.f)
-    Yaw -= 360.f;
-
-  // UE: 0=X+ (forward), 90=Y+ (right)
-  // Map to compass: N=+X, E=+Y, S=-X, W=-Y
-  FString Dir;
-  if (Yaw >= 337.5f || Yaw < 22.5f)
-    Dir = TEXT("N");
-  else if (Yaw < 67.5f)
-    Dir = TEXT("NE");
-  else if (Yaw < 112.5f)
-    Dir = TEXT("E");
-  else if (Yaw < 157.5f)
-    Dir = TEXT("SE");
-  else if (Yaw < 202.5f)
-    Dir = TEXT("S");
-  else if (Yaw < 247.5f)
-    Dir = TEXT("SW");
-  else if (Yaw < 292.5f)
-    Dir = TEXT("W");
-  else
-    Dir = TEXT("NW");
-
-  return FString::Printf(TEXT("%s (%.0f°)"), *Dir, Yaw);
-}
-
 void AFPMPlayerCharacter::Tick(float DeltaTime) {
   Super::Tick(DeltaTime);
 

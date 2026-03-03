@@ -4,19 +4,40 @@
 #include "World/FPMNoise.h"
 
 // ===================================================================
-//  Coordinate Conversions (unchanged)
+//  Geodetic Coordinate Helpers
+// ===================================================================
+
+double FFPMGeoCoord::GreatCircleDistanceCm(const FFPMGeoCoord &Other) const {
+  // Haversine formula
+  const double DLat = Other.Latitude - Latitude;
+  const double DLon = Other.Longitude - Longitude;
+  const double A = FMath::Sin(DLat * 0.5) * FMath::Sin(DLat * 0.5) +
+                   FMath::Cos(Latitude) * FMath::Cos(Other.Latitude) *
+                       FMath::Sin(DLon * 0.5) * FMath::Sin(DLon * 0.5);
+  const double C = 2.0 * FMath::Atan2(FMath::Sqrt(A), FMath::Sqrt(1.0 - A));
+  return C * FPMChunkConstants::PlanetRadiusCm;
+}
+
+// ===================================================================
+//  Coordinate Conversions
 // ===================================================================
 
 int32 FFPMChunkCoord::WrappedHexDistance(const FFPMChunkCoord &A,
                                          const FFPMChunkCoord &B) {
+  // For spherical grid: R=LatBand uses simple delta (clamped, not wrapped),
+  // Q=LonCell wraps per latitude band.
+  const int32 DR = FMath::Abs(A.R - B.R);
+  // For Q, use the equatorial wrap as a conservative estimate.
+  // Full per-band accuracy would require knowing which band we're in.
   const int32 DQ =
       FMath::Abs(FPMChunkConstants::WrappedChunkDelta(A.Q, B.Q));
-  const int32 DR =
-      FMath::Abs(FPMChunkConstants::WrappedChunkDelta(A.R, B.R));
   return FMath::Max(DQ, DR);
 }
 
 FVector FPMChunkGenerator::ChunkToWorldCenter(const FFPMChunkCoord &Coord) {
+  // Map chunk grid to local tangent-plane coordinates.
+  // Q and R directly index a flat grid at ChunkWorldSize spacing.
+  // The WorldChunkManager re-bases these relative to the player.
   const float CS = FPMChunkConstants::ChunkWorldSize;
   return FVector(static_cast<float>(Coord.Q) * CS + CS * 0.5f,
                  static_cast<float>(Coord.R) * CS + CS * 0.5f, 0.0f);
@@ -41,6 +62,97 @@ void FPMChunkGenerator::WorldToIslandNorm(const FVector &WorldPos,
       (WorldPos.X + HalfIsland) / FPMChunkConstants::StarterIslandWorldSize;
   OutNormY =
       (WorldPos.Y + HalfIsland) / FPMChunkConstants::StarterIslandWorldSize;
+}
+
+// ===================================================================
+//  Geodetic ↔ Chunk Coord Conversions
+// ===================================================================
+
+FFPMChunkCoord FPMChunkGenerator::GeoToChunkCoord(const FFPMGeoCoord &Geo) {
+  // LatBand: 0 at south pole (-PI/2), LatitudeBandCount-1 at north pole
+  const double LatNorm = (Geo.Latitude + PI * 0.5) / PI; // 0 to 1
+  const int32 LatBand = FMath::Clamp(
+      static_cast<int32>(LatNorm * FPMChunkConstants::LatitudeBandCount),
+      0, FPMChunkConstants::LatitudeBandCount - 1);
+
+  // LonCell: number of cells at this latitude
+  const int32 LonCells = FPMChunkConstants::LonCellsAtBand(LatBand);
+  const double LonNorm = (Geo.Longitude + PI) / (2.0 * PI); // 0 to 1
+  int32 LonCell = static_cast<int32>(LonNorm * LonCells);
+  if (LonCell >= LonCells) LonCell = 0; // wrap
+
+  return FFPMChunkCoord(LonCell, LatBand);
+}
+
+FFPMGeoCoord FPMChunkGenerator::ChunkCoordToGeo(const FFPMChunkCoord &Coord) {
+  // Center latitude of this band
+  const double Lat = -PI * 0.5 +
+      (static_cast<double>(Coord.R) + 0.5) * FPMChunkConstants::ChunkAngularSize;
+
+  // Center longitude of this cell
+  const int32 LonCells = FPMChunkConstants::LonCellsAtBand(Coord.R);
+  const double LonStep = 2.0 * PI / static_cast<double>(LonCells);
+  const double Lon = -PI + (static_cast<double>(Coord.Q) + 0.5) * LonStep;
+
+  return FFPMGeoCoord(Lat, Lon, 0.0);
+}
+
+FVector FPMChunkGenerator::GeoToLocal(const FFPMGeoCoord &Reference,
+                                      const FFPMGeoCoord &Target) {
+  // Local tangent plane: X=East, Y=North, Z=Up
+  // Small-angle approximation valid within ~100 km of reference
+  const double DLon = Target.Longitude - Reference.Longitude;
+  // Wrap DLon to [-PI, PI]
+  double WDLon = DLon;
+  while (WDLon > PI) WDLon -= 2.0 * PI;
+  while (WDLon <= -PI) WDLon += 2.0 * PI;
+
+  const double DLat = Target.Latitude - Reference.Latitude;
+  const double R = FPMChunkConstants::PlanetRadiusCm;
+  const double CosRefLat = FMath::Cos(Reference.Latitude);
+
+  const float X = static_cast<float>(WDLon * R * CosRefLat); // East
+  const float Y = static_cast<float>(DLat * R);               // North
+  const float Z = static_cast<float>(Target.Altitude - Reference.Altitude);
+
+  return FVector(X, Y, Z);
+}
+
+FFPMGeoCoord FPMChunkGenerator::LocalToGeo(const FFPMGeoCoord &Reference,
+                                           const FVector &LocalOffset) {
+  const double R = FPMChunkConstants::PlanetRadiusCm;
+  const double CosRefLat = FMath::Cos(Reference.Latitude);
+  const double SafeCosLat = FMath::Max(CosRefLat, 0.001); // avoid div/0 at poles
+
+  FFPMGeoCoord Result;
+  Result.Latitude = Reference.Latitude +
+      static_cast<double>(LocalOffset.Y) / R;
+  Result.Longitude = Reference.Longitude +
+      static_cast<double>(LocalOffset.X) / (R * SafeCosLat);
+  Result.Altitude = Reference.Altitude +
+      static_cast<double>(LocalOffset.Z);
+  Result.Normalize();
+  return Result;
+}
+
+FFPMGeoCoord FPMChunkGenerator::FlatWorldToGeo(const FVector &FlatPos) {
+  // Legacy flat-world: X and Y are cm from origin (0,0).
+  // Map to geodetic: X → longitude arc, Y → latitude arc.
+  const double R = FPMChunkConstants::PlanetRadiusCm;
+  FFPMGeoCoord Geo;
+  Geo.Latitude = static_cast<double>(FlatPos.Y) / R;
+  Geo.Longitude = static_cast<double>(FlatPos.X) / R;
+  Geo.Altitude = static_cast<double>(FlatPos.Z);
+  Geo.Normalize();
+  return Geo;
+}
+
+FVector3d FPMChunkGenerator::GeoToNoiseCoord(const FFPMGeoCoord &Geo,
+                                             double NoiseScale) {
+  // Project lat/lon to 3D unit sphere, then scale.
+  // This gives seamless noise sampling — no seams at date line or poles.
+  FVector3d P = Geo.ToUnitSphere();
+  return P * (FPMChunkConstants::PlanetRadiusCm * NoiseScale);
 }
 
 bool FPMChunkGenerator::IsInsideHex(float LocalX, float LocalY) {
@@ -329,41 +441,15 @@ EFPMBiome FPMChunkGenerator::AssignBiomeWeighted(float Temp, float Moist,
   //  dominant biome to prevent peppering.
   // ================================================================
 
-  float Weights[NumClimateBiomes];
-  float TotalWeight = 0;
   float MaxWeight = -1.0f;
   int32 WinnerIdx = 4; // Default: Meadows
 
   for (int32 I = 0; I < NumClimateBiomes; ++I) {
-    Weights[I] = BiomeGaussianWeight(Temp, Moist, GBiomeCenters[I]);
-    TotalWeight += Weights[I];
-    if (Weights[I] > MaxWeight) {
-      MaxWeight = Weights[I];
+    const float W = BiomeGaussianWeight(Temp, Moist, GBiomeCenters[I]);
+    if (W > MaxWeight) {
+      MaxWeight = W;
       WinnerIdx = I;
     }
-  }
-
-  // Normalize and compute confidence (how much the winner dominates)
-  float Confidence = 0.0f;
-  if (TotalWeight > 0.0001f) {
-    Confidence = MaxWeight / TotalWeight;
-  }
-
-  // --- HYSTERESIS: prevent boundary peppering ---
-  // If confidence is below threshold AND we're near a region boundary,
-  // bias toward the region's dominant biome by boosting its weight.
-  //
-  // EdgeBlend: 0 = on region boundary, 1 = deep inside region
-  // When EdgeBlend is low and confidence is low, we have peppering risk.
-  constexpr float HysteresisConfThreshold = 0.40f;
-  if (Confidence < HysteresisConfThreshold && EdgeBlend < 0.5f) {
-    // The current winner is uncertain AND we're near a region boundary.
-    // Apply the winner more forcefully — this creates spatial coherence
-    // because nearby points will tend to pick the same winner.
-    // We don't change the winner; we just commit to it more strongly
-    // by requiring a much larger weight difference to flip.
-    // (This is already mostly handled by the Voronoi region bias in T/M,
-    //  but this catches remaining edge cases.)
   }
 
   return GBiomeCenters[WinnerIdx].Biome;

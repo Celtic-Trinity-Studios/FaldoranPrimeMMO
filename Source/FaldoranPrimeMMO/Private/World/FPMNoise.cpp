@@ -395,17 +395,21 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
 // ===================================================================
 
 float FPMNoise::Temperature(float WorldX, float WorldY, int32 Seed) {
-  // --- Base: warm at sea level, cooling with altitude (lapse rate) ---
-  const float H = TerrainHeight(WorldX, WorldY, Seed);
-  const float SeaLevel = 0.55f;
-  const float AltAboveSea = FMath::Max(H - SeaLevel, 0.0f);
-  float BaseTemp = 0.75f - AltAboveSea * 3.5f;
+// --- Base: warm at sea level, cooling with altitude (lapse rate) ---
+const float H = TerrainHeight(WorldX, WorldY, Seed);
+const float SeaLevel = 0.55f;
+const float AltAboveSea = FMath::Max(H - SeaLevel, 0.0f);
+float BaseTemp = 0.75f - AltAboveSea * 3.5f;
 
-  // --- Latitude gradient (N→S: cooler north, warmer south) ---
-  const float IslandSize = FPMChunkConstants::StarterIslandWorldSize;
-  const float LatGradient =
-      (WorldY + IslandSize * 0.5f) / IslandSize; // 0=north, 1=south
-  BaseTemp += (LatGradient - 0.5f) * 0.20f;      // ±0.10
+// --- Latitude gradient (spherical planet) ---
+// Convert world Y to latitude: Y=0 is equator, ±PlanetCirc/4 is poles.
+// Temperature follows real-Earth pattern: hot at equator, cold at poles.
+const float HalfCirc = FPMChunkConstants::PlanetCircumferenceCm * 0.25f;
+const float LatFraction = FMath::Clamp(WorldY / HalfCirc, -1.0f, 1.0f);
+// Cosine curve: 1.0 at equator (lat=0), 0.0 at poles (lat=±90°)
+const float LatTemp = FMath::Cos(LatFraction * PI * 0.5f);
+// Equator adds +0.15, poles subtract -0.15 from base
+BaseTemp += (LatTemp - 0.5f) * 0.30f;
 
   // --- Voronoi region bias (±0.12 per-region: coherence, not dominance) ---
   // Each macro region has a stable temperature tendency.

@@ -52,22 +52,89 @@ enum class EFPMBiome : uint8 {
 };
 
 // =====================================================================
-//  Hexagonal Chunk Coordinate System (Axial / "Trapezoidal")
+//  Geodetic Coordinate System — True Spherical Planet
 //
-//  Uses FLAT-TOP hexagons with axial coordinates (Q, R).
-//  The third cube coordinate S is implicit: S = -Q - R.
+//  The world is a sphere with Earth radius (6,371 km).
+//  All global positions are stored as (Latitude, Longitude, Altitude)
+//  in double precision.  Rendering uses a local tangent plane centered
+//  on the player — all chunk meshes are positioned relative to the
+//  player to avoid floating-point precision loss.
 //
-//  Flat-top hex layout (looking from above):
+//  See Documents/Technical/SphericalPlanet_Migration.md for full design.
+// =====================================================================
+
+/**
+ * FFPMGeoCoord
+ *
+ * Double-precision geodetic coordinate on the spherical planet.
+ * Latitude:  -PI/2 (south pole) to +PI/2 (north pole)
+ * Longitude: -PI to +PI (wraps seamlessly)
+ * Altitude:  centimeters above sea-level sphere (negative = below sea level)
+ */
+USTRUCT(BlueprintType)
+struct FFPMGeoCoord {
+  GENERATED_BODY()
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  double Latitude = 0.0;  // radians
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  double Longitude = 0.0; // radians
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  double Altitude = 0.0;  // cm above sea level sphere
+
+  FFPMGeoCoord() = default;
+  FFPMGeoCoord(double InLat, double InLon, double InAlt = 0.0)
+      : Latitude(InLat), Longitude(InLon), Altitude(InAlt) {}
+
+  /** Wrap longitude to [-PI, PI) and clamp latitude to [-PI/2, PI/2]. */
+  void Normalize() {
+    // Clamp latitude
+    Latitude = FMath::Clamp(Latitude, -PI * 0.5, PI * 0.5);
+    // Wrap longitude
+    while (Longitude > PI)
+      Longitude -= 2.0 * PI;
+    while (Longitude <= -PI)
+      Longitude += 2.0 * PI;
+  }
+
+  /** Convert to a 3D unit-sphere point (for seamless noise sampling). */
+  FVector3d ToUnitSphere() const {
+    const double CosLat = FMath::Cos(Latitude);
+    return FVector3d(CosLat * FMath::Cos(Longitude),
+                     CosLat * FMath::Sin(Longitude),
+                     FMath::Sin(Latitude));
+  }
+
+  /** Great-circle surface distance to another point (cm). */
+  double GreatCircleDistanceCm(const FFPMGeoCoord &Other) const;
+
+  /** Latitude in degrees (convenience for debug display). */
+  double LatDeg() const { return FMath::RadiansToDegrees(Latitude); }
+  /** Longitude in degrees. */
+  double LonDeg() const { return FMath::RadiansToDegrees(Longitude); }
+
+  FString ToString() const {
+    return FString::Printf(TEXT("(%.4f°, %.4f°, alt=%.0f)"),
+                           LatDeg(), LonDeg(), Altitude);
+  }
+
+  bool operator==(const FFPMGeoCoord &Other) const {
+    return FMath::IsNearlyEqual(Latitude, Other.Latitude, 1e-12) &&
+           FMath::IsNearlyEqual(Longitude, Other.Longitude, 1e-12);
+  }
+};
+
+// =====================================================================
+//  Chunk Coordinate System — Equirectangular Grid on Sphere
 //
-//        ____
-//       /    \
-//      /      \
-//      \      /
-//       \____/
+//  Chunks tile the sphere using latitude bands and longitude cells.
+//  Q = LonCell (column), R = LatBand (row).
+//  Longitude cells per band adapt to cos(latitude) to keep chunk
+//  ground-size roughly constant (~1.28 km).
 //
-//  6 neighbors at directions: E, NE, NW, W, SW, SE
-//
-//  Reference: https://www.redblobgames.com/grids/hexagons/
+//  See Documents/Technical/SphericalPlanet_Migration.md
 // =====================================================================
 
 /**
@@ -167,55 +234,64 @@ enum class EFPMChunkLOD : uint8 {
  * FPMChunkConstants
  *
  * All chunk-system constants in one place.
- * Now uses hexagonal geometry (flat-top orientation).
+ * Spherical planet with Earth-scale dimensions.
+ *
+ * The rendering plane is always flat and centered on the player.
+ * These constants define the sphere geometry, chunk sizing on the
+ * sphere surface, and the local tangent-plane parameters.
  */
 namespace FPMChunkConstants {
 
-// --- Hex Geometry ---
-// World-simulation scale with 1.28km chunks
-// HexOuterRadius = distance from center to any vertex
-// HexInnerRadius = distance from center to mid-edge = OuterRadius * sqrt(3)/2
+// --- Spherical Planet Geometry (Earth-scale) ---
 
-/** Outer radius of each hex chunk (center-to-vertex) in cm */
-constexpr float HexOuterRadius = 64000.0f; // 640m
+/** Planet radius in centimeters (Earth = 6,371 km). */
+constexpr double PlanetRadiusCm = 637100000.0;
 
-/** Inner radius (center-to-edge, "apothem") */
-constexpr float HexInnerRadius = 55425.63f; // 64000 * sqrt(3)/2
+/** Planet radius in km (convenience). */
+constexpr double PlanetRadiusKm = 6371.0;
 
-/** Hex width (flat-top) = 2 * OuterRadius */
-constexpr float HexWidth = 2.0f * HexOuterRadius; // 128000cm = 1.28km
+/** Planet circumference in cm (2 * PI * R). */
+constexpr double PlanetCircumferenceCm_D = 2.0 * 3.14159265358979323846 * PlanetRadiusCm;
 
-/** Legacy Alias: ChunkWorldSize remains for backward compatibility */
-constexpr float ChunkWorldSize = HexWidth;
+/** Float versions for existing code compatibility. */
+constexpr float PlanetCircumferenceCm = 4007500000.0f; // ~40,075 km
+constexpr float HalfCircumferenceCm = PlanetCircumferenceCm * 0.5f;
+constexpr float PlanetCircumferenceKm = 40075.0f;
 
-/** Hex bounding box height = 2 * InnerRadius */
-constexpr float HexHeight = 2.0f * HexInnerRadius; // 110851.26cm
+// --- Chunk Geometry ---
+// Each chunk covers a fixed angular size on the sphere surface.
+// At the equator this maps to ~1.28 km ground size.
 
-/** Hex horizontal spacing between centers (3/4 of width) */
-constexpr float HexSpacingX = HexWidth * 0.75f; // 96000cm
+/** Ground-space size of a chunk at the equator (cm). */
+constexpr float ChunkWorldSize = 128000.0f; // 1.28 km
 
-/** Total heightmap vertices per chunk (square grid covering hex bbox) */
-constexpr int32 ChunkResolution = 33; // Keep memory low
+/** Angular size of one chunk in radians (at equator). */
+constexpr double ChunkAngularSize =
+    static_cast<double>(ChunkWorldSize) / PlanetRadiusCm; // ~0.000201 rad ≈ 0.01152°
+
+/** Number of latitude bands covering pole-to-pole. */
+constexpr int32 LatitudeBandCount =
+    static_cast<int32>(3.14159265358979323846 / ChunkAngularSize); // ~15,654
+
+/** Maximum longitude cells at equator. */
+constexpr int32 MaxLonCellsAtEquator =
+    static_cast<int32>(2.0 * 3.14159265358979323846 / ChunkAngularSize); // ~31,309
+
+/** Legacy hex geometry aliases (for PMC mesh building — still uses flat chunks) */
+constexpr float HexOuterRadius = 64000.0f;
+constexpr float HexInnerRadius = 55425.63f;
+constexpr float HexWidth = ChunkWorldSize;
+constexpr float HexHeight = 2.0f * HexInnerRadius;
+constexpr float HexSpacingX = HexWidth * 0.75f;
+
+/** Total heightmap vertices per chunk (square grid covering chunk bbox) */
+constexpr int32 ChunkResolution = 33;
 constexpr int32 ChunkVertexCount = ChunkResolution * ChunkResolution;
 
-// --- Toroidal Planet Geometry ---
-// The world wraps seamlessly in both X and Y. Walking in any direction
-// eventually returns you to where you started — no edges, no ocean dropoff.
-
-/** Number of unique chunks along each axis before the world wraps. */
-constexpr int32 PlanetChunksPerAxis = 10001;
-
-/** Planet circumference in cm (the wrap distance on each axis). */
-constexpr float PlanetCircumferenceCm =
-    static_cast<float>(PlanetChunksPerAxis) * HexWidth;
-
-/** Half-circumference — used for shortest-path distance calculations. */
-constexpr float HalfCircumferenceCm = PlanetCircumferenceCm * 0.5f;
-
-/** Planet circumference in km (convenience for UI display). */
-constexpr float PlanetCircumferenceKm = PlanetCircumferenceCm / 100000.0f;
-
-/** Legacy aliases for backward compat with existing biome/climate code. */
+/** Legacy aliases for backward compat with existing biome/climate code.
+ *  StarterIslandWorldSize = full planet circumference (the "island" is the
+ *  whole planet now — there are no edges). */
+constexpr int32 PlanetChunksPerAxis = MaxLonCellsAtEquator; // ~31,309
 constexpr int32 StarterIslandRings = PlanetChunksPerAxis / 2;
 constexpr int32 StarterIslandChunksPerAxis = PlanetChunksPerAxis;
 constexpr float StarterIslandWorldSize = PlanetCircumferenceCm;
@@ -223,9 +299,7 @@ constexpr float StarterIslandWorldSize = PlanetCircumferenceCm;
 /** Normalized sea level (0.55 = Z=0 in world space). */
 constexpr float SeaLevelNormalized = 0.55f;
 
-/** View distance rings (in hex distance from player chunk).
- *  Actors are half-scale, so terrain visually reads as larger — we can
- *  load fewer chunks and still feel like a big world.
+/** View distance rings (in grid distance from player chunk).
  *  Full:   2 rings ≈ 2.6km  — collision + foliage
  *  Medium: 5 rings ≈ 6.4km  — mid-res mesh
  *  Low:    9 rings ≈ 11.5km — low-res silhouettes */
@@ -233,21 +307,48 @@ inline int32 FullDetailRange = 2;
 inline int32 MediumDetailRange = 5;
 inline int32 LowDetailRange = 9;
 
-/** Island radius as a fraction of the island grid.
- *  Override in Config/WorldGen.ini [Terrain] with IslandRadiusFraction. */
-inline float IslandRadiusFraction = 0.55f;
+/** Island radius fraction — legacy, effectively 1.0 (whole planet). */
+inline float IslandRadiusFraction = 1.0f;
 
-// --- Vertical Scale (World Simulation Scale) ---
-// Sea Level is at Z=0.
-// Depth: -11,000m (Mariana Trench)
-// Height: +9,000m (Mount Everest)
-constexpr float MinWorldZ = -1100000.0f;                  // -11km
-constexpr float MaxWorldZ = 900000.0f;                    // +9km
-constexpr float WorldHeightRange = MaxWorldZ - MinWorldZ; // 20km total
+// --- Vertical Scale ---
+// Sea Level is at Z=0 (and at PlanetRadiusCm from center).
+// Depth: -10,994m (Mariana Trench, rounded to -11km)
+// Height: +8,849m (Everest, rounded to +9km)
+constexpr float MinWorldZ = -1100000.0f;                  // -11 km
+constexpr float MaxWorldZ = 900000.0f;                    // +9 km
+constexpr float WorldHeightRange = MaxWorldZ - MinWorldZ; // 20 km total
 
-// --- Coordinate Wrapping Helpers ---
+// --- Coordinate Helpers ---
+// These still work in local tangent-plane space (cm) for existing code.
+// The WorldChunkManager converts geo→local before chunk operations.
 
-/** Wrap a world-space X or Y coordinate into [0, PlanetCircumferenceCm). */
+/** Get the number of longitude cells at a given latitude band. */
+inline int32 LonCellsAtBand(int32 LatBand) {
+  // Band center latitude in radians
+  const double BandLat = -3.14159265358979323846 * 0.5 +
+      (static_cast<double>(LatBand) + 0.5) * ChunkAngularSize;
+  const double CosLat = FMath::Abs(FMath::Cos(BandLat));
+  const int32 Cells = FMath::Max(1, static_cast<int32>(
+      2.0 * 3.14159265358979323846 * CosLat / ChunkAngularSize));
+  return Cells;
+}
+
+/** Wrap a longitude cell index for a given latitude band. */
+inline int32 WrapLonCell(int32 LonCell, int32 LatBand) {
+  const int32 Count = LonCellsAtBand(LatBand);
+  LonCell = LonCell % Count;
+  if (LonCell < 0)
+    LonCell += Count;
+  return LonCell;
+}
+
+/** Clamp a latitude band to valid range [0, LatitudeBandCount). */
+inline int32 ClampLatBand(int32 LatBand) {
+  return FMath::Clamp(LatBand, 0, LatitudeBandCount - 1);
+}
+
+/** Wrap a world-space X or Y coordinate into [0, PlanetCircumferenceCm).
+ *  Legacy — used by tangent-plane local coordinates. */
 inline float WrapWorldCoord(float V) {
   V = FMath::Fmod(V, PlanetCircumferenceCm);
   if (V < 0.0f)
@@ -255,7 +356,7 @@ inline float WrapWorldCoord(float V) {
   return V;
 }
 
-/** Wrap a chunk-axis index into [0, PlanetChunksPerAxis). */
+/** Legacy chunk coord wrap (equatorial count). */
 inline int32 WrapChunkCoord(int32 C) {
   C = C % PlanetChunksPerAxis;
   if (C < 0)
@@ -263,7 +364,7 @@ inline int32 WrapChunkCoord(int32 C) {
   return C;
 }
 
-/** Shortest signed distance between two world coords on one axis. */
+/** Shortest signed distance between two local coords on one axis. */
 inline float WrappedDelta(float A, float B) {
   float D = B - A;
   if (D > HalfCircumferenceCm)
@@ -409,6 +510,34 @@ public:
    * @return true if inside the flat-top hexagon
    */
   static bool IsInsideHex(float LocalX, float LocalY);
+
+  // --- Geodetic Conversions ---
+
+  /** Convert a geodetic coordinate to the chunk's (LatBand, LonCell). */
+  static FFPMChunkCoord GeoToChunkCoord(const FFPMGeoCoord &Geo);
+
+  /** Get the geodetic center of a chunk. */
+  static FFPMGeoCoord ChunkCoordToGeo(const FFPMChunkCoord &Coord);
+
+  /** Convert a geodetic point to local tangent-plane offset (cm) relative
+   *  to a reference geo point.  X = East, Y = North, Z = Up. */
+  static FVector GeoToLocal(const FFPMGeoCoord &Reference,
+                            const FFPMGeoCoord &Target);
+
+  /** Convert local tangent-plane offset back to geodetic. */
+  static FFPMGeoCoord LocalToGeo(const FFPMGeoCoord &Reference,
+                                 const FVector &LocalOffset);
+
+  /** Convert a legacy flat-world position (cm) to geodetic.
+   *  Used for database migration of saved spawn positions.
+   *  Treats X as eastward arc distance, Y as northward arc distance
+   *  from the (0,0) origin which maps to Lat=0, Lon=0. */
+  static FFPMGeoCoord FlatWorldToGeo(const FVector &FlatPos);
+
+  /** Project geodetic coords to 3D unit-sphere point scaled for noise.
+   *  Multiplies by NoiseScale so noise wavelengths correspond to surface km. */
+  static FVector3d GeoToNoiseCoord(const FFPMGeoCoord &Geo,
+                                   double NoiseScale = 1.0);
 
   // --- Noise Functions (public for reuse by voxel generator) ---
 

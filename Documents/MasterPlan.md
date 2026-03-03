@@ -1,9 +1,27 @@
 # Faldoran Prime MMO — Master Plan
 
-**Vision:** Light No Fire-inspired MMO. Extreme verticality, PCG ecosystems, classless depth.  
+**Vision:** Light No Fire-inspired MMO. Earth-scale spherical planet, PCG ecosystems, classless depth.  
 **Studio:** Celtic Trinity Studios | **Engine:** UE 5.7.1 Custom | **Stack:** C++ / PostgreSQL / Dedicated Server
 
 > Completed work → [DONE.md](file:///e:/FaldoranPrimeMMO/Documents/DONE.md)
+
+---
+
+## 🌍 Spherical Planet Architecture
+- [x] **CODE:** `FFPMGeoCoord` — double-precision geodetic coordinate struct (Lat/Lon/Alt)
+- [x] **CODE:** `FPMChunkConstants` — Earth-scale (R=6,371km, C≈40,075km), adaptive lat-band chunk grid
+- [x] **CODE:** Geodetic ↔ local tangent-plane conversion functions
+- [x] **CODE:** Latitude-based temperature gradient (equator hot, poles cold)
+- [x] **CODE:** Haversine great-circle distance for `FFPMGeoCoord`
+- [x] **CODE:** 3D sphere-projected noise coordinates (`GeoToNoiseCoord`)
+- [x] **CODE:** Legacy flat-world → geodetic migration helper (`FlatWorldToGeo`)
+- [x] **DOCS:** [SphericalPlanet_Migration.md](file:///e:/FaldoranPrimeMMO/Documents/Technical/SphericalPlanet_Migration.md)
+- [ ] **CODE (Phase 2):** Noise sampling via 3D sphere projection end-to-end (bypass flat XY)
+- [ ] **CODE (Phase 2):** WorldChunkManager tracks player as `FFPMGeoCoord`
+- [ ] **CODE (Phase 2):** Chunk gather uses adaptive lon-cells per latitude band
+- [ ] **CODE (Phase 3):** Orbital camera / space transition at 100km altitude
+- [ ] **CODE (Phase 3):** Planet-scale LOD shell visible from orbit
+- [ ] **DB MIGRATE:** Add `spawn_lat / spawn_lon / spawn_alt` columns (Phase 2)
 
 ---
 
@@ -65,8 +83,9 @@
 
 ## Reference
 - [DONE.md](file:///e:/FaldoranPrimeMMO/Documents/DONE.md) — all completed work
+- [Spherical Planet Design](file:///e:/FaldoranPrimeMMO/Documents/Technical/SphericalPlanet_Migration.md) — architecture, phases, real-world constraints
 - [Agent Prompt Library](file:///e:/FaldoranPrimeMMO/Documents/Workflows/Agent_Prompt_Library.md) — ready-to-paste agent prompts
 - [Database Schema](file:///e:/FaldoranPrimeMMO/Documents/Technical/Database_Schema_v1.sql)
-- **F key** = toggle flight in PIE
+- **G key** = toggle flight, **H key** = cycle speed tier
 
 *Copyright Celtic Trinity Studios, 2026.*

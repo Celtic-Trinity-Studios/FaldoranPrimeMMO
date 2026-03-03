@@ -89,10 +89,6 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Flight|Speeds")
   float SpeedRift = 1388889.0f; // ~50,000 km/h
 
-  /** Height above terrain surface to hold during hover/boost/rift (cm). */
-  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FPM|Flight")
-  float FlightAltitudeCm = 50000.0f;
-
 private:
   bool bIsFlying = false;
   int32 CurrentSpeedTier = 0; // starts at Hover on first G press
@@ -117,7 +113,6 @@ private:
   // ---- Helpers ---
   float GetCurrentSpeed() const;
   FString GetTierName() const;
-  FString CalcCompassHeading(const FVector &Dir) const;
 
   void SpawnShellIfNeeded(ACharacter *Char);
   void DestroyShell();
