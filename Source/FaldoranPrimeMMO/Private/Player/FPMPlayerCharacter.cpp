@@ -1,4 +1,4 @@
-﻿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #include "Player/FPMPlayerCharacter.h"
 #include "Animation/AnimationAsset.h"
@@ -16,6 +16,7 @@
 #include "Gameplay/FPMInteractionComponent.h"
 #include "Gameplay/FPMInventoryComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "UI/FPMInventoryGridWidget.h"
 #include "World/FPMChunkData.h"
 #include "World/FPMPlanetTraversal.h"
 #include "World/FPMVoxelChunk.h"
@@ -34,7 +35,7 @@ const FName AFPMPlayerCharacter::MorphName_Lips(TEXT("Lip_Fullness"));
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
-// Species Scaling — Fallback Table
+// Species Scaling � Fallback Table
 // Used when no UFPMSpeciesRegistry data asset is assigned.
 // All values match UFPMSpeciesDataAsset field semantics.
 // Walk/Run speeds are absolute cm/s (NOT multipliers).
@@ -45,8 +46,8 @@ struct FFallbackSpeciesData {
   float MeshScale;         // Uniform scale for the skeletal mesh
   float CapsuleHalfHeight; // Capsule half-height (cm)
   float CapsuleRadius;     // Capsule radius (cm)
-  float BaseWalkSpeed;     // Normal walk speed (cm/s) — avg human = 150
-  float BaseRunSpeed;      // Run speed (cm/s, hold Shift) — default 500
+  float BaseWalkSpeed;     // Normal walk speed (cm/s) � avg human = 150
+  float BaseRunSpeed;      // Run speed (cm/s, hold Shift) � default 500
   float BoomLength;        // Camera spring arm length (cm)
   float JumpMultiplier;    // Multiplier on JumpZVelocity (420 base)
 };
@@ -55,17 +56,17 @@ struct FFallbackSpeciesData {
 //                                               MeshSc  CapsHH CapsR  Walk  Run   Boom   Jump
 static const FFallbackSpeciesData FallbackData[] = {
   // Reference: walk = 1.3 m/s (3 mph), run = 2.6 m/s (6 mph, 2x walk)
-  // Jump base 300 cm/s gives ~46cm height (UE default gravity 980 cm/s²)
-  // h = v²/(2g)
-  /* Human    — reference                    */ {0.50f,  45.0f, 17.0f, 130.f, 260.f, 200.f, 1.00f},
-  /* HalfElf  — slightly taller stride       */ {0.525f, 47.0f, 17.0f, 133.f, 266.f, 210.f, 1.00f},
-  /* Elf      — tall, elegant stride         */ {0.54f,  48.5f, 16.0f, 137.f, 274.f, 215.f, 1.02f},
-  /* Dwarf    — short legs, slower           */ {0.375f, 34.0f, 19.0f, 120.f, 240.f, 160.f, 0.90f},
-  /* Halfling — quick scurry, light jump     */ {0.275f, 25.0f, 14.0f, 115.f, 230.f, 140.f, 1.15f},
-  /* HalfOrc  — heavy, slightly slower walk  */ {0.575f, 51.5f, 20.0f, 127.f, 254.f, 230.f, 0.95f},
-  /* Gnome    — tiny, scurrying pace         */ {0.275f, 25.0f, 13.0f, 118.f, 236.f, 135.f, 1.12f},
-  /* Kethari  — cat-race, agile stride       */ {0.475f, 43.0f, 16.0f, 135.f, 270.f, 190.f, 1.05f},
-  /* Rauken   — dog-race, steady             */ {0.525f, 47.0f, 18.0f, 130.f, 260.f, 210.f, 1.00f},
+  // Jump base 300 cm/s gives ~46cm height (UE default gravity 980 cm/s�)
+  // h = v�/(2g)
+  /* Human    � reference                    */ {0.50f,  45.0f, 17.0f, 130.f, 260.f, 200.f, 1.00f},
+  /* HalfElf  � slightly taller stride       */ {0.525f, 47.0f, 17.0f, 133.f, 266.f, 210.f, 1.00f},
+  /* Elf      � tall, elegant stride         */ {0.54f,  48.5f, 16.0f, 137.f, 274.f, 215.f, 1.02f},
+  /* Dwarf    � short legs, slower           */ {0.375f, 34.0f, 19.0f, 120.f, 240.f, 160.f, 0.90f},
+  /* Halfling � quick scurry, light jump     */ {0.275f, 25.0f, 14.0f, 115.f, 230.f, 140.f, 1.15f},
+  /* HalfOrc  � heavy, slightly slower walk  */ {0.575f, 51.5f, 20.0f, 127.f, 254.f, 230.f, 0.95f},
+  /* Gnome    � tiny, scurrying pace         */ {0.275f, 25.0f, 13.0f, 118.f, 236.f, 135.f, 1.12f},
+  /* Kethari  � cat-race, agile stride       */ {0.475f, 43.0f, 16.0f, 135.f, 270.f, 190.f, 1.05f},
+  /* Rauken   � dog-race, steady             */ {0.525f, 47.0f, 18.0f, 130.f, 260.f, 210.f, 1.00f},
 };
 // clang-format on
 static constexpr int32 FallbackDataCount =
@@ -137,13 +138,13 @@ AFPMPlayerCharacter::AFPMPlayerCharacter() {
   FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
   FollowCamera->bUsePawnControlRotation = false;
 
-  // Character movement defaults — ApplySpeciesScaling() overrides these
+  // Character movement defaults � ApplySpeciesScaling() overrides these
   // once a species is selected; these are sane construction-time values.
   if (UCharacterMovementComponent *CMC = GetCharacterMovement()) {
     CMC->bOrientRotationToMovement = true;
     CMC->RotationRate = FRotator(0.0f, 540.0f, 0.0f);
     CMC->MaxWalkSpeed = CachedWalkSpeed; // 130 cm/s (1.3 m/s, avg human walk)
-    // Base 300 cm/s → h = 300²/(2×980) ≈ 45.9cm (average adult vertical jump)
+    // Base 300 cm/s ? h = 300�/(2�980) � 45.9cm (average adult vertical jump)
     CMC->JumpZVelocity = 300.0f;
 
     // Reduce "ServerMove TimeStamp expired" warnings in PIE listen-server.
@@ -171,7 +172,7 @@ void AFPMPlayerCharacter::BeginPlay() {
   Super::BeginPlay();
 
   UE_LOG(LogFPMPlayerCharacter, Log,
-         TEXT("FPM: PlayerCharacter spawned — Name='%s', Local=%s"),
+         TEXT("FPM: PlayerCharacter spawned � Name='%s', Local=%s"),
          *CharacterName, IsLocallyControlled() ? TEXT("true") : TEXT("false"));
 }
 
@@ -209,7 +210,7 @@ void AFPMPlayerCharacter::Tick(float DeltaTime) {
     if (!bRiftActive && Vel.Size() > MaxSafeSpeed) {
       CMC->StopMovementImmediately();
       UE_LOG(LogFPMPlayerCharacter, Warning,
-             TEXT("FPM: Velocity clamp — killed extreme velocity (%.0f cm/s)"),
+             TEXT("FPM: Velocity clamp � killed extreme velocity (%.0f cm/s)"),
              Vel.Size());
     }
   }
@@ -261,7 +262,7 @@ void AFPMPlayerCharacter::Tick(float DeltaTime) {
       if (SurfaceZ > 0.0f) {
         SafePos = FVector(Loc.X, Loc.Y, SurfaceZ + CapsuleHalf + 50.0f);
       } else {
-        // Terrain is underwater at our XY — find nearest safe land
+        // Terrain is underwater at our XY � find nearest safe land
         // Use a simple spiral search for above-sea-level terrain
         bool bFoundSafe = false;
         const float Step = 128000.0f; // 1.28km
@@ -377,7 +378,7 @@ void AFPMPlayerCharacter::InitializeAppearance(
   ApplyAppearance();
 
   UE_LOG(LogFPMPlayerCharacter, Log,
-         TEXT("FPM: Appearance initialized — Name='%s', Species=%d, Body=%d, "
+         TEXT("FPM: Appearance initialized � Name='%s', Species=%d, Body=%d, "
               "Skin=(%.2f,%.2f,%.2f), Eye=(%.2f,%.2f,%.2f), "
               "Hair=(%.2f,%.2f,%.2f), Morphs=(%.2f,%.2f,%.2f,%.2f)"),
          *CharacterName, Species, BodyType, SkinTone.R, SkinTone.G, SkinTone.B,
@@ -390,7 +391,7 @@ void AFPMPlayerCharacter::InitializeAppearance(
 // -------------------------------------------------------------------
 
 void AFPMPlayerCharacter::OnRep_CharacterName() {
-  UE_LOG(LogFPMPlayerCharacter, Log, TEXT("FPM: OnRep_CharacterName — '%s'"),
+  UE_LOG(LogFPMPlayerCharacter, Log, TEXT("FPM: OnRep_CharacterName � '%s'"),
          *CharacterName);
   // Future: update nameplate widget
 }
@@ -444,7 +445,7 @@ void AFPMPlayerCharacter::ApplyAppearance() {
   }
 
   UE_LOG(LogFPMPlayerCharacter, Verbose,
-         TEXT("FPM: ApplyAppearance — Species=%d, Body=%d, "
+         TEXT("FPM: ApplyAppearance � Species=%d, Body=%d, "
               "Skin=(%.2f,%.2f,%.2f), Eye=(%.2f,%.2f,%.2f), "
               "Hair=(%.2f,%.2f,%.2f), Morphs=(%.2f,%.2f,%.2f,%.2f)"),
          Species, BodyType, SkinTone.R, SkinTone.G, SkinTone.B, EyeColor.R,
@@ -457,7 +458,7 @@ void AFPMPlayerCharacter::ApplyAppearance() {
 
 void AFPMPlayerCharacter::ApplySpeciesScaling() {
   // ----------------------------------------------------------------
-  // Resolve species values — prefer UFPMSpeciesRegistry if assigned,
+  // Resolve species values � prefer UFPMSpeciesRegistry if assigned,
   // fall back to the hardcoded FallbackData table.
   // ----------------------------------------------------------------
   float MeshScale = 0.50f;
@@ -487,7 +488,7 @@ void AFPMPlayerCharacter::ApplySpeciesScaling() {
 
     UE_LOG(
         LogFPMPlayerCharacter, Log,
-        TEXT("FPM: Species scaling from DA '%s' — Scale=%.2f, "
+        TEXT("FPM: Species scaling from DA '%s' � Scale=%.2f, "
              "Capsule=(%.0f/%.0f), Walk=%.0f, Run=%.0f, Boom=%.0f, Jump=%.2fx"),
         *DA->GetName(), MeshScale, CapsHH, CapsR, WalkSpeed, RunSpeed, Boom,
         JumpMult);
@@ -505,7 +506,7 @@ void AFPMPlayerCharacter::ApplySpeciesScaling() {
     JumpMult = F.JumpMultiplier;
 
     UE_LOG(LogFPMPlayerCharacter, Log,
-           TEXT("FPM: Species scaling from fallback table (no registry) — "
+           TEXT("FPM: Species scaling from fallback table (no registry) � "
                 "Idx=%d, Scale=%.2f, Capsule=(%.0f/%.0f), "
                 "Walk=%.0f, Run=%.0f, Boom=%.0f, Jump=%.2fx"),
            Idx, MeshScale, CapsHH, CapsR, WalkSpeed, RunSpeed, Boom, JumpMult);
@@ -527,14 +528,14 @@ void AFPMPlayerCharacter::ApplySpeciesScaling() {
     SM->SetRelativeLocation(FVector(0.0f, 0.0f, -CapsHH));
   }
 
-  // Cache walk/run speeds — HandleMovementInput reads these every frame
+  // Cache walk/run speeds � HandleMovementInput reads these every frame
   CachedWalkSpeed = WalkSpeed;
   CachedRunSpeed = RunSpeed;
 
   // Set CMC to current run state (could be called mid-game if species changes)
   if (UCharacterMovementComponent *CMC = GetCharacterMovement()) {
     CMC->MaxWalkSpeed = bIsRunning ? CachedRunSpeed : CachedWalkSpeed;
-    // Base 300 cm/s * JumpMult. h = v²/(2g): 300→46cm, 345→61cm, 270→37cm
+    // Base 300 cm/s * JumpMult. h = v�/(2g): 300?46cm, 345?61cm, 270?37cm
     CMC->JumpZVelocity = 300.0f * JumpMult;
   }
 
@@ -600,23 +601,51 @@ void AFPMPlayerCharacter::TryInteract() {
 void AFPMPlayerCharacter::ToggleInventory() {
   bInventoryOpen = !bInventoryOpen;
 
+  APlayerController *PC = Cast<APlayerController>(GetController());
+
   if (bInventoryOpen) {
     UE_LOG(LogFPMPlayerCharacter, Log, TEXT("FPM: Inventory OPENED"));
-    // TODO: Show inventory widget
-    if (InventoryComponent) {
-      const auto &Slots = InventoryComponent->GetSlots();
-      int32 UsedSlots = 0;
-      for (const auto &Slot : Slots) {
-        if (!Slot.IsEmpty())
-          UsedSlots++;
+
+    if (IsLocallyControlled() && PC) {
+      TSubclassOf<UFPMInventoryGridWidget> ClassToSpawn =
+          InventoryGridWidgetClass
+              ? InventoryGridWidgetClass
+              : TSubclassOf<UFPMInventoryGridWidget>(
+                    UFPMInventoryGridWidget::StaticClass());
+
+      InventoryGridWidget =
+          CreateWidget<UFPMInventoryGridWidget>(PC, ClassToSpawn);
+
+      if (InventoryGridWidget && InventoryComponent) {
+        InventoryGridWidget->InitializeInventory(InventoryComponent);
+        InventoryGridWidget->AddToViewport(50);
+
+        FInputModeGameAndUI UIMode;
+        UIMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+        UIMode.SetHideCursorDuringCapture(false);
+        PC->SetInputMode(UIMode);
+        PC->SetShowMouseCursor(true);
+
+        UE_LOG(
+            LogFPMPlayerCharacter, Log,
+            TEXT("FPM: Inventory widget created � %d item(s) in %d�%d grid."),
+            InventoryComponent->GetItems().Num(),
+            InventoryComponent->GetGridWidth(),
+            InventoryComponent->GetGridHeight());
       }
-      UE_LOG(LogFPMPlayerCharacter, Log,
-             TEXT("FPM: Inventory has %d/%d slots in use"), UsedSlots,
-             Slots.Num());
     }
   } else {
     UE_LOG(LogFPMPlayerCharacter, Log, TEXT("FPM: Inventory CLOSED"));
-    // TODO: Hide inventory widget
+
+    if (InventoryGridWidget) {
+      InventoryGridWidget->RemoveFromParent();
+      InventoryGridWidget = nullptr;
+    }
+
+    if (IsLocallyControlled() && PC && !bHUDMouseMode) {
+      PC->SetInputMode(FInputModeGameOnly());
+      PC->SetShowMouseCursor(false);
+    }
   }
 }
 
@@ -632,13 +661,26 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
 
   // --- Middle Mouse Button: toggle first-person / third-person camera ---
   {
-    static bool bMMBWasDown = false;
     const bool bMMBIsDown = PC->IsInputKeyDown(EKeys::MiddleMouseButton);
     if (bMMBIsDown && !bMMBWasDown) {
       if (CameraBoom) {
         const bool bIsFirstPerson = CameraBoom->TargetArmLength < 10.f;
-        CameraBoom->TargetArmLength = bIsFirstPerson ? 400.f : 0.f;
-        CameraBoom->bEnableCameraLag = !bIsFirstPerson;
+        if (bIsFirstPerson) {
+          // Switch TO third-person
+          CameraBoom->TargetArmLength = 400.f;
+          CameraBoom->bEnableCameraLag = true;
+          CameraBoom->bDoCollisionTest = true;
+          if (GetMesh())
+            GetMesh()->SetOwnerNoSee(false);
+        } else {
+          // Switch TO first-person
+          CameraBoom->TargetArmLength = 0.f;
+          CameraBoom->bEnableCameraLag = false; // No lag in first-person!
+          CameraBoom->bDoCollisionTest = false; // Don't push camera forward
+          CameraBoom->CameraLagSpeed = 0.f;
+          if (GetMesh())
+            GetMesh()->SetOwnerNoSee(true); // Hide own mesh
+        }
       }
     }
     bMMBWasDown = bMMBIsDown;
@@ -646,17 +688,16 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
 
   // --- HUD cursor mode (Tab key with debounce) ---
   // Tab toggles between:
-  //   Game-only mode  — mouse locked, camera control active
-  //   Game+UI mode    — cursor visible, can click HUD buttons (biome teleport
+  //   Game-only mode  � mouse locked, camera control active
+  //   Game+UI mode    � cursor visible, can click HUD buttons (biome teleport
   //   etc)
   {
-    static bool bTabWasDown = false;
     const bool bTabIsDown = PC->IsInputKeyDown(EKeys::Tab);
     if (bTabIsDown && !bTabWasDown) {
       bHUDMouseMode = !bHUDMouseMode;
       PC->SetShowMouseCursor(bHUDMouseMode);
       if (bHUDMouseMode) {
-        // Show cursor — still allow WASD/movement but mouse clicks hit the HUD
+        // Show cursor � still allow WASD/movement but mouse clicks hit the HUD
         FInputModeGameAndUI UIMode;
         UIMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
         UIMode.SetHideCursorDuringCapture(false);
@@ -672,7 +713,8 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
   // --- Run / flight-boost (Left Shift) ---
   // Sync bIsFlying from PlanetTraversal so pitch-movement logic stays correct.
   {
-    if (const UFPMPlanetTraversal *Rift = FindComponentByClass<UFPMPlanetTraversal>())
+    if (const UFPMPlanetTraversal *Rift =
+            FindComponentByClass<UFPMPlanetTraversal>())
       bIsFlying = Rift->IsFlying();
 
     const bool bShiftHeld = PC->IsInputKeyDown(EKeys::LeftShift);
@@ -694,22 +736,11 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
 
   // --- Interact (E key with debounce) ---
   {
-    static bool bEKeyWasDown = false;
     const bool bEKeyIsDown = PC->IsInputKeyDown(EKeys::E);
     if (bEKeyIsDown && !bEKeyWasDown) {
       TryInteract();
     }
     bEKeyWasDown = bEKeyIsDown;
-  }
-
-  // --- Inventory toggle (I key with debounce) ---
-  {
-    static bool bIKeyWasDown = false;
-    const bool bIKeyIsDown = PC->IsInputKeyDown(EKeys::I);
-    if (bIKeyIsDown && !bIKeyWasDown) {
-      ToggleInventory();
-    }
-    bIKeyWasDown = bIKeyIsDown;
   }
 
   FVector MoveInput = FVector::ZeroVector;
@@ -759,7 +790,7 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
     if (PC->IsInputKeyDown(EKeys::C))
       AddMovementInput(FVector::UpVector, -1.0f * VertMult);
   } else {
-    // ACharacter::Jump() checks IsGrounded internally — safe to call every
+    // ACharacter::Jump() checks IsGrounded internally � safe to call every
     // frame. StopJumping() clears the jump flag so the character doesn't
     // chain-jump.
     if (PC->IsInputKeyDown(EKeys::SpaceBar))
@@ -768,7 +799,100 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
       StopJumping();
   }
 
-  // Mouse look — suppressed while HUD cursor is visible
+  // --- Terraforming Hotkeys (1-6) ---
+  // Select tool with number keys, press same key again to deactivate.
+  // Left click applies the tool at the camera crosshair.
+  {
+    struct FToolKeyPair {
+      FKey Key;
+      ETerraformTool Tool;
+    };
+    static const FToolKeyPair ToolKeys[] = {
+        {EKeys::One, ETerraformTool::DigSmall},
+        {EKeys::Two, ETerraformTool::DigMedium},
+        {EKeys::Three, ETerraformTool::DigLarge},
+        {EKeys::Four, ETerraformTool::FillSmall},
+        {EKeys::Five, ETerraformTool::FillMedium},
+        {EKeys::Six, ETerraformTool::FillLarge},
+    };
+
+    for (int32 I = 0; I < 6; ++I) {
+      const bool bIsDown = PC->IsInputKeyDown(ToolKeys[I].Key);
+      if (bIsDown && !bKeyWasDown[I]) {
+        if (ActiveTerraformTool == ToolKeys[I].Tool) {
+          ActiveTerraformTool = ETerraformTool::None; // Toggle off
+        } else {
+          ActiveTerraformTool = ToolKeys[I].Tool; // Select
+        }
+      }
+      bKeyWasDown[I] = bIsDown;
+    }
+
+    // Left click applies the active tool
+    // Note: bLMBWasDown is tracked outside the tool-active check
+    // so it properly debounces even when switching tools.
+    const bool bLMBIsDown = PC->IsInputKeyDown(EKeys::LeftMouseButton);
+    if (ActiveTerraformTool != ETerraformTool::None) {
+      if (bLMBIsDown && !bLMBWasDown) {
+        // Determine radius and strength from the active tool.
+        // Radii are in centimeters (UE world units).
+        constexpr float SmallRadiusCm = 100.0f;   // 1m radius
+        constexpr float MediumRadiusCm = 250.0f;  // 2.5m radius
+        constexpr float LargeRadiusCm = 500.0f;   // 5m radius
+        float Radius = SmallRadiusCm;
+        float Strength = 1.0f;
+
+        switch (ActiveTerraformTool) {
+        case ETerraformTool::DigSmall:
+          Radius = SmallRadiusCm;
+          Strength = 1.0f;
+          break;
+        case ETerraformTool::DigMedium:
+          Radius = MediumRadiusCm;
+          Strength = 1.0f;
+          break;
+        case ETerraformTool::DigLarge:
+          Radius = LargeRadiusCm;
+          Strength = 1.0f;
+          break;
+        case ETerraformTool::FillSmall:
+          Radius = SmallRadiusCm;
+          Strength = -1.0f;
+          break;
+        case ETerraformTool::FillMedium:
+          Radius = MediumRadiusCm;
+          Strength = -1.0f;
+          break;
+        case ETerraformTool::FillLarge:
+          Radius = LargeRadiusCm;
+          Strength = -1.0f;
+          break;
+        default:
+          break;
+        }
+        // Compensate tool size for actor visual scale so terraform feels
+        // consistent when characters/world props are intentionally scaled down.
+        const float TerraformScale =
+            FMath::Clamp(GetActorScale3D().GetAbsMin(), 0.1f, 10.0f);
+        Radius *= TerraformScale;
+        Strength *= TerraformScale;
+
+        UE_LOG(LogTemp, Warning,
+               TEXT("FPM: Terraform click! Tool=%d Radius=%.0f Strength=%.2f Scale=%.2f"),
+               static_cast<int32>(ActiveTerraformTool), Radius, Strength,
+               TerraformScale);
+
+        // Find the WorldChunkManager and apply
+        for (TActorIterator<AFPMWorldChunkManager> It(GetWorld()); It; ++It) {
+          It->TerraformFromCamera(Radius, Strength);
+          break;
+        }
+      }
+    }
+    bLMBWasDown = bLMBIsDown;
+  }
+
+  // Mouse look � suppressed while HUD cursor is visible
   if (!bHUDMouseMode) {
     float MouseX = 0.0f;
     float MouseY = 0.0f;
@@ -777,3 +901,9 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
     AddControllerPitchInput(-MouseY);
   }
 }
+
+
+
+
+
+

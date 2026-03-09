@@ -277,4 +277,27 @@ private:
 
   // --- World Map input handler ---
   void OnOpenWorldMap();
+
+  // --- Inventory input handler ---
+  void OnToggleInventory();
+
+  // --- Debug Commands ---
+
+  /**
+   * Console command: spawn a set of test items into the backpack.
+   * Usage: open console (~) and type "Debug_SpawnTestItems"
+   * Spawns items with varying sizes, rarities, and stack counts
+   * for visual verification of the inventory grid.
+   * Routes through a Server RPC so it works from a client connected
+   * to a dedicated server.
+   */
+  UFUNCTION(Exec)
+  void Debug_SpawnTestItems();
+
+  /** Server RPC: actually spawn the test items (runs on server). */
+  UFUNCTION(Server, Reliable)
+  void Server_Debug_SpawnTestItems();
+
+  /** Timer handle for delayed inventory open after spawning test items. */
+  FTimerHandle DebugSpawnTimerHandle;
 };

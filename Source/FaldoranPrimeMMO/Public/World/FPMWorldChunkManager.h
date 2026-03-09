@@ -1,4 +1,4 @@
-ï»¿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #pragma once
 
@@ -151,6 +151,52 @@ public:
                           float HalfExtentCm = 1000000.f, // 10 km half
                           int32 GridSteps = 20, float SinkCm = 500.f);
 
+  // --- Terraforming ---
+
+  /**
+   * Modify voxel density in a sphere around a world-space point.
+   * Positive Strength = dig (remove material), negative = fill (add material).
+   * Re-meshes affected chunks immediately.
+   *
+   * @param WorldPos  Center of the terraforming sphere
+   * @param Radius    Radius of effect in cm (default 200 = 2m)
+   * @param Strength  Terraforming power: + = dig, - = fill (default 1.0)
+   */
+  UFUNCTION(BlueprintCallable, Category = "FPM|Terraform")
+  void TerraformAtPoint(FVector WorldPos, float Radius = 200.f,
+                        float Strength = 1.0f);
+
+  /**
+   * Execute a terraform operation via line trace from the player camera.
+   * Finds the first terrain hit point and calls TerraformAtPoint there.
+   *
+   * @param Radius    Radius of effect in cm
+   * @param Strength  Terraforming power: + = dig, - = fill
+   */
+  UFUNCTION(BlueprintCallable, Category = "FPM|Terraform")
+  void TerraformFromCamera(float Radius = 200.f, float Strength = 1.0f);
+
+  /**
+   * Clear all terraforming modifications (reset to procedural terrain).
+   * Re-meshes all affected chunks.
+   */
+  UFUNCTION(BlueprintCallable, Category = "FPM|Terraform")
+  void ResetAllTerraforming();
+
+  /**
+   * Get the density delta at a voxel position (for use by GenerateAndMesh).
+   * Thread-safe read-only access.
+   *
+   * @param Coord     Chunk coordinate
+   * @param VoxelKey  Quantized voxel position (grid-space integer coords)
+   * @return Density delta (positive = more solid, negative = more air)
+   */
+  float GetVoxelDelta(const FFPMChunkCoord &Coord,
+                      const FIntVector &VoxelKey) const;
+
+  /** Check if a chunk has any voxel modifications. */
+  bool HasVoxelDeltas(const FFPMChunkCoord &Coord) const;
+
 protected:
   // --- Internal State ---
 
@@ -161,6 +207,47 @@ protected:
 
   /** Cached overlays for loaded chunks */
   TMap<FFPMChunkCoord, FFPMChunkOverlay> LoadedOverlays;
+
+  /** 3D voxel density modifications per chunk (COARSE — legacy).
+   *  Key: chunk coord ? inner map keyed by quantized voxel position.
+   *  Values are density deltas — negative = dig (push toward air),
+   *  positive = fill (push toward solid).
+   *  Applied AFTER procedural density + cave noise. */
+  TMap<FFPMChunkCoord, TMap<FIntVector, float>> VoxelOverlays;
+
+  // --- Fine-grained terraform overlay (200cm resolution) ---
+
+  /** Convert a world position to a terraform tile coordinate.
+   *  Tiles are 64m (6400cm) cubes, keyed by integer tile indices. */
+  static FIntVector WorldToTileCoord(const FVector &WorldPos);
+
+  /** Fine-resolution voxel deltas per terraform tile.
+   *  Key: tile coord (FIntVector) ? inner map of fine voxel keys ? delta.
+   *  Fine voxel keys are quantized at TerraformVoxelSizeCm (200cm). */
+  TMap<FIntVector, TMap<FIntVector, float>> FineTerraformOverlays;
+
+  /** Spawned fine-resolution tile mesh actors. */
+  UPROPERTY(Transient)
+  TMap<FIntVector, AActor *> TerraformTileActors;
+
+  /** Active 3D fine-tile replacement bubble around the player. */
+  TSet<FIntVector> ActiveTerraformBubbleTiles;
+
+  /** Last bubble center tile; used to avoid expensive per-tick rebuilds. */
+  FIntVector LastTerraformBubbleCenter = FIntVector(INT32_MIN, INT32_MIN, INT32_MIN);
+  bool bTerraformBubbleInitialized = false;
+
+
+  /** Refresh fine-tile replacement bubble around player (2 tiles XYZ). */
+  void UpdateTerraformPlayerBubble(const FVector &PlayerPos);
+
+  /** Regenerate (or create) the mesh for a single terraform tile. */
+  void RegenerateTerraformTile(const FIntVector &TileCoord,
+                               bool bForceBaseSurface = false);
+
+  /** Clip triangles from a coarse mesh that overlap active terraform tiles. */
+  void ClipMeshForTerraformTiles(FFPMVoxelMeshData &MeshData,
+                                 const FFPMChunkCoord &ChunkCoord);
 
   /** Queue of chunks waiting to be generated/loaded */
   TArray<FFPMChunkCoord> ChunkLoadQueue;
@@ -323,6 +410,12 @@ private:
   // --- Console Commands ---
   static FAutoConsoleCommand CmdGenerateWorld;
   static FAutoConsoleCommand CmdRegenChunks;
+  static FAutoConsoleCommand CmdTerraformDig;
+  static FAutoConsoleCommand CmdTerraformFill;
+  static FAutoConsoleCommand CmdTerraformReset;
+
+  /** Re-generate and re-mesh a single loaded chunk in place. */
+  void RegenerateChunk(const FFPMChunkCoord &Coord);
 
   void GetLifetimeReplicatedProps(
       TArray<FLifetimeProperty> &OutLifetimeProps) const override;

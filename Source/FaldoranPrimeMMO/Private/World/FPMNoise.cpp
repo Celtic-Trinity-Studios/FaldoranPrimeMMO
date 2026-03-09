@@ -282,7 +282,8 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
   // Onset at Continental 0.52 → mountains begin building at moderate
   // continental heights, creating broad ranges like real Earth.
   float MountainMask = FMath::Clamp((Continental - 0.52f) / 0.30f, 0.0f, 1.0f);
-  MountainMask = MountainMask * MountainMask; // quadratic onset for natural ramp
+  MountainMask =
+      MountainMask * MountainMask; // quadratic onset for natural ramp
 
   float MX = WX, MY = WY;
   DomainWarp(MX, MY, Seed + 7000, 8000000.0f, 0.00000012f);
@@ -344,12 +345,11 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
   //    MedTerrain > 0.55  →  LocalHillAmp = 1  →  full rolling hills
   //
   //  Earth-like target amplitudes (in normalized height units):
-  //    Continental: 0.10  → 2000m range (broad continental shelves vs highlands)
-  //    Regional:    0.08  → ±1600m (valleys vs plateaus)
-  //    Mountains:   0.30  → up to 6000m peaks (masked to highlands only)
-  //    Foothills:   0.04  → 800m (highland approach zones)
-  //    Hills:       0.035 → ±700m (rolling terrain in uplands)
-  //    HillsMed:    0.015 → ±300m (secondary undulation)
+  //    Continental: 0.10  → 2000m range (broad continental shelves vs
+  //    highlands) Regional:    0.08  → ±1600m (valleys vs plateaus) Mountains:
+  //    0.30  → up to 6000m peaks (masked to highlands only) Foothills:   0.04
+  //    → 800m (highland approach zones) Hills:       0.035 → ±700m (rolling
+  //    terrain in uplands) HillsMed:    0.015 → ±300m (secondary undulation)
   //    HillsMicro:  0.005 → ±100m (surface texture)
   // ================================================================
 
@@ -364,14 +364,14 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
   const float ErodedHills = 0.5f + LH;
 
   float H =
-      LandBase + Continental * 0.10f  // continental tilt (0-2000m)
-      + (MedTerrain - 0.5f) * 0.08f   // REGIONAL valleys vs uplands (±1600m)
-      + Ridges * MountainMask * 0.30f  // mountain ridgelines (up to 6000m)
+      LandBase + Continental * 0.10f     // continental tilt (0-2000m)
+      + (MedTerrain - 0.5f) * 0.08f      // REGIONAL valleys vs uplands (±1600m)
+      + Ridges * MountainMask * 0.30f    // mountain ridgelines (up to 6000m)
       + Foothills * FoothillMask * 0.04f // highland approach (0-800m, masked)
       // Local hills gated by regional height:
       + (ErodedHills - 0.5f) * 0.035f *
             LocalHillAmp // main hills (±700m in uplands)
-      + (HillsMed - 0.5f) * 0.015f * LocalHillAmp // secondary (±300m)
+      + (HillsMed - 0.5f) * 0.015f * LocalHillAmp    // secondary (±300m)
       + (HillsMicro - 0.5f) * 0.005f * LocalHillAmp; // micro detail (±100m)
 
   // Planet mode: no island-edge ocean blend.
@@ -395,21 +395,21 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
 // ===================================================================
 
 float FPMNoise::Temperature(float WorldX, float WorldY, int32 Seed) {
-// --- Base: warm at sea level, cooling with altitude (lapse rate) ---
-const float H = TerrainHeight(WorldX, WorldY, Seed);
-const float SeaLevel = 0.55f;
-const float AltAboveSea = FMath::Max(H - SeaLevel, 0.0f);
-float BaseTemp = 0.75f - AltAboveSea * 3.5f;
+  // --- Base: warm at sea level, cooling with altitude (lapse rate) ---
+  const float H = TerrainHeight(WorldX, WorldY, Seed);
+  const float SeaLevel = 0.55f;
+  const float AltAboveSea = FMath::Max(H - SeaLevel, 0.0f);
+  float BaseTemp = 0.75f - AltAboveSea * 3.5f;
 
-// --- Latitude gradient (spherical planet) ---
-// Convert world Y to latitude: Y=0 is equator, ±PlanetCirc/4 is poles.
-// Temperature follows real-Earth pattern: hot at equator, cold at poles.
-const float HalfCirc = FPMChunkConstants::PlanetCircumferenceCm * 0.25f;
-const float LatFraction = FMath::Clamp(WorldY / HalfCirc, -1.0f, 1.0f);
-// Cosine curve: 1.0 at equator (lat=0), 0.0 at poles (lat=±90°)
-const float LatTemp = FMath::Cos(LatFraction * PI * 0.5f);
-// Equator adds +0.15, poles subtract -0.15 from base
-BaseTemp += (LatTemp - 0.5f) * 0.30f;
+  // --- Latitude gradient (spherical planet) ---
+  // Convert world Y to latitude: Y=0 is equator, ±PlanetCirc/4 is poles.
+  // Temperature follows real-Earth pattern: hot at equator, cold at poles.
+  const float HalfCirc = FPMChunkConstants::PlanetCircumferenceCm * 0.25f;
+  const float LatFraction = FMath::Clamp(WorldY / HalfCirc, -1.0f, 1.0f);
+  // Cosine curve: 1.0 at equator (lat=0), 0.0 at poles (lat=±90°)
+  const float LatTemp = FMath::Cos(LatFraction * PI * 0.5f);
+  // Equator adds +0.15, poles subtract -0.15 from base
+  BaseTemp += (LatTemp - 0.5f) * 0.30f;
 
   // --- Voronoi region bias (±0.12 per-region: coherence, not dominance) ---
   // Each macro region has a stable temperature tendency.
@@ -551,6 +551,335 @@ void FPMNoise::TalusErosion(TArray<float> &Heights, int32 Res,
 
 float FPMNoise::TerrainSurfaceZ(float WorldX, float WorldY, int32 Seed) {
   const float H = TerrainHeight(WorldX, WorldY, Seed);
-  return FPMChunkConstants::MinWorldZ +
-         H * FPMChunkConstants::WorldHeightRange;
+  return FPMChunkConstants::MinWorldZ + H * FPMChunkConstants::WorldHeightRange;
+}
+
+// ===================================================================
+//  3D Simplex Gradient Noise
+//
+//  Standard 3D simplex implementation using 12 gradient directions
+//  and tetrahedral decomposition. Used for cave worm tunnels.
+// ===================================================================
+
+// 12 gradient directions for 3D simplex noise
+static const float Grad3[12][3] = {
+    {1, 1, 0},  {-1, 1, 0},  {1, -1, 0}, {-1, -1, 0}, {1, 0, 1},  {-1, 0, 1},
+    {1, 0, -1}, {-1, 0, -1}, {0, 1, 1},  {0, -1, 1},  {0, 1, -1}, {0, -1, -1}};
+
+// Skew factors for 3D simplex
+static const float F3 = 1.0f / 3.0f;
+static const float G3 = 1.0f / 6.0f;
+
+int32 FPMNoise::GradHash3D(int32 X, int32 Y, int32 Z, int32 Seed) {
+  int32 H = X * 374761393 + Y * 668265263 + Z * 1274126177 + Seed * 1103515245;
+  H = (H ^ (H >> 13)) * 1103515245;
+  return FMath::Abs(H ^ (H >> 16)) % 12;
+}
+
+float FPMNoise::GradDot3D(int32 Hash, float X, float Y, float Z) {
+  const int32 H = Hash % 12;
+  return Grad3[H][0] * X + Grad3[H][1] * Y + Grad3[H][2] * Z;
+}
+
+float FPMNoise::Simplex3D(float X, float Y, float Z, int32 Seed) {
+  // Skew input space to determine which simplex cell we're in
+  const float S = (X + Y + Z) * F3;
+  const int32 I = FMath::FloorToInt(X + S);
+  const int32 J = FMath::FloorToInt(Y + S);
+  const int32 K = FMath::FloorToInt(Z + S);
+
+  // Unskew back to find first corner of the simplex
+  const float T = static_cast<float>(I + J + K) * G3;
+  const float x0 = X - (static_cast<float>(I) - T);
+  const float y0 = Y - (static_cast<float>(J) - T);
+  const float z0 = Z - (static_cast<float>(K) - T);
+
+  // Determine which simplex we're in (6 possible tetrahedra)
+  int32 i1, j1, k1; // Offsets for second corner
+  int32 i2, j2, k2; // Offsets for third corner
+
+  if (x0 >= y0) {
+    if (y0 >= z0) {
+      i1 = 1;
+      j1 = 0;
+      k1 = 0;
+      i2 = 1;
+      j2 = 1;
+      k2 = 0;
+    } else if (x0 >= z0) {
+      i1 = 1;
+      j1 = 0;
+      k1 = 0;
+      i2 = 1;
+      j2 = 0;
+      k2 = 1;
+    } else {
+      i1 = 0;
+      j1 = 0;
+      k1 = 1;
+      i2 = 1;
+      j2 = 0;
+      k2 = 1;
+    }
+  } else {
+    if (y0 < z0) {
+      i1 = 0;
+      j1 = 0;
+      k1 = 1;
+      i2 = 0;
+      j2 = 1;
+      k2 = 1;
+    } else if (x0 < z0) {
+      i1 = 0;
+      j1 = 1;
+      k1 = 0;
+      i2 = 0;
+      j2 = 1;
+      k2 = 1;
+    } else {
+      i1 = 0;
+      j1 = 1;
+      k1 = 0;
+      i2 = 1;
+      j2 = 1;
+      k2 = 0;
+    }
+  }
+
+  // Offsets for remaining corners
+  const float x1 = x0 - static_cast<float>(i1) + G3;
+  const float y1 = y0 - static_cast<float>(j1) + G3;
+  const float z1 = z0 - static_cast<float>(k1) + G3;
+  const float x2 = x0 - static_cast<float>(i2) + 2.0f * G3;
+  const float y2 = y0 - static_cast<float>(j2) + 2.0f * G3;
+  const float z2 = z0 - static_cast<float>(k2) + 2.0f * G3;
+  const float x3 = x0 - 1.0f + 3.0f * G3;
+  const float y3 = y0 - 1.0f + 3.0f * G3;
+  const float z3 = z0 - 1.0f + 3.0f * G3;
+
+  // Contributions from four corners
+  float n0 = 0, n1 = 0, n2 = 0, n3 = 0;
+
+  float t0 = 0.6f - x0 * x0 - y0 * y0 - z0 * z0;
+  if (t0 > 0) {
+    t0 *= t0;
+    n0 = t0 * t0 * GradDot3D(GradHash3D(I, J, K, Seed), x0, y0, z0);
+  }
+  float t1 = 0.6f - x1 * x1 - y1 * y1 - z1 * z1;
+  if (t1 > 0) {
+    t1 *= t1;
+    n1 = t1 * t1 *
+         GradDot3D(GradHash3D(I + i1, J + j1, K + k1, Seed), x1, y1, z1);
+  }
+  float t2 = 0.6f - x2 * x2 - y2 * y2 - z2 * z2;
+  if (t2 > 0) {
+    t2 *= t2;
+    n2 = t2 * t2 *
+         GradDot3D(GradHash3D(I + i2, J + j2, K + k2, Seed), x2, y2, z2);
+  }
+  float t3 = 0.6f - x3 * x3 - y3 * y3 - z3 * z3;
+  if (t3 > 0) {
+    t3 *= t3;
+    n3 = t3 * t3 * GradDot3D(GradHash3D(I + 1, J + 1, K + 1, Seed), x3, y3, z3);
+  }
+
+  return 32.0f * (n0 + n1 + n2 + n3); // range [-1, 1]
+}
+
+// ===================================================================
+//  3D Fractal Brownian Motion
+// ===================================================================
+
+float FPMNoise::FBM3D(float X, float Y, float Z, int32 Seed, int32 Octaves,
+                      float Gain, float Lacunarity) {
+  float Sum = 0, Amp = 1, TotalAmp = 0, Freq = 1;
+  for (int32 i = 0; i < Octaves; ++i) {
+    Sum += Simplex3D(X * Freq, Y * Freq, Z * Freq, Seed + i * 31337) * Amp;
+    TotalAmp += Amp;
+    Amp *= Gain;
+    Freq *= Lacunarity;
+  }
+  return (Sum / TotalAmp + 1.0f) * 0.5f; // normalize to [0, 1]
+}
+
+// ===================================================================
+//  Cave Density — Worm Tunnels + Grand Caverns
+//
+//  DESIGN:
+//    1. Two perpendicular 3D noise channels sampled at the same point.
+//       Where BOTH exceed a threshold, a worm tunnel forms (intersection
+//       of two spaghetti-like regions = thin wormy tunnels).
+//
+//    2. A low-frequency 3D noise field creates grand caverns at moderate
+//       depth (300m–2km below surface).
+//
+//    3. Depth attenuation:
+//       - Top 50m below surface: no caves (prevents surface holes)
+//       - 50m–200m: linearly ramps in (transition zone)
+//       - 200m–2km: full cave density
+//       - 2km–5km: gradually reduces (harder rock)
+//       - Below 5km: very rare, tiny caves only
+//
+//  All distances in centimeters (Unreal convention).
+//
+//  Cave settings are loaded from WorldGen.ini [Caves] section.
+// ===================================================================
+
+namespace {
+struct FCaveSettings {
+  bool bEnableCaves = true;
+
+  // Worm tunnel noise frequencies (1/cm).
+  // Wavelength ~200m tunnels.
+  float WormFreqXY = 0.000005f; // horizontal frequency
+  float WormFreqZ = 0.000008f;  // vertical frequency (stretched vertically)
+
+  // Worm threshold: higher = thinner tunnels. 0.55 gives ~15m radius tunnels.
+  float WormThreshold = 0.55f;
+
+  // Cavern frequency — very low, ~500m features
+  float CavernFreq = 0.000002f;
+  // Cavern threshold: higher = fewer, larger caverns
+  float CavernThreshold = 0.62f;
+
+  // Depth limits (cm below surface)
+  float SurfaceBuffer = 5000.0f;   // 50m — no caves zone
+  float TransitionEnd = 20000.0f;  // 200m — full caves begin
+  float FullCaveDepth = 200000.0f; // 2km — full cave density
+  float FadeStart = 300000.0f;     // 3km — caves start fading
+  float FadeEnd = 500000.0f;       // 5km — almost no caves
+
+  bool bLoaded = false;
+};
+
+static FCaveSettings GCaveSettings;
+
+static void LoadCaveSettings() {
+  if (GCaveSettings.bLoaded)
+    return;
+  GCaveSettings.bLoaded = true;
+
+  FString IniPath = FPaths::ConvertRelativePathToFull(
+      FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("WorldGen.ini")));
+  FConfigCacheIni::NormalizeConfigIniPath(IniPath);
+  if (!FPaths::FileExists(IniPath))
+    return;
+
+  GConfig->GetBool(TEXT("Caves"), TEXT("bEnableCaves"),
+                   GCaveSettings.bEnableCaves, IniPath);
+  GConfig->GetFloat(TEXT("Caves"), TEXT("WormFreqXY"), GCaveSettings.WormFreqXY,
+                    IniPath);
+  GConfig->GetFloat(TEXT("Caves"), TEXT("WormFreqZ"), GCaveSettings.WormFreqZ,
+                    IniPath);
+  GConfig->GetFloat(TEXT("Caves"), TEXT("WormThreshold"),
+                    GCaveSettings.WormThreshold, IniPath);
+  GConfig->GetFloat(TEXT("Caves"), TEXT("CavernFreq"), GCaveSettings.CavernFreq,
+                    IniPath);
+  GConfig->GetFloat(TEXT("Caves"), TEXT("CavernThreshold"),
+                    GCaveSettings.CavernThreshold, IniPath);
+  GConfig->GetFloat(TEXT("Caves"), TEXT("SurfaceBuffer"),
+                    GCaveSettings.SurfaceBuffer, IniPath);
+  GConfig->GetFloat(TEXT("Caves"), TEXT("TransitionEnd"),
+                    GCaveSettings.TransitionEnd, IniPath);
+  GConfig->GetFloat(TEXT("Caves"), TEXT("FullCaveDepth"),
+                    GCaveSettings.FullCaveDepth, IniPath);
+  GConfig->GetFloat(TEXT("Caves"), TEXT("FadeStart"), GCaveSettings.FadeStart,
+                    IniPath);
+  GConfig->GetFloat(TEXT("Caves"), TEXT("FadeEnd"), GCaveSettings.FadeEnd,
+                    IniPath);
+
+  UE_LOG(LogTemp, Warning,
+         TEXT("FPM Caves: Settings loaded — Enabled=%d, WormThreshold=%.2f, "
+              "CavernThreshold=%.2f, SurfaceBuffer=%.0f, FadeEnd=%.0f"),
+         GCaveSettings.bEnableCaves, GCaveSettings.WormThreshold,
+         GCaveSettings.CavernThreshold, GCaveSettings.SurfaceBuffer,
+         GCaveSettings.FadeEnd);
+}
+} // namespace
+
+float FPMNoise::CaveDensity(float WorldX, float WorldY, float WorldZ,
+                            int32 Seed, float SurfaceZ) {
+  LoadCaveSettings();
+  const FCaveSettings &CS = GCaveSettings;
+
+  if (!CS.bEnableCaves)
+    return 0.0f;
+
+  // --- Depth below surface (positive = underground) ---
+  const float Depth = SurfaceZ - WorldZ;
+
+  // Above surface or in surface buffer = no caves
+  if (Depth < CS.SurfaceBuffer)
+    return 0.0f;
+
+  // Below absolute cave floor = no caves
+  if (Depth > CS.FadeEnd)
+    return 0.0f;
+
+  // --- Depth attenuation curve ---
+  float DepthFactor = 1.0f;
+
+  // Ramp in from surface buffer to transition end
+  if (Depth < CS.TransitionEnd) {
+    DepthFactor =
+        (Depth - CS.SurfaceBuffer) / (CS.TransitionEnd - CS.SurfaceBuffer);
+    DepthFactor = DepthFactor * DepthFactor; // Quadratic ease-in
+  }
+  // Full density zone
+  else if (Depth <= CS.FadeStart) {
+    DepthFactor = 1.0f;
+  }
+  // Fade out at extreme depth
+  else {
+    DepthFactor = 1.0f - (Depth - CS.FadeStart) / (CS.FadeEnd - CS.FadeStart);
+    DepthFactor = FMath::Max(DepthFactor, 0.0f);
+  }
+
+  // --- Worm Tunnels ---
+  // Two perpendicular noise channels. Where both are high, we get a tunnel.
+  // Using different seeds + slightly offset frequencies for independence.
+  const float WormXY = CS.WormFreqXY;
+  const float WormZ = CS.WormFreqZ;
+
+  // Channel A: horizontal worms
+  const float WormA = FBM3D(WorldX * WormXY, WorldY * WormXY, WorldZ * WormZ,
+                            Seed + 900000, 3, 0.5f, 2.0f);
+  // Channel B: perpendicular worms (rotated by using swapped/offset coords)
+  const float WormB =
+      FBM3D(WorldY * WormXY + 7777.0f, WorldZ * WormZ + 3333.0f,
+            WorldX * WormXY + 1111.0f, Seed + 910000, 3, 0.5f, 2.0f);
+
+  // Tunnel forms where both channels exceed threshold
+  float Tunnel = 0.0f;
+  if (WormA > CS.WormThreshold && WormB > CS.WormThreshold) {
+    // Smoothly ramp tunnel opening based on how far above threshold
+    const float TA = (WormA - CS.WormThreshold) / (1.0f - CS.WormThreshold);
+    const float TB = (WormB - CS.WormThreshold) / (1.0f - CS.WormThreshold);
+    Tunnel = FMath::Min(TA, TB); // Min = intersection shape
+  }
+
+  // --- Grand Caverns ---
+  // Low-frequency 3D noise for large open spaces.
+  // Only significant at moderate depth (200m–2km).
+  const float CavernNoise =
+      FBM3D(WorldX * CS.CavernFreq, WorldY * CS.CavernFreq,
+            WorldZ * CS.CavernFreq * 0.5f, // flattened
+            Seed + 920000, 2, 0.45f, 2.0f);
+  float Cavern = 0.0f;
+  if (CavernNoise > CS.CavernThreshold) {
+    Cavern = (CavernNoise - CS.CavernThreshold) / (1.0f - CS.CavernThreshold);
+    // Caverns strongest between 200m and 2km depth
+    if (Depth < CS.FullCaveDepth) {
+      float CavernDepthFactor = FMath::Clamp(
+          (Depth - CS.TransitionEnd) / (CS.FullCaveDepth - CS.TransitionEnd),
+          0.0f, 1.0f);
+      Cavern *= CavernDepthFactor;
+    }
+  }
+
+  // --- Combine and apply depth attenuation ---
+  float CaveValue = FMath::Max(Tunnel, Cavern);
+  CaveValue *= DepthFactor;
+
+  return FMath::Clamp(CaveValue, 0.0f, 1.0f);
 }

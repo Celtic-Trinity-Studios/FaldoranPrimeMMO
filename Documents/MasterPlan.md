@@ -33,7 +33,7 @@
 - [x] **CODE:** PCG vegetation suppressed inside Nexus safe radius (512m)
 - [x] **CONFIG:** `WorldGen.ini [Nexus]` — Aelvorn Nexus defined at origin
 - [x] **DB SCHEMA:** `spawn_x / spawn_y / spawn_z` columns added to `characters`
-- [ ] **DB MIGRATE:** Run [Migration_002_AddNexusSpawnPos.sql](file:///e:/FaldoranPrimeMMO/Documents/Technical/Migration_002_AddNexusSpawnPos.sql) in pgAdmin
+- [x] **DB MIGRATE:** Run [Migration_002_AddNexusSpawnPos.sql](file:///e:/FaldoranPrimeMMO/Documents/Technical/Migration_002_AddNexusSpawnPos.sql) in HeidiSQL
 - [ ] **CODE:** Save player position on logout / disconnect (update `spawn_x/y/z` in DB)
 - [ ] **EDITOR:** Place Nexus marker/landmark in the world at (0,0) — placeholder rocks/ruins
 
@@ -57,10 +57,15 @@
 - [ ] State machine: Idle → Walk → Run → Jump
 - [ ] IK Retarget across species heights
 
-### Inventory UI
-- [ ] `UFPMInventoryWidget`: 8×5 grid, drag-and-drop, rarity borders
-- [ ] `ToggleInventory()` shows/hides widget (I key)
-- [ ] Save changes to PostgreSQL via `FPMDatabaseSubsystem`
+### Inventory UI — Tetris-style Grid
+- [x] **CODE:** `UFPMInventoryComponent` — 2D grid backend (8×5), AABB placement, stacking, Server RPC move
+- [x] **CODE:** `FFPMInventoryItem` — positioned item struct with `GridX/Y`, `SizeX/Y` footprint
+- [x] **CODE:** `FFPMItemDefinition` — `SizeX/Y` grid footprint fields added
+- [x] **DB MIGRATE:** [Migration_003_CreateInventoryTable.sql](file:///e:/FaldoranPrimeMMO/Documents/Technical/Migration_003_CreateInventoryTable.sql) ← **run this in HeidiSQL**
+- [ ] **CODE:** `LoadInventoryFromDB` / `SaveInventoryToDB` — persist on login/logout via `FPMDatabaseSubsystem`
+- [ ] **EDITOR:** `WBP_InventoryGrid` — UMG widget: renders grid, drag-and-drop, rarity borders
+- [ ] **EDITOR:** `WBP_InventoryItem` — draggable item tile (icon + stack count)
+- [ ] **CODE:** `ToggleInventory()` — show/hide widget on **I** key
 
 ### Character Creation
 - [ ] `FFPMCharacterCreationRequest` / `UFPMCharacterCreationSubsystem` code

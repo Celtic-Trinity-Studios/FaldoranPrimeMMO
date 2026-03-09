@@ -67,8 +67,10 @@ static constexpr float GGapRecoveryInterval = 2.0f;
 //  Console Commands
 // ===================================================================
 
-// Pointer to the active manager instance for console commands
-static AFPMWorldChunkManager *GActiveChunkManager = nullptr;
+// Pointer to the active manager instance for console commands and terraforming.
+// NON-static: externally referenced by FPMVoxelChunk.cpp for voxel overlay
+// lookups.
+AFPMWorldChunkManager *GActiveChunkManager = nullptr;
 
 FAutoConsoleCommand AFPMWorldChunkManager::CmdGenerateWorld(
     TEXT("FPM.GenerateWorld"),
@@ -138,7 +140,7 @@ AFPMWorldChunkManager *AFPMWorldChunkManager::GetOrCreate(UWorld *World) {
     return *It;
   }
 
-  // 3. Spawn a new one â€” only reachable if none exists yet
+  // 3. Spawn a new one — only reachable if none exists yet
   FActorSpawnParameters Params;
   Params.Name = FName(TEXT("FPMWorldChunkManager_0"));
   AFPMWorldChunkManager *WCM = World->SpawnActor<AFPMWorldChunkManager>(
@@ -185,7 +187,7 @@ void AFPMWorldChunkManager::BeginPlay() {
       IsValid(GActiveChunkManager) &&
       GActiveChunkManager->GetWorld() == GetWorld()) {
     UE_LOG(LogTemp, Warning,
-           TEXT("FPM: Duplicate WorldChunkManager detected â€” destroying self. "
+           TEXT("FPM: Duplicate WorldChunkManager detected — destroying self. "
                 "Active WCM: %s"),
            *GActiveChunkManager->GetName());
     Destroy();
@@ -196,7 +198,7 @@ void AFPMWorldChunkManager::BeginPlay() {
 
   // =================================================================
   //  Load settings from Config/WorldGen.ini
-  //  Edit that file and restart PIE to iterate â€” no recompile needed.
+  //  Edit that file and restart PIE to iterate — no recompile needed.
   // =================================================================
   {
     FString IniPath = FPaths::ConvertRelativePathToFull(
@@ -211,7 +213,7 @@ void AFPMWorldChunkManager::BeginPlay() {
         if (IniSeed == 0) {
           WorldSeed = FMath::RandRange(1, 999999);
           UE_LOG(LogTemp, Warning,
-                 TEXT("FPM: Seed=0 in INI â†’ randomized to %d"), WorldSeed);
+                 TEXT("FPM: Seed=0 in INI ? randomized to %d"), WorldSeed);
         } else {
           WorldSeed = IniSeed;
         }
@@ -306,6 +308,7 @@ void AFPMWorldChunkManager::BeginPlay() {
   // Spawn the water plane at sea level
   SpawnWaterPlane();
 
+
   // Generate and spawn water sources at river headwaters
   SpawnRiverHeadSources();
 
@@ -329,14 +332,14 @@ void AFPMWorldChunkManager::BeginPlay() {
 
     if (bEnableFlowingWater) {
       UE_LOG(LogTemp, Warning,
-             TEXT("FPM: Flowing water system ENABLED â€” SimRate=%.0fHz, "
+             TEXT("FPM: Flowing water system ENABLED — SimRate=%.0fHz, "
                   "Evap=%.4f, MaxHops=%d"),
              FPMWaterConstants::SimulationRate,
              FPMWaterConstants::EvaporationRate,
              FPMWaterConstants::MaxFlowHops);
     } else {
       UE_LOG(LogTemp, Warning,
-             TEXT("FPM: Flowing water DISABLED â€” using flat water plane only"));
+             TEXT("FPM: Flowing water DISABLED — using flat water plane only"));
     }
   }
 
@@ -395,6 +398,7 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
     TimeSinceLastUpdate = 0.0f;
 
     const FVector PlayerPos = GetPlayerPosition();
+    UpdateTerraformPlayerBubble(PlayerPos);
     const FFPMChunkCoord PlayerChunk =
         FPMChunkGenerator::WorldToChunkCoord(PlayerPos);
 
@@ -455,13 +459,13 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
       }
 
       UE_LOG(LogTemp, Warning,
-             TEXT("FPM: Chunk update at %s â€” Desired=%d, NewlyQueued=%d, "
+             TEXT("FPM: Chunk update at %s — Desired=%d, NewlyQueued=%d, "
                   "LoadQ=%d, Loaded=%d"),
              *PlayerChunk.ToString(), DesiredChunks.Num(), NewlyQueued,
              ChunkLoadQueue.Num(), LoadedChunks.Num());
 
       // Sort load queue by hex distance DESCENDING (farthest first)
-      // so that Pop() â€” which removes from the back â€” returns the
+      // so that Pop() — which removes from the back — returns the
       // closest chunk each time.  Chunks in the movement direction
       // get a small distance bonus so they load first.
       ChunkLoadQueue.Sort([&PlayerChunk, &MoveDelta](const FFPMChunkCoord &A,
@@ -480,7 +484,7 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
           if (DotB > 0)
             DistB -= 3;
         }
-        return DistA > DistB; // descending â€” farthest at front
+        return DistA > DistB; // descending — farthest at front
       });
     }
   }
@@ -510,7 +514,7 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
     }
     if (Gaps > 0) {
       UE_LOG(LogTemp, Warning,
-             TEXT("FPM: Gap recovery â€” re-queued %d missing chunks "
+             TEXT("FPM: Gap recovery — re-queued %d missing chunks "
                   "(loaded=%d, in-flight=%d, queued=%d)"),
              Gaps, LoadedChunks.Num(), GInFlightCoords.Num(),
              ChunkLoadQueue.Num());
@@ -560,7 +564,7 @@ void AFPMWorldChunkManager::GatherDesiredChunks(
   const int32 Range = FPMChunkConstants::LowDetailRange;
 
   // Square grid: iterate over all chunks within Range of PlayerChunk.
-  // Coords wrap toroidally â€” no bounds check needed.
+  // Coords wrap toroidally — no bounds check needed.
   for (int32 DQ = -Range; DQ <= Range; ++DQ) {
     for (int32 DR = -Range; DR <= Range; ++DR) {
       const int32 WQ = FPMChunkConstants::WrapChunkCoord(PlayerChunk.Q + DQ);
@@ -577,7 +581,8 @@ void AFPMWorldChunkManager::GatherDesiredChunks(
 EFPMChunkLOD
 AFPMWorldChunkManager::DetermineLOD(const FFPMChunkCoord &ChunkCoord,
                                     const FFPMChunkCoord &PlayerChunk) const {
-  const int32 HexDist = FFPMChunkCoord::WrappedHexDistance(ChunkCoord, PlayerChunk);
+  const int32 HexDist =
+      FFPMChunkCoord::WrappedHexDistance(ChunkCoord, PlayerChunk);
 
   if (HexDist <= FPMChunkConstants::FullDetailRange) {
     return EFPMChunkLOD::Full;
@@ -605,7 +610,8 @@ void AFPMWorldChunkManager::LoadChunkSync(const FFPMChunkCoord &Coord,
   FFPMVoxelMeshData MeshData;
   FPMVoxelGenerator::GenerateAndMesh(Coord, WorldSeed, MeshData);
 
-  // 2. Finalize on this (game) thread
+  // 3. Clip for active bubble tiles, then finalize
+  ClipMeshForTerraformTiles(MeshData, Coord);
   FinalizeChunk(Coord, MoveTemp(MeshData));
 }
 
@@ -635,7 +641,7 @@ void AFPMWorldChunkManager::FinalizeChunk(const FFPMChunkCoord &Coord,
 
     // Apply terrain material.
     // If no material is assigned in the editor, auto-create a minimal one that
-    // reads vertex colours â€” this ensures biome colours always show even
+    // reads vertex colours — this ensures biome colours always show even
     // before a proper artist material is set up.
     UProceduralMeshComponent *PMC =
         ChunkActor->FindComponentByClass<UProceduralMeshComponent>();
@@ -660,14 +666,14 @@ void AFPMWorldChunkManager::FinalizeChunk(const FFPMChunkCoord &Coord,
         if (AutoTerrainMaterial) {
           PMC->SetMaterial(0, AutoTerrainMaterial);
         } else {
-          // Priority 3: last resort â€” at least show something visible
+          // Priority 3: last resort — at least show something visible
           UMaterialInterface *Grid = Cast<UMaterialInterface>(StaticLoadObject(
               UMaterialInterface::StaticClass(), nullptr,
               TEXT("/Engine/EngineMaterials/WorldGridMaterial")));
           if (Grid)
             PMC->SetMaterial(0, Grid);
           UE_LOG(LogTemp, Warning,
-                 TEXT("FPM: M_TerrainBiome not found â€” biome colours will "
+                 TEXT("FPM: M_TerrainBiome not found — biome colours will "
                       "not show. Run the editor once to auto-create it."));
         }
       }
@@ -683,7 +689,7 @@ void AFPMWorldChunkManager::FinalizeChunk(const FFPMChunkCoord &Coord,
     // Diagnostic: warn about empty chunks
     if (MeshData.Vertices.Num() == 0) {
       UE_LOG(LogTemp, Warning,
-             TEXT("FPM: âš  Chunk %s generated 0 vertices (invisible gap)!"),
+             TEXT("FPM: ? Chunk %s generated 0 vertices (invisible gap)!"),
              *Coord.ToString());
     } else {
       UE_LOG(LogTemp, Verbose, TEXT("FPM: Finalized chunk %s (%d verts)"),
@@ -797,7 +803,8 @@ void AFPMWorldChunkManager::FinalizePendingChunks() {
     GInFlightCoords.Remove(Coord);
     GPendingGenerations.RemoveAtSwap(i);
 
-    // Finalize on game thread (spawn actor, build PMC mesh)
+    // Clip for active bubble tiles, then finalize
+    ClipMeshForTerraformTiles(MeshData, Coord);
     FinalizeChunk(Coord, MoveTemp(MeshData));
     Finalized++;
   }
@@ -823,6 +830,503 @@ void AFPMWorldChunkManager::RegenerateAllChunks() {
   // Force reload on next update
   bInitialLoadDone = false;
   TimeSinceLastUpdate = UpdateInterval;
+}
+
+// ===================================================================
+//  Terraforming — Console Commands
+// ===================================================================
+
+FAutoConsoleCommand AFPMWorldChunkManager::CmdTerraformDig(
+    TEXT("FPM.Dig"),
+    TEXT("Dig terrain at camera crosshair. Usage: FPM.Dig [radius] [strength]"),
+    FConsoleCommandWithArgsDelegate::CreateLambda(
+        [](const TArray<FString> &Args) {
+          if (GActiveChunkManager) {
+            float Radius = 400.f; // 4m default
+            float Str = 1.0f;
+            if (Args.Num() > 0)
+              Radius = FCString::Atof(*Args[0]);
+            if (Args.Num() > 1)
+              Str = FCString::Atof(*Args[1]);
+            GActiveChunkManager->TerraformFromCamera(Radius, FMath::Abs(Str));
+          } else {
+            UE_LOG(LogTemp, Error, TEXT("FPM: No active chunk manager!"));
+          }
+        }));
+
+FAutoConsoleCommand AFPMWorldChunkManager::CmdTerraformFill(
+    TEXT("FPM.Fill"),
+    TEXT("Fill terrain at camera crosshair. Usage: FPM.Fill [radius] "
+         "[strength]"),
+    FConsoleCommandWithArgsDelegate::CreateLambda(
+        [](const TArray<FString> &Args) {
+          if (GActiveChunkManager) {
+            float Radius = 400.f; // 4m default
+            float Str = 1.0f;
+            if (Args.Num() > 0)
+              Radius = FCString::Atof(*Args[0]);
+            if (Args.Num() > 1)
+              Str = FCString::Atof(*Args[1]);
+            GActiveChunkManager->TerraformFromCamera(Radius, -FMath::Abs(Str));
+          } else {
+            UE_LOG(LogTemp, Error, TEXT("FPM: No active chunk manager!"));
+          }
+        }));
+
+FAutoConsoleCommand AFPMWorldChunkManager::CmdTerraformReset(
+    TEXT("FPM.TerraformReset"),
+    TEXT("Reset all terraforming to procedural terrain."),
+    FConsoleCommandWithArgsDelegate::CreateLambda(
+        [](const TArray<FString> &Args) {
+          if (GActiveChunkManager) {
+            GActiveChunkManager->ResetAllTerraforming();
+          } else {
+            UE_LOG(LogTemp, Error, TEXT("FPM: No active chunk manager!"));
+          }
+        }));
+
+// ===================================================================
+//  Terraforming — Camera Trace
+// ===================================================================
+
+void AFPMWorldChunkManager::TerraformFromCamera(float Radius, float Strength) {
+  UWorld *World = GetWorld();
+  if (!World)
+    return;
+
+  APlayerController *PC = World->GetFirstPlayerController();
+  if (!PC) {
+    UE_LOG(LogTemp, Warning, TEXT("FPM Terraform: No player controller found"));
+    return;
+  }
+
+  // Get camera location and direction
+  FVector CamLoc;
+  FRotator CamRot;
+  PC->GetPlayerViewPoint(CamLoc, CamRot);
+
+  const FVector TraceDir = CamRot.Vector();
+  const FVector TraceEnd = CamLoc + TraceDir * 500000.f; // 5km trace
+
+  UE_LOG(LogTemp, Log,
+         TEXT("FPM Terraform: Trace from (%.0f, %.0f, %.0f) dir (%.2f, %.2f, "
+              "%.2f)"),
+         CamLoc.X, CamLoc.Y, CamLoc.Z, TraceDir.X, TraceDir.Y, TraceDir.Z);
+
+  FHitResult Hit;
+  FCollisionQueryParams Params;
+  Params.bTraceComplex = false; // PMC uses complex-as-simple, so simple is fine
+  Params.bReturnPhysicalMaterial = false;
+  if (PC->GetPawn()) {
+    Params.AddIgnoredActor(PC->GetPawn());
+  }
+
+  // Try Visibility channel first, fall back to WorldStatic
+  bool bHit = World->LineTraceSingleByChannel(Hit, CamLoc, TraceEnd,
+                                              ECC_Visibility, Params);
+  if (!bHit) {
+    bHit = World->LineTraceSingleByChannel(Hit, CamLoc, TraceEnd,
+                                           ECC_WorldStatic, Params);
+  }
+
+  if (bHit) {
+    const FString Msg = FString::Printf(
+        TEXT("Terraform HIT at (%.0f, %.0f, %.0f) — %s R=%.0f S=%.1f on %s"),
+        Hit.ImpactPoint.X, Hit.ImpactPoint.Y, Hit.ImpactPoint.Z,
+        Strength > 0 ? TEXT("DIG") : TEXT("FILL"), Radius, Strength,
+        Hit.GetActor() ? *Hit.GetActor()->GetName() : TEXT("null"));
+    UE_LOG(LogTemp, Warning, TEXT("FPM %s"), *Msg);
+    if (GEngine)
+      GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green, Msg);
+    TerraformAtPoint(Hit.ImpactPoint, Radius, Strength);
+  } else {
+    const FString Msg = FString::Printf(
+        TEXT("Terraform MISS — no terrain hit from camera (%.0f,%.0f,%.0f)"),
+        CamLoc.X, CamLoc.Y, CamLoc.Z);
+    UE_LOG(LogTemp, Warning, TEXT("FPM %s"), *Msg);
+    if (GEngine)
+      GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, Msg);
+  }
+}
+
+// ===================================================================
+//  Terraforming - Fine-Resolution Tile System (200cm voxels)
+// ===================================================================
+
+FIntVector AFPMWorldChunkManager::WorldToTileCoord(const FVector &WorldPos) {
+  using namespace FPMVoxelConstants;
+  return FIntVector(
+      FMath::FloorToInt(WorldPos.X / TerraformTileWorldSize),
+      FMath::FloorToInt(WorldPos.Y / TerraformTileWorldSize),
+      FMath::FloorToInt(WorldPos.Z / TerraformTileWorldSize));
+}
+
+void AFPMWorldChunkManager::TerraformAtPoint(FVector WorldPos, float Radius,
+                                             float Strength) {
+  using namespace FPMVoxelConstants;
+
+  const float VS = TerraformVoxelSizeCm; // 50cm fine voxels
+
+  // Write deltas to fine overlay (50cm resolution)
+  const int32 MinIX = FMath::FloorToInt((WorldPos.X - Radius) / VS);
+  const int32 MaxIX = FMath::FloorToInt((WorldPos.X + Radius) / VS);
+  const int32 MinIY = FMath::FloorToInt((WorldPos.Y - Radius) / VS);
+  const int32 MaxIY = FMath::FloorToInt((WorldPos.Y + Radius) / VS);
+  const int32 MinIZ = FMath::FloorToInt((WorldPos.Z - Radius) / VS);
+  const int32 MaxIZ = FMath::FloorToInt((WorldPos.Z + Radius) / VS);
+
+  TSet<FIntVector> AffectedTiles;
+  int32 ModifiedVoxels = 0;
+
+  for (int32 IZ = MinIZ; IZ <= MaxIZ; ++IZ) {
+    for (int32 IY = MinIY; IY <= MaxIY; ++IY) {
+      for (int32 IX = MinIX; IX <= MaxIX; ++IX) {
+        const FVector VC((IX + 0.5f) * VS, (IY + 0.5f) * VS, (IZ + 0.5f) * VS);
+        const float Dist = FVector::Dist(WorldPos, VC);
+        if (Dist > Radius) continue;
+
+        const float T = Dist / Radius;
+        const float Falloff = 1.0f - (T*T*T*(T*(T*6.0f-15.0f)+10.0f));
+        const float Delta = -Strength * Falloff * VS;
+
+        const FIntVector FineKey(IX, IY, IZ);
+        const FIntVector TileCoord = WorldToTileCoord(VC);
+        FineTerraformOverlays.FindOrAdd(TileCoord).FindOrAdd(FineKey) += Delta;
+        ++ModifiedVoxels;
+        AffectedTiles.Add(TileCoord);
+      }
+    }
+  }
+
+  // NO coarse terrain modification. The fine tile renders ON TOP of
+  // the coarse terrain with a slight Z offset (applied in RegenerateTerraformTile).
+  // For FILL: fine tile adds geometry above the coarse terrain surface.
+  // For DIG: fine tile creates a cavity - coarse terrain behind it is hidden
+  //          by the fine tile's opaque surface surrounding the cavity.
+
+  // Regenerate the affected fine tiles with full base surface so the tile
+  // fills the entire 16m clip area (not just around edited voxels).
+  for (const FIntVector &TC : AffectedTiles) {
+    RegenerateTerraformTile(TC, true);
+  }
+
+  // Also regenerate coarse chunks that overlap with terraform tiles
+  // so their mesh gets clipped where fine tiles exist
+  {
+    using namespace FPMVoxelConstants;
+    TSet<FFPMChunkCoord> CoarseChunks;
+    for (const FIntVector &TC : AffectedTiles) {
+      const FVector TileCenter(
+          (TC.X + 0.5f) * TerraformTileWorldSize,
+          (TC.Y + 0.5f) * TerraformTileWorldSize,
+          (TC.Z + 0.5f) * TerraformTileWorldSize);
+      CoarseChunks.Add(FPMChunkGenerator::WorldToChunkCoord(TileCenter));
+    }
+    for (const FFPMChunkCoord &CC : CoarseChunks) {
+      if (LoadedChunks.Contains(CC)) {
+        RegenerateChunk(CC);
+      }
+    }
+  }
+
+  if (GEngine) {
+    GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Cyan,
+        FString::Printf(TEXT("Terraform: %d voxels, %d tiles (R=%.0f)"),
+            ModifiedVoxels, AffectedTiles.Num(), Radius));
+  }
+}
+
+
+void AFPMWorldChunkManager::UpdateTerraformPlayerBubble(
+    const FVector &PlayerPos) {
+  using namespace FPMVoxelConstants;
+
+  constexpr int32 BubbleRadiusTiles = 2;
+  const FIntVector CenterTC = WorldToTileCoord(PlayerPos);
+
+  // Bubble update is expensive. Only rebuild when crossing into a new tile.
+  if (bTerraformBubbleInitialized && CenterTC == LastTerraformBubbleCenter) {
+    return;
+  }
+  bTerraformBubbleInitialized = true;
+  LastTerraformBubbleCenter = CenterTC;
+
+  TSet<FIntVector> DesiredTiles;
+  TSet<FFPMChunkCoord> AffectedChunks;
+
+  for (int32 DZ = -BubbleRadiusTiles; DZ <= BubbleRadiusTiles; ++DZ) {
+    for (int32 DY = -BubbleRadiusTiles; DY <= BubbleRadiusTiles; ++DY) {
+      for (int32 DX = -BubbleRadiusTiles; DX <= BubbleRadiusTiles; ++DX) {
+        const FIntVector TC(CenterTC.X + DX, CenterTC.Y + DY, CenterTC.Z + DZ);
+        DesiredTiles.Add(TC);
+
+        if (!ActiveTerraformBubbleTiles.Contains(TC)) {
+          const FVector TileCenter((TC.X + 0.5f) * TerraformTileWorldSize,
+                                   (TC.Y + 0.5f) * TerraformTileWorldSize,
+                                   (TC.Z + 0.5f) * TerraformTileWorldSize);
+          AffectedChunks.Add(FPMChunkGenerator::WorldToChunkCoord(TileCenter));
+        }
+
+        AActor *const *FoundActor = TerraformTileActors.Find(TC);
+        if (!FoundActor || !IsValid(*FoundActor)) {
+          RegenerateTerraformTile(TC, true);
+        }
+      }
+    }
+  }
+
+  // Remove non-edited tiles that are outside the active player bubble.
+  TArray<FIntVector> ExistingTileKeys;
+  TerraformTileActors.GetKeys(ExistingTileKeys);
+  for (const FIntVector &TC : ExistingTileKeys) {
+    const TMap<FIntVector, float> *TileDeltas = FineTerraformOverlays.Find(TC);
+    const bool bHasDeltas = TileDeltas && TileDeltas->Num() > 0;
+    if (!DesiredTiles.Contains(TC) && !bHasDeltas) {
+      if (AActor **ActorPtr = TerraformTileActors.Find(TC)) {
+        if (*ActorPtr) {
+          (*ActorPtr)->Destroy();
+        }
+      }
+      TerraformTileActors.Remove(TC);
+
+      const FVector TileCenter((TC.X + 0.5f) * TerraformTileWorldSize,
+                               (TC.Y + 0.5f) * TerraformTileWorldSize,
+                               (TC.Z + 0.5f) * TerraformTileWorldSize);
+      AffectedChunks.Add(FPMChunkGenerator::WorldToChunkCoord(TileCenter));
+    }
+  }
+
+  ActiveTerraformBubbleTiles = MoveTemp(DesiredTiles);
+
+  // Rebuild only chunks actually affected by bubble boundary changes.
+  for (const FFPMChunkCoord &CC : AffectedChunks) {
+    if (LoadedChunks.Contains(CC)) {
+      RegenerateChunk(CC);
+    }
+  }
+}
+void AFPMWorldChunkManager::RegenerateTerraformTile(
+    const FIntVector &TileCoord, bool bForceBaseSurface) {
+  using namespace FPMVoxelConstants;
+
+  const FVector TileOrigin(TileCoord.X * TerraformTileWorldSize,
+                           TileCoord.Y * TerraformTileWorldSize,
+                           TileCoord.Z * TerraformTileWorldSize);
+
+  const TMap<FIntVector, float> *TileDeltas = FineTerraformOverlays.Find(TileCoord);
+  static const TMap<FIntVector, float> EmptyDeltas;
+  const TMap<FIntVector, float> *DeltasToUse =
+      (TileDeltas && TileDeltas->Num() > 0) ? TileDeltas : &EmptyDeltas;
+
+  if (DeltasToUse->Num() == 0 && !bForceBaseSurface)
+    return;
+
+  FFPMVoxelMeshData MeshData;
+  FPMVoxelGenerator::GenerateTerraformTile(TileOrigin, WorldSeed, *DeltasToUse,
+                                           MeshData, bForceBaseSurface);
+
+  AActor *&TileActor = TerraformTileActors.FindOrAdd(TileCoord);
+
+  // If this tile no longer produces geometry, remove any stale actor.
+  if (MeshData.Vertices.Num() == 0) {
+    if (TileActor) {
+      TileActor->Destroy();
+      TileActor = nullptr;
+    }
+    TerraformTileActors.Remove(TileCoord);
+    return;
+  }
+
+  if (!TileActor) {
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.SpawnCollisionHandlingOverride =
+        ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    TileActor = GetWorld()->SpawnActor<AActor>(
+        AActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator,
+        SpawnParams);
+    if (!TileActor)
+      return;
+
+    UProceduralMeshComponent *PMC = NewObject<UProceduralMeshComponent>(
+        TileActor, TEXT("TerraformMesh"));
+    PMC->RegisterComponent();
+    PMC->AttachToComponent(TileActor->GetRootComponent(),
+                           FAttachmentTransformRules::KeepRelativeTransform);
+    TileActor->SetRootComponent(PMC);
+
+    PMC->bUseComplexAsSimpleCollision = true;
+    // Disable self-shadowing on terraform tiles so interior walls
+    // of dug holes are not pitch-black from shadow penumbra.
+    PMC->SetCastShadow(false);
+
+    PMC->SetCollisionProfileName(TEXT("BlockAll"));
+    PMC->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+    if (TerrainMaterial) {
+      PMC->SetMaterial(0, TerrainMaterial);
+    } else if (AutoTerrainMaterial) {
+      PMC->SetMaterial(0, AutoTerrainMaterial);
+    }
+  }
+
+  UProceduralMeshComponent *PMC =
+      TileActor->FindComponentByClass<UProceduralMeshComponent>();
+  if (PMC && MeshData.Vertices.Num() > 0) {
+    // Small Z offset (+2cm) so fine tile renders reliably above coarse mesh
+    // at overlap regions. Prevents Z-fighting at the LOD seam boundary.
+    TileActor->SetActorLocation(FVector(0.0f, 0.0f, 2.0f));
+    TArray<FProcMeshTangent> Tangents;
+    PMC->CreateMeshSection(0, MeshData.Vertices, MeshData.Triangles,
+                           MeshData.Normals, MeshData.UVs, MeshData.Colors,
+                           Tangents, true);
+  }
+}
+
+
+// ===================================================================
+//  Terraforming — Single Chunk Regeneration
+// ===================================================================
+
+
+// ===================================================================
+//  ClipMeshForTerraformTiles - Remove coarse mesh triangles that
+//  overlap with active terraform tiles. This creates precise holes
+//  in the coarse mesh that the fine tiles fill.
+// ===================================================================
+void AFPMWorldChunkManager::ClipMeshForTerraformTiles(
+    FFPMVoxelMeshData &MeshData, const FFPMChunkCoord &ChunkCoord) {
+  using namespace FPMVoxelConstants;
+
+  if (ActiveTerraformBubbleTiles.Num() == 0 || MeshData.Triangles.Num() == 0)
+    return;
+
+  const float TS = TerraformTileWorldSize;
+
+  // Chunk origin: mesh vertices are in local space relative to this.
+  // Convert tile boxes from world space into local chunk space.
+  const FVector ChunkOrigin = FPMChunkGenerator::ChunkToWorldOrigin(ChunkCoord);
+
+  // Clip coarse mesh for all active bubble tiles that have generated geometry.
+  TArray<FBox> TileBoxes;
+  for (const FIntVector &TC : ActiveTerraformBubbleTiles) {
+    AActor *const *TileActor = TerraformTileActors.Find(TC);
+    if (!TileActor || !IsValid(*TileActor))
+      continue;
+
+    // Clip in XY with a small inward margin (200cm). The fine tile extends
+    // slightly beyond this clip box, creating overlap under the coarse mesh
+    // (the +2cm Z offset ensures the fine tile renders above where they overlap).
+    constexpr float ClipMargin = 200.f;
+    const FVector Min(TC.X * TS - ChunkOrigin.X + ClipMargin, TC.Y * TS - ChunkOrigin.Y + ClipMargin, -1200000.f);
+    const FVector Max(Min.X + TS - 2.f * ClipMargin, Min.Y + TS - 2.f * ClipMargin, 1000000.f);
+    TileBoxes.Add(FBox(Min, Max));
+  }
+  if (TileBoxes.Num() == 0)
+    return;
+
+  UE_LOG(LogTemp, VeryVerbose,
+         TEXT("FPM ClipMesh: %d bubble tile boxes, mesh has %d tris"),
+         TileBoxes.Num(), MeshData.Triangles.Num() / 3);
+
+  // Clip any coarse triangle that has ANY vertex inside the bubble clip
+  // region. This removes partially-overlapping coarse triangles that would
+  // Z-fight with the fine tiles at the LOD seam boundary.
+  FFPMVoxelMeshData Filtered;
+  const int32 NumTris = MeshData.Triangles.Num() / 3;
+
+  for (int32 T = 0; T < NumTris; ++T) {
+    const int32 I0 = MeshData.Triangles[T * 3];
+    const int32 I1 = MeshData.Triangles[T * 3 + 1];
+    const int32 I2 = MeshData.Triangles[T * 3 + 2];
+
+    const FVector &V0 = MeshData.Vertices[I0];
+    const FVector &V1 = MeshData.Vertices[I1];
+    const FVector &V2 = MeshData.Vertices[I2];
+
+    bool bClipped = false;
+    for (const FBox &Box : TileBoxes) {
+      // Clip if ANY vertex is inside the box
+      if (Box.IsInsideOrOn(V0) || Box.IsInsideOrOn(V1) || Box.IsInsideOrOn(V2)) {
+        bClipped = true;
+        break;
+      }
+    }
+    if (!bClipped) {
+      const int32 Base = Filtered.Vertices.Num();
+      for (int32 V : {I0, I1, I2}) {
+        Filtered.Vertices.Add(MeshData.Vertices[V]);
+        if (V < MeshData.Normals.Num()) Filtered.Normals.Add(MeshData.Normals[V]);
+        if (V < MeshData.UVs.Num()) Filtered.UVs.Add(MeshData.UVs[V]);
+        if (V < MeshData.Colors.Num()) Filtered.Colors.Add(MeshData.Colors[V]);
+      }
+      Filtered.Triangles.Add(Base);
+      Filtered.Triangles.Add(Base + 1);
+      Filtered.Triangles.Add(Base + 2);
+    }
+  }
+
+  MeshData = MoveTemp(Filtered);
+}
+
+void AFPMWorldChunkManager::RegenerateChunk(const FFPMChunkCoord &Coord) {
+  // 1. Destroy the existing chunk actor
+  AFPMChunkActor **FoundActor = LoadedChunks.Find(Coord);
+  if (FoundActor && *FoundActor) {
+    (*FoundActor)->Destroy();
+  }
+  LoadedChunks.Remove(Coord);
+
+  // 2. Re-generate voxel mesh (will pick up voxel overlay deltas)
+  FFPMVoxelMeshData MeshData;
+  FPMVoxelGenerator::GenerateAndMesh(Coord, WorldSeed, MeshData);
+
+  // 2b. Clip triangles that overlap with active terraform tiles
+  ClipMeshForTerraformTiles(MeshData, Coord);
+
+  // 3. Apply voxel overlay to the density field and re-mesh
+  // (The overlay is applied inside GenerateAndMesh via the global accessor)
+
+  // 4. Finalize — spawn new chunk actor
+  FinalizeChunk(Coord, MoveTemp(MeshData));
+}
+
+// ===================================================================
+//  Terraforming — Voxel Delta Accessors
+// ===================================================================
+
+float AFPMWorldChunkManager::GetVoxelDelta(const FFPMChunkCoord &Coord,
+                                           const FIntVector &VoxelKey) const {
+  const TMap<FIntVector, float> *ChunkDeltas = VoxelOverlays.Find(Coord);
+  if (!ChunkDeltas)
+    return 0.0f;
+  const float *Delta = ChunkDeltas->Find(VoxelKey);
+  return Delta ? *Delta : 0.0f;
+}
+
+bool AFPMWorldChunkManager::HasVoxelDeltas(const FFPMChunkCoord &Coord) const {
+  const TMap<FIntVector, float> *ChunkDeltas = VoxelOverlays.Find(Coord);
+  return ChunkDeltas && ChunkDeltas->Num() > 0;
+}
+
+void AFPMWorldChunkManager::ResetAllTerraforming() {
+  // Collect affected chunks before clearing
+  TArray<FFPMChunkCoord> AffectedCoords;
+  VoxelOverlays.GetKeys(AffectedCoords);
+
+  VoxelOverlays.Empty();
+
+  // Re-mesh affected chunks that are still loaded
+  int32 RegenCount = 0;
+  for (const FFPMChunkCoord &Coord : AffectedCoords) {
+    if (LoadedChunks.Contains(Coord)) {
+      RegenerateChunk(Coord);
+      RegenCount++;
+    }
+  }
+
+  UE_LOG(LogTemp, Warning,
+         TEXT("FPM Terraform: Reset all modifications. Regenerated %d chunks."),
+         RegenCount);
 }
 
 EFPMBiome AFPMWorldChunkManager::GetBiomeAtWorldPos(FVector WorldPos) {
@@ -854,12 +1358,12 @@ EFPMBiome AFPMWorldChunkManager::GetBiomeAtWorldPos(FVector WorldPos) {
     }
   }
 
-  // Chunk not loaded â€” generate on the fly (lightweight)
+  // Chunk not loaded — generate on the fly (lightweight)
   float NormX, NormY;
   FPMChunkGenerator::WorldToIslandNorm(WorldPos, NormX, NormY);
 
   // Quick biome check without full chunk generation
-  const float Mask = 1.0f; // Simplified â€” would need IslandMask for accuracy
+  const float Mask = 1.0f; // Simplified — would need IslandMask for accuracy
   // For now, return a default
   return EFPMBiome::Meadows;
 }
@@ -966,7 +1470,7 @@ void AFPMWorldChunkManager::BuildSafetyFloorAt(FVector WorldPos,
     SafetyFloorMesh->RegisterComponent();
     SafetyFloorMesh->AttachToComponent(
         GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
-    // Collision only â€” no rendering
+    // Collision only — no rendering
     SafetyFloorMesh->SetVisibility(false);
     SafetyFloorMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     SafetyFloorMesh->SetCollisionResponseToAllChannels(
@@ -977,12 +1481,12 @@ void AFPMWorldChunkManager::BuildSafetyFloorAt(FVector WorldPos,
   // Feed mesh data (section 0 = replace)
   SafetyFloorMesh->CreateMeshSection(
       0, Verts, Tris, Normals, UVs,
-      TArray<FColor>(),           // vertex colours â€” none
-      TArray<FProcMeshTangent>(), // tangents â€” none needed
+      TArray<FColor>(),           // vertex colours — none
+      TArray<FProcMeshTangent>(), // tangents — none needed
       /*bCreateCollision=*/true);
 
   UE_LOG(LogTemp, Log,
-         TEXT("FPM: Safety floor built at (%.0f,%.0f) â€” %dÃ—%d grid, "
+         TEXT("FPM: Safety floor built at (%.0f,%.0f) — %d×%d grid, "
               "%.0fkm half-extent, %.0fcm below terrain"),
          WorldPos.X, WorldPos.Y, GridSteps, GridSteps, HalfExtentCm / 100000.f,
          SinkCm);
@@ -1140,7 +1644,7 @@ void AFPMWorldChunkManager::SpawnWaterPlane() {
   WaterPlaneMesh->SetCollisionResponseToAllChannels(
       ECollisionResponse::ECR_Overlap);
 
-  // Cast shadows off â€” water doesn't cast shadows
+  // Cast shadows off — water doesn't cast shadows
   WaterPlaneMesh->SetCastShadow(false);
 
   UE_LOG(LogTemp, Warning,
@@ -1294,7 +1798,7 @@ void AFPMWorldChunkManager::InitializeChunkWater(const FFPMChunkCoord &Coord) {
 
   // Also register any river head positions that fall within this chunk.
   // These are spawned by SpawnRiverHeadSources() and represent the ridge-
-  // noise local maxima â€” the headwaters of the carved river network.
+  // noise local maxima — the headwaters of the carved river network.
   {
     const FVector ChunkCenter = FPMChunkGenerator::ChunkToWorldCenter(Coord);
     const float HalfChunk = FPMChunkConstants::ChunkWorldSize * 0.5f;
@@ -1344,7 +1848,7 @@ void AFPMWorldChunkManager::InitializeChunkWater(const FFPMChunkCoord &Coord) {
     ChunkWaterSources.Add(Coord, MoveTemp(Sources));
 
     UE_LOG(LogTemp, Log,
-           TEXT("FPM Water: Chunk %s â€” %d sources, water data allocated"),
+           TEXT("FPM Water: Chunk %s — %d sources, water data allocated"),
            *Coord.ToString(), ChunkWaterSources[Coord].Num());
   }
 
@@ -1556,5 +2060,9 @@ void AFPMWorldChunkManager::CleanupChunkWater(const FFPMChunkCoord &Coord) {
   CachedHeightmaps.Remove(Coord);
 
   // The water PMC is attached to the ChunkActor and will be destroyed
-  // when the actor is destroyed â€” no manual cleanup needed.
+  // when the actor is destroyed — no manual cleanup needed.
 }
+
+
+
+

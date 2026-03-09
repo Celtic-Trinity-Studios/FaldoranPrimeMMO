@@ -1,4 +1,4 @@
-﻿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #pragma once
 
@@ -24,7 +24,7 @@ public:
 
 private:
   float DrawHUDLine(float X, float Y, const FString &Text,
-                    const FLinearColor &Color, UFont *Font, float Scale) const;
+                    const FLinearColor &Color, UFont *Font, float Scale);
 
   void DrawBiomeTeleportPanel(APlayerController *PC,
                               class AFPMPlayerCharacter *Char, float TopY);
@@ -35,14 +35,17 @@ private:
   void DrawWorldMapOverlay(APlayerController *PC,
                            class AFPMPlayerCharacter *Char);
 
+  void DrawTerraformToolbar(APlayerController *PC,
+                            class AFPMPlayerCharacter *Char);
+
   void TeleportToBiome(uint8 BiomeIndex);
 
   // --- World Map ---
   void BeginWorldMapGeneration(int32 WorldSeed);
 
-  bool bWorldMapOpen    = false;
+  bool bWorldMapOpen = false;
   bool bWorldMapPending = false; // background gen in flight
-  bool bWorldMapReady   = false;
+  bool bWorldMapReady = false;
 
   // ---------------------------------------------------------------
   //  Biome location cache

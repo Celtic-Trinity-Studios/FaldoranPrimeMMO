@@ -12,6 +12,7 @@
 class UCameraComponent;
 class USpringArmComponent;
 class UFPMInventoryComponent;
+class UFPMInventoryGridWidget;
 class UFPMInteractionComponent;
 class UFPMPlanetTraversal;
 
@@ -81,6 +82,41 @@ public:
   UFUNCTION(BlueprintPure, Category = "FPM|Locomotion")
   bool IsRunning() const { return bIsRunning; }
 
+  /** Returns the inventory component for server-side DB operations. */
+  UFPMInventoryComponent *GetInventoryComponent() const {
+    return InventoryComponent;
+  }
+
+  /** Toggle inventory UI visibility (I key). Called by PlayerController. */
+  void ToggleInventory();
+
+  // --- Terraforming ---
+
+  /** Terraform tool slots mapped to number keys 1-6. */
+  enum class ETerraformTool : uint8 {
+    None = 0,
+    DigSmall = 1,   // Key 1: Dig 20m radius
+    DigMedium = 2,  // Key 2: Dig 40m radius
+    DigLarge = 3,   // Key 3: Dig 80m radius
+    FillSmall = 4,  // Key 4: Fill 20m radius
+    FillMedium = 5, // Key 5: Fill 40m radius
+    FillLarge = 6,  // Key 6: Fill 80m radius
+  };
+
+  /** Currently selected terraform tool (None = disabled). */
+  ETerraformTool ActiveTerraformTool = ETerraformTool::None;
+
+  /** Get the active tool for HUD display. */
+  ETerraformTool GetActiveTerraformTool() const { return ActiveTerraformTool; }
+
+  /**
+   * Widget class used to spawn the inventory grid panel.
+   * Assign WBP_InventoryGrid (UFPMInventoryGridWidget subclass)
+   * in the BP_PlayerCharacter class defaults.
+   */
+  UPROPERTY(EditDefaultsOnly, Category = "FPM|UI")
+  TSubclassOf<UFPMInventoryGridWidget> InventoryGridWidgetClass;
+
 protected:
   virtual void BeginPlay() override;
 
@@ -118,6 +154,10 @@ private:
   /** Server-authoritative inventory (40-slot grid, replicated to owner). */
   UPROPERTY(VisibleAnywhere, Category = "FPM|Gameplay")
   TObjectPtr<UFPMInventoryComponent> InventoryComponent;
+
+  /** Live inventory grid widget instance (local player only). */
+  UPROPERTY()
+  TObjectPtr<UFPMInventoryGridWidget> InventoryGridWidget;
 
   /** Interaction detector – line traces from camera to find interactables. */
   UPROPERTY(VisibleAnywhere, Category = "FPM|Gameplay")
@@ -216,9 +256,6 @@ private:
   /** Attempt to interact with the object under the crosshair (E key). */
   void TryInteract();
 
-  /** Toggle inventory UI visibility (I key). */
-  void ToggleInventory();
-
   /** Whether the inventory UI is currently visible. */
   bool bInventoryOpen = false;
 
@@ -227,4 +264,14 @@ private:
 
   /** Cooldown for fall-through recovery (prevents frame-spam). */
   double LastFallRecoveryTime = 0.0;
+
+  /** Per-instance input debounce state (avoids static shared state for split-screen). */
+  bool bMMBWasDown = false;
+  bool bTabWasDown = false;
+  bool bEKeyWasDown = false;
+  bool bKeyWasDown[6] = {false, false, false, false, false, false};
+  bool bLMBWasDown = false;
 };
+
+
+

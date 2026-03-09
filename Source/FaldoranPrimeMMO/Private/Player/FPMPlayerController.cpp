@@ -11,17 +11,18 @@
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/GameModeBase.h"
+#include "Gameplay/FPMInventoryComponent.h"
 #include "Player/FPMPlayerCharacter.h"
 #include "UI/FPMCharacterCreationWidget.h"
 #include "UI/FPMCharacterSelectWidget.h"
 #include "UI/FPMEscMenuWidget.h"
+#include "UI/FPMHUD.h"
 #include "UI/FPMLoginWidget.h"
 #include "UObject/ConstructorHelpers.h"
 #include "World/FPMChunkActor.h"
 #include "World/FPMChunkData.h"
 #include "World/FPMNexusManager.h"
 #include "World/FPMNoise.h"
-#include "UI/FPMHUD.h"
 #include "World/FPMPlanetTraversal.h"
 #include "World/FPMVoxelChunk.h"
 #include "World/FPMWorldChunkManager.h"
@@ -81,6 +82,8 @@ void AFPMPlayerController::SetupInputComponent() {
                                &AFPMPlayerController::OnToggleRiftRunner);
     InputComponent->BindAction(TEXT("CycleRiftSpeed"), IE_Pressed, this,
                                &AFPMPlayerController::OnCycleRiftSpeed);
+    InputComponent->BindAction(TEXT("ToggleInventory"), IE_Pressed, this,
+                               &AFPMPlayerController::OnToggleInventory);
   }
 }
 
@@ -729,6 +732,13 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
   Possess(Char);
   ActiveCharacterId = CharacterId;
 
+  // Load this character's inventory from the database.
+  // Done immediately after Possess so the grid is populated before
+  // ClientEnterWorldSuccess fires and the client can display the UI.
+  if (UFPMInventoryComponent *Inv = Char->GetInventoryComponent()) {
+    Inv->LoadFromDB(DB, CharacterId);
+  }
+
   // Re-enable gravity only when terrain collision is ACTUALLY ready.
   // Poll every 0.25s with a downward line trace. If it hits the terrain,
   // collision cooking is done and it's safe to enable Walking mode.
@@ -1106,22 +1116,103 @@ void AFPMPlayerController::OnCycleRiftSpeed() {
   }
 }
 
+void AFPMPlayerController::OnToggleInventory() {
+  if (AFPMPlayerCharacter *Char = Cast<AFPMPlayerCharacter>(GetPawn())) {
+    Char->ToggleInventory();
+  }
+}
+
 // -------------------------------------------------------------------
 // World Map Handler
 // -------------------------------------------------------------------
 
 void AFPMPlayerController::OnOpenWorldMap() {
   // Only available in-game (pawn possessed)
-  if (!GetPawn()) return;
+  if (!GetPawn())
+    return;
 
   // Get the HUD and toggle the map
-  if (AFPMHUD* HUD = Cast<AFPMHUD>(GetHUD())) {
+  if (AFPMHUD *HUD = Cast<AFPMHUD>(GetHUD())) {
     // Pass world seed from WorldChunkManager
     int32 Seed = 42;
-    if (AFPMWorldChunkManager* WCM =
+    if (AFPMWorldChunkManager *WCM =
             AFPMWorldChunkManager::GetOrCreate(GetWorld())) {
       Seed = WCM->WorldSeed;
     }
     HUD->ToggleWorldMap(Seed);
   }
+}
+
+// -------------------------------------------------------------------
+// Debug Commands
+// -------------------------------------------------------------------
+
+void AFPMPlayerController::Debug_SpawnTestItems() {
+  // Client-side: fire the Server RPC so it runs where authority lives.
+  if (GEngine) {
+    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow,
+                                     TEXT("Spawning test items..."));
+  }
+  UE_LOG(LogFPMPlayerController, Log,
+         TEXT("FPM Debug: Debug_SpawnTestItems — sending Server RPC."));
+  Server_Debug_SpawnTestItems();
+
+  // Delay opening inventory to allow the Server RPC to process and
+  // the items to replicate back to this client.
+  // Without this delay, the widget opens with 0 items because
+  // replication hasn't happened yet in the same frame.
+  TWeakObjectPtr<AFPMPlayerController> WeakSelf = this;
+  GetWorld()->GetTimerManager().SetTimer(
+      DebugSpawnTimerHandle,
+      [WeakSelf]() {
+        if (AFPMPlayerController *Self = WeakSelf.Get()) {
+          if (AFPMPlayerCharacter *Char =
+                  Cast<AFPMPlayerCharacter>(Self->GetPawn())) {
+            Char->ToggleInventory();
+          }
+        }
+      },
+      0.5f, false);
+}
+
+void AFPMPlayerController::Server_Debug_SpawnTestItems_Implementation() {
+  UE_LOG(LogFPMPlayerController, Log,
+         TEXT("FPM Debug: Server_Debug_SpawnTestItems — executing on server."));
+
+  AFPMPlayerCharacter *Char = Cast<AFPMPlayerCharacter>(GetPawn());
+  if (!Char) {
+    UE_LOG(LogFPMPlayerController, Warning,
+           TEXT("FPM Debug: No pawn — spawn test items failed."));
+    return;
+  }
+
+  UFPMInventoryComponent *Inv = Char->GetInventoryComponent();
+  if (!Inv) {
+    UE_LOG(LogFPMPlayerController, Warning,
+           TEXT("FPM Debug: No inventory component."));
+    return;
+  }
+
+  // --- Spawn a variety of test items ---
+  // Each call: AddItem(ItemID, Count, SizeX, SizeY)
+
+  // 1×1 stackable items
+  Inv->AddItem(FName("Item_HealthPotion"), 5, 1, 1);
+  Inv->AddItem(FName("Item_ManaPotion"), 3, 1, 1);
+  Inv->AddItem(FName("Item_Gold_Coin"), 50, 1, 1);
+
+  // 1×2 items (tall)
+  Inv->AddItem(FName("Item_Dagger"), 1, 1, 2);
+
+  // 1×3 items (tall weapon)
+  Inv->AddItem(FName("Item_Iron_Sword"), 1, 1, 3);
+
+  // 2×2 items (square)
+  Inv->AddItem(FName("Item_Dragon_Scale"), 1, 2, 2);
+
+  // 2×1 items (wide)
+  Inv->AddItem(FName("Item_Scroll"), 1, 2, 1);
+
+  UE_LOG(LogFPMPlayerController, Log,
+         TEXT("FPM Debug: Spawned 7 test items into the backpack."));
 }

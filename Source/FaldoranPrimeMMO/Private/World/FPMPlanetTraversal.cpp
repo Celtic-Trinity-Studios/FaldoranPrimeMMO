@@ -112,9 +112,10 @@ void UFPMPlanetTraversal::ToggleFlight() {
 
     // Set fly speed — use SpeedGlide as minimum so Hover tier still lets
     // the player nudge with inputs without feeling sluggish
-    CMC->MaxFlySpeed = (CurrentSpeedTier == 0) ? SpeedGlide : GetCurrentSpeed();
-
-    CMC->BrakingDecelerationFlying = 2048.f; // snappy stops in flight
+    const float FlySpeed = (CurrentSpeedTier == 0) ? SpeedGlide : GetCurrentSpeed();
+    CMC->MaxFlySpeed             = FlySpeed;
+    CMC->MaxAcceleration          = FlySpeed * 20.f;  // ~0.05s to max speed
+    CMC->BrakingDecelerationFlying = FlySpeed * 10.f;
     CMC->StopMovementImmediately();
 
     if (UCapsuleComponent *Cap = Character->GetCapsuleComponent())
@@ -160,8 +161,10 @@ void UFPMPlanetTraversal::CycleSpeedTier() {
   if (bIsFlying) {
     if (ACharacter *Char = Cast<ACharacter>(GetOwner())) {
       if (UCharacterMovementComponent *CMC = Char->GetCharacterMovement()) {
-        CMC->MaxFlySpeed =
-            (CurrentSpeedTier == 0) ? SpeedGlide : GetCurrentSpeed();
+        const float NewSpeed = (CurrentSpeedTier == 0) ? SpeedGlide : GetCurrentSpeed();
+        CMC->MaxFlySpeed             = NewSpeed;
+        CMC->MaxAcceleration          = NewSpeed * 20.f;
+        CMC->BrakingDecelerationFlying = NewSpeed * 10.f;
       }
       SpawnShellIfNeeded(Char);
     }

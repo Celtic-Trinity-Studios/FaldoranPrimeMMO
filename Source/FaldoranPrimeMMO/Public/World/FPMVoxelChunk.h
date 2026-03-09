@@ -1,4 +1,4 @@
-ï»¿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #pragma once
 
@@ -41,6 +41,24 @@ constexpr float WorldZBase = FPMChunkConstants::MinWorldZ;
 
 /** World Z top of the voxel volume - matches MaxWorldZ (+9km) */
 constexpr float WorldZTop = WorldZBase + ChunkVoxelsZ * VoxelSizeCm;
+
+// --- Fine-resolution terraform overlay ---
+
+/** Voxel size for terraform overlay tiles (50cm per cell, matches Enshrouded). */
+constexpr float TerraformVoxelSizeCm = 50.0f;
+
+/** Number of voxels per terraform tile axis (32 = 16m tile at 50cm voxels). */
+constexpr int32 TerraformTileVoxels = 32;
+
+/** World size of a terraform tile in cm. */
+constexpr float TerraformTileWorldSize =
+    TerraformTileVoxels * TerraformVoxelSizeCm; // 1600 cm = 16m
+
+/** Grid corners for terraform tile MC (voxels + 1). */
+constexpr int32 TerraformGridN = TerraformTileVoxels + 1; // 33
+constexpr int32 TerraformTotalCorners =
+    TerraformGridN * TerraformGridN * TerraformGridN; // 35937
+
 } // namespace FPMVoxelConstants
 
 // ===================================================================
@@ -96,4 +114,20 @@ private:
 public:
   /** Map biome enum to vertex color for material splatting. */
   static FColor BiomeToVertexColor(EFPMBiome Biome);
+
+  /**
+   * Generate a fine-resolution terraform tile.
+   * Creates a 32×32×32 density field at 200cm resolution (64m tile)
+   * centered on TileOrigin, applying both coarse terrain and fine deltas.
+   *
+   * @param TileOrigin  World-space origin (min corner) of the tile
+   * @param WorldSeed   World seed for terrain generation
+   * @param FineDeltas  Map of fine voxel keys ? density deltas
+   * @param OutMesh     Output mesh data
+   */
+  static void GenerateTerraformTile(const FVector &TileOrigin, int32 WorldSeed,
+                                    const TMap<FIntVector, float> &FineDeltas,
+                                    FFPMVoxelMeshData &OutMesh,
+                                    bool bForceBaseSurface = false);
 };
+

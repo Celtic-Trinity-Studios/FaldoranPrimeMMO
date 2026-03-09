@@ -33,7 +33,7 @@ struct FBiomeBlend {
 };
 
 struct FPMNoise {
-  // === Primitives ===
+  // === 2D Primitives ===
   static float Simplex2D(float X, float Y, int32 Seed);
   static float FBM(float X, float Y, int32 Seed, int32 Octaves = 6,
                    float Gain = 0.45f, float Lacunarity = 2.0f);
@@ -41,6 +41,24 @@ struct FPMNoise {
                         float Gain = 0.5f, float Lacunarity = 2.2f);
   static void DomainWarp(float &X, float &Y, int32 Seed,
                          float Strength = 50000.0f, float Freq = 0.000002f);
+
+  // === 3D Primitives (for cave generation) ===
+  /** 3D Simplex gradient noise. Returns value in [-1, 1]. */
+  static float Simplex3D(float X, float Y, float Z, int32 Seed);
+
+  /** 3D Fractal Brownian Motion. Returns [0, 1]. */
+  static float FBM3D(float X, float Y, float Z, int32 Seed, int32 Octaves = 4,
+                     float Gain = 0.45f, float Lacunarity = 2.0f);
+
+  // === Cave System ===
+  /** Compute cave carving density at a world-space 3D position.
+   *  Returns a value in [0, 1] where:
+   *    0 = no carving (solid rock)
+   *    1 = fully carved (open air)
+   *  Combines worm tunnels, grand caverns, and depth attenuation.
+   *  Pure math, safe for any thread. */
+  static float CaveDensity(float WorldX, float WorldY, float WorldZ, int32 Seed,
+                           float SurfaceZ);
 
   // === Voronoi Cellular Noise ===
   /** 2D Voronoi: returns distance to nearest cell center, a per-cell hash
@@ -89,6 +107,10 @@ struct FPMNoise {
 private:
   static int32 GradHash(int32 X, int32 Y, int32 Seed);
   static float GradDot(int32 Hash, float X, float Y);
+
+  // 3D gradient helpers
+  static int32 GradHash3D(int32 X, int32 Y, int32 Z, int32 Seed);
+  static float GradDot3D(int32 Hash, float X, float Y, float Z);
 
   /** Hash an integer cell coordinate to a float [0,1] */
   static float CellHash(int32 X, int32 Y, int32 Seed);

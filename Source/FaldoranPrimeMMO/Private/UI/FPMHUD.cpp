@@ -1,14 +1,14 @@
-﻿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #include "UI/FPMHUD.h"
 #include "Engine/Canvas.h"
 #include "Engine/Font.h"
+#include "Engine/Texture2D.h"
 #include "EngineUtils.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Player/FPMPlayerCharacter.h"
 #include "World/FPMChunkData.h"
-#include "Engine/Texture2D.h"
 #include "World/FPMNoise.h"
 #include "World/FPMPlanetTraversal.h"
 #include "World/FPMVoxelChunk.h"
@@ -105,24 +105,27 @@ void AFPMHUD::RefreshBiomeCache(int32 WorldSeed) {
 
   // Kick off scan on a background thread so we don't freeze the game thread.
   // Results arrive via StagingLocations + bStagingReady (polled in DrawHUD).
-  Async(EAsyncExecution::ThreadPool, [this, WorldSeed]() {
+  TWeakObjectPtr<AFPMHUD> WeakThis(this);
+  Async(EAsyncExecution::ThreadPool, [WeakThis, WorldSeed]() {
+    if (!WeakThis.IsValid())
+      return;
     TMap<uint8, FBiomeLocation> Results;
     for (const FBiomeMeta &M : GBiomeMeta)
       Results.Add(static_cast<uint8>(M.Biome), FBiomeLocation{});
 
-    // 50km steps, 3000km radius  →  120×120 = 14 400 samples
+    // 50km steps, full half-circumference radius ? ~400�400 = 160 000 samples
     // TerrainSurfaceZ is pure math (no UObject access), safe on worker thread
-    // Earth-scale world (~12,800km diameter) needs a larger scan radius.
-    constexpr float StepCm = 5000000.0f;
-    constexpr float RadiusCm = 300000000.0f;
-    constexpr float NormScale = 1.0f / 50000.0f;
+    // Earth-scale world (40,075km circumference) needs full-planet coverage.
+    constexpr float BiomeScanStepCm = 5000000.0f;   // 50 km
+    constexpr float BiomeHeightNormScale = 1.0f / 50000.0f;
+    const float RadiusCm = FPMChunkConstants::PlanetCircumferenceCm * 0.5f;
     int32 Found = 0;
 
     for (float X = -RadiusCm; X <= RadiusCm && Found < GBiomeCount;
-         X += StepCm) {
-      for (float Y = -RadiusCm; Y <= RadiusCm; Y += StepCm) {
+         X += BiomeScanStepCm) {
+      for (float Y = -RadiusCm; Y <= RadiusCm; Y += BiomeScanStepCm) {
         const float SurfZ = FPMVoxelGenerator::TerrainSurfaceZ(X, Y, WorldSeed);
-        const float NormH = FMath::Clamp(SurfZ * NormScale, 0.0f, 1.0f);
+        const float NormH = FMath::Clamp(SurfZ * BiomeHeightNormScale, 0.0f, 1.0f);
         EFPMBiome B = FPMVoxelGenerator::BiomeAtWorldXY(X, Y, WorldSeed, NormH);
 
         FBiomeLocation *Loc = Results.Find(static_cast<uint8>(B));
@@ -136,18 +139,20 @@ void AFPMHUD::RefreshBiomeCache(int32 WorldSeed) {
       }
     }
 
-    // Post results back — game thread picks them up next DrawHUD call
-    StagingLocations = MoveTemp(Results);
-    bStagingReady.store(true, std::memory_order_release);
+    // Post results back � game thread picks them up next DrawHUD call
+    if (AFPMHUD *HUD = WeakThis.Get()) {
+      HUD->StagingLocations = MoveTemp(Results);
+      HUD->bStagingReady.store(true, std::memory_order_release);
+    }
 
     UE_LOG(LogTemp, Log,
-           TEXT("FPM HUD: Biome cache built — %d / %d biomes found"), Found,
+           TEXT("FPM HUD: Biome cache built � %d / %d biomes found"), Found,
            GBiomeCount);
   });
 }
 
 // ===================================================================
-//  TeleportToBiome — called directly when a button click is detected
+//  TeleportToBiome � called directly when a button click is detected
 // ===================================================================
 void AFPMHUD::TeleportToBiome(uint8 BiomeKey) {
   const FBiomeLocation *Loc = BiomeLocations.Find(BiomeKey);
@@ -166,13 +171,13 @@ void AFPMHUD::TeleportToBiome(uint8 BiomeKey) {
 
   // Build a small safety floor (2km radius, 10-step grid = 100 samples) so
   // the player lands on something even before full chunks generate.
-  // Do NOT call EnsureChunkLoadedAtWorldPos here — it blocks the game thread
+  // Do NOT call EnsureChunkLoadedAtWorldPos here � it blocks the game thread
   // for 2+ seconds and corrupts CMC state, making the teleport fail.
   for (TActorIterator<AFPMWorldChunkManager> It(GetWorld()); It; ++It) {
     const FVector DestXY(Loc->WorldXY.X, Loc->WorldXY.Y, SurfaceZ);
     It->BuildSafetyFloorAt(DestXY,
                            /*HalfExtentCm=*/200000.f, // 2 km half-extent
-                           /*GridSteps=*/10, // 10×10 = 100 samples, <5 ms
+                           /*GridSteps=*/10, // 10�10 = 100 samples, <5 ms
                            /*SinkCm=*/500.f);
     break;
   }
@@ -182,7 +187,7 @@ void AFPMHUD::TeleportToBiome(uint8 BiomeKey) {
     Move->StopMovementImmediately();
   }
 
-  // Teleport 15m above surface — gives chunks time to generate collision
+  // Teleport 15m above surface � gives chunks time to generate collision
   // TeleportTo (not SetActorLocation) properly notifies the CMC so it
   // doesn't snap back to the previous position on the next physics tick.
   const FVector Dest(Loc->WorldXY.X, Loc->WorldXY.Y, SurfaceZ + 1500.0f);
@@ -201,7 +206,7 @@ void AFPMHUD::TeleportToBiome(uint8 BiomeKey) {
 // ===================================================================
 void AFPMHUD::DrawHUD() {
   Super::DrawHUD();
-  if (!Canvas)
+  if (!Canvas || !GEngine)
     return;
 
   APlayerController *PC = GetOwningPlayerController();
@@ -337,6 +342,8 @@ void AFPMHUD::DrawHUD() {
        {0.5f, 0.5f, 0.5f}});
 
   UFont *Font = GEngine->GetSmallFont();
+  if (!Font)
+    return;
   const float FS = 1.15f;
   const float LineH = 18.f * FS;
   const float PadX = 12.f;
@@ -363,27 +370,32 @@ void AFPMHUD::DrawHUD() {
   }
 
   // ---------------------------------------------------------------
-  //  Biome teleport panel — always drawn, buttons only clickable
+  //  Biome teleport panel � always drawn, buttons only clickable
   //  when cursor is visible (Tab mode)
   // ---------------------------------------------------------------
   DrawBiomeTeleportPanel(PC, Char, PY + PH + 8.f);
 
-  // Rift Runner panel — right side of screen
+  // Rift Runner panel � right side of screen
   DrawRiftRunnerPanel(PC, Char);
+
+  // Terraform toolbar � bottom center of screen
+  DrawTerraformToolbar(PC, Char);
 }
 
 // ===================================================================
 //  DrawBiomeTeleportPanel
-//  Uses direct mouse polling — no AddHitBox callbacks needed.
+//  Uses direct mouse polling � no AddHitBox callbacks needed.
 // ===================================================================
 void AFPMHUD::DrawBiomeTeleportPanel(APlayerController *PC,
                                      AFPMPlayerCharacter *Char, float TopY) {
-  if (!Canvas)
+  if (!Canvas || !GEngine)
     return;
 
   const bool bCursorOn = Char->bHUDMouseMode;
 
   UFont *Font = GEngine->GetSmallFont();
+  if (!Font)
+    return;
 
   constexpr float BtnW = 90.f;
   constexpr float BtnH = 20.f;
@@ -446,9 +458,9 @@ void AFPMHUD::DrawBiomeTeleportPanel(APlayerController *PC,
     }
 
     // Button colours
-    //   bAvail   = found   → bright biome tint
-    //   bSearching = not yet → dim biome tint with searching indicator
-    //   neither  = not on this seed → very dim grey
+    //   bAvail   = found   ? bright biome tint
+    //   bSearching = not yet ? dim biome tint with searching indicator
+    //   neither  = not on this seed ? very dim grey
     const float BrightMult = bHover ? 1.6f : 1.0f;
     const float FillScale = bAvail ? 0.22f * BrightMult : 0.08f;
     const float BorderScale = bAvail ? 0.55f * BrightMult : 0.20f;
@@ -468,7 +480,7 @@ void AFPMHUD::DrawBiomeTeleportPanel(APlayerController *PC,
     DrawRect(Border, BX - 1.f, BY - 1.f, BtnW + 2.f, BtnH + 2.f);
     DrawRect(BtnBg, BX, BY, BtnW, BtnH);
 
-    // Label — append '...' while searching
+    // Label � append '...' while searching
     const FString Label = bSearching
                               ? FString::Printf(TEXT("%s ..."), Meta.Name)
                               : FString(Meta.Name);
@@ -484,10 +496,10 @@ void AFPMHUD::DrawBiomeTeleportPanel(APlayerController *PC,
 // ===================================================================
 float AFPMHUD::DrawHUDLine(float X, float Y, const FString &Text,
                            const FLinearColor &Color, UFont *Font,
-                           float Scale) const {
+                           float Scale) {
   float TW, TH;
   GetTextSize(Text, TW, TH, Font, Scale);
-  const_cast<AFPMHUD *>(this)->DrawText(Text, Color, X, Y, Font, Scale);
+  DrawText(Text, Color, X, Y, Font, Scale);
   return TH + 2.f;
 }
 
@@ -498,13 +510,15 @@ float AFPMHUD::DrawHUDLine(float X, float Y, const FString &Text,
 // ===================================================================
 void AFPMHUD::DrawRiftRunnerPanel(APlayerController *PC,
                                   AFPMPlayerCharacter *Char) {
-  if (!Canvas || !Char)
+  if (!Canvas || !Char || !GEngine)
     return;
 
   // Find the PlanetTraversal component
   UFPMPlanetTraversal *Rift = Char->FindComponentByClass<UFPMPlanetTraversal>();
 
   UFont *Font = GEngine->GetSmallFont();
+  if (!Font)
+    return;
   const float FS = 1.15f;
   const float LineH = 18.f * FS;
   const float PadX = 12.f;
@@ -522,14 +536,14 @@ void AFPMHUD::DrawRiftRunnerPanel(APlayerController *PC,
 
   // Title / status
   if (bActive) {
-    Lines.Add({TEXT(" ⚡ RIFT RUNNER  ACTIVE"), {0.29f, 0.98f, 0.86f}});
+    Lines.Add({TEXT(" ? RIFT RUNNER  ACTIVE"), {0.29f, 0.98f, 0.86f}});
   } else {
-    Lines.Add({TEXT(" ○ Rift Runner  off"), {0.45f, 0.55f, 0.65f}});
+    Lines.Add({TEXT(" ? Rift Runner  off"), {0.45f, 0.55f, 0.65f}});
   }
 
   // Speed tier
   if (Rift) {
-    // Derive speed by reading IsRiftRunnerActive state — we expose tier info
+    // Derive speed by reading IsRiftRunnerActive state � we expose tier info
     // via the on-screen message system, so just show the keybind hint here.
     const FLinearColor SpeedCol = bActive ? FLinearColor(0.20f, 0.85f, 1.0f)
                                           : FLinearColor(0.4f, 0.5f, 0.55f);
@@ -540,7 +554,7 @@ void AFPMHUD::DrawRiftRunnerPanel(APlayerController *PC,
   }
 
   // Separator
-  Lines.Add({TEXT(" ───────────────"), {0.25f, 0.30f, 0.38f}});
+  Lines.Add({TEXT(" ---------------"), {0.25f, 0.30f, 0.38f}});
 
   // Speed tier labels
   const FLinearColor DimCol = bActive ? FLinearColor(0.65f, 0.80f, 0.90f)
@@ -560,7 +574,7 @@ void AFPMHUD::DrawRiftRunnerPanel(APlayerController *PC,
   const float PH = Lines.Num() * LineH + PadY * 2.f;
   const float PX = Canvas->SizeX - PW - 12.f; // right-anchored, 12px margin
 
-  // Background — cyan tint when active, dark slate when off
+  // Background � cyan tint when active, dark slate when off
   const FLinearColor BgOuter = bActive
                                    ? FLinearColor(0.08f, 0.22f, 0.22f, 0.88f)
                                    : FLinearColor(0.15f, 0.17f, 0.22f, 0.85f);
@@ -591,13 +605,13 @@ void AFPMHUD::DrawRiftRunnerPanel(APlayerController *PC,
 }
 
 // ===================================================================
-//  World Map — texture generation + overlay
+//  World Map � texture generation + overlay
 // ===================================================================
 
 static constexpr int32 GMapRes = 1024; // pixels per axis
 
 // ---------------------------------------------------------------------------
-//  ToggleWorldMap — called by PlayerController M key
+//  ToggleWorldMap � called by PlayerController M key
 // ---------------------------------------------------------------------------
 void AFPMHUD::ToggleWorldMap(int32 WorldSeed) {
   bWorldMapOpen = !bWorldMapOpen;
@@ -608,29 +622,30 @@ void AFPMHUD::ToggleWorldMap(int32 WorldSeed) {
 }
 
 // ---------------------------------------------------------------------------
-//  BeginWorldMapGeneration — fires async pixel-fill on a worker thread
+//  BeginWorldMapGeneration � fires async pixel-fill on a worker thread
 // ---------------------------------------------------------------------------
 void AFPMHUD::BeginWorldMapGeneration(int32 WorldSeed) {
   bWorldMapPending = true;
-  WorldMapSeed     = WorldSeed;
+  WorldMapSeed = WorldSeed;
   bMapStagingReady.store(false, std::memory_order_relaxed);
 
-  // Allocate staging buffer
-  StagingMapPixels.SetNumUninitialized(GMapRes * GMapRes);
-  TArray<FColor>* Staging = &StagingMapPixels;
-
   const float CircumCm = FPMChunkConstants::PlanetCircumferenceCm;
-  const float Step     = CircumCm / static_cast<float>(GMapRes);
-  const float OriginX  = -CircumCm * 0.5f;
-  const float OriginY  = -CircumCm * 0.5f;
+  const float Step = CircumCm / static_cast<float>(GMapRes);
+  const float OriginX = -CircumCm * 0.5f;
+  const float OriginY = -CircumCm * 0.5f;
 
-  Async(EAsyncExecution::ThreadPool,
-        [this, WorldSeed, Step, OriginX, OriginY, CircumCm]() {
-    // Pure math — safe on any thread
+  TWeakObjectPtr<AFPMHUD> WeakThis(this);
+  Async(EAsyncExecution::ThreadPool, [WeakThis, WorldSeed, Step, OriginX,
+                                      OriginY, CircumCm]() {
+    TArray<FColor> LocalPixels;
+    LocalPixels.SetNumUninitialized(GMapRes * GMapRes);
+    // Pure math � safe on any thread
     for (int32 Row = 0; Row < GMapRes; ++Row) {
       for (int32 Col = 0; Col < GMapRes; ++Col) {
-        const float WX = FPMChunkConstants::WrapWorldCoord(OriginX + Col * Step);
-        const float WY = FPMChunkConstants::WrapWorldCoord(OriginY + Row * Step);
+        const float WX =
+            FPMChunkConstants::WrapWorldCoord(OriginX + Col * Step);
+        const float WY =
+            FPMChunkConstants::WrapWorldCoord(OriginY + Row * Step);
 
         const float SurfZ = FPMNoise::TerrainSurfaceZ(WX, WY, WorldSeed);
         const float NormH = FMath::Clamp(SurfZ / 2000000.f, 0.f, 1.f);
@@ -641,61 +656,71 @@ void AFPMHUD::BeginWorldMapGeneration(int32 WorldSeed) {
         // Ocean / below sea level: deep blue gradient
         if (SurfZ <= 0.f) {
           const float D = FMath::Clamp(-SurfZ / 1100000.f, 0.f, 1.f);
-          C = FColor(FMath::Lerp(C.R, uint8(15),  D),
-                     FMath::Lerp(C.G, uint8(55),  D),
+          C = FColor(FMath::Lerp(C.R, uint8(15), D),
+                     FMath::Lerp(C.G, uint8(55), D),
                      FMath::Lerp(C.B, uint8(120), D), 255);
         }
         // Mountain / snow cap brightening
         else if (SurfZ > 500000.f) {
           const float P = FMath::Clamp((SurfZ - 500000.f) / 800000.f, 0.f, 1.f);
-          C = FColor(FMath::Clamp((int32)FMath::Lerp((float)C.R, 240.f, P), 0, 255),
-                     FMath::Clamp((int32)FMath::Lerp((float)C.G, 240.f, P), 0, 255),
-                     FMath::Clamp((int32)FMath::Lerp((float)C.B, 255.f, P), 0, 255), 255);
+          C = FColor(
+              FMath::Clamp((int32)FMath::Lerp((float)C.R, 240.f, P), 0, 255),
+              FMath::Clamp((int32)FMath::Lerp((float)C.G, 240.f, P), 0, 255),
+              FMath::Clamp((int32)FMath::Lerp((float)C.B, 255.f, P), 0, 255),
+              255);
         }
 
-        StagingMapPixels[Row * GMapRes + Col] = C;
+        LocalPixels[Row * GMapRes + Col] = C;
       }
     }
-
-    bMapStagingReady.store(true, std::memory_order_release);
+    if (AFPMHUD *HUD = WeakThis.Get()) {
+      HUD->StagingMapPixels = MoveTemp(LocalPixels);
+      HUD->bMapStagingReady.store(true, std::memory_order_release);
+    }
   });
 }
 
 // ---------------------------------------------------------------------------
-//  DrawWorldMapOverlay — called from DrawHUD when bWorldMapOpen
+//  DrawWorldMapOverlay � called from DrawHUD when bWorldMapOpen
 // ---------------------------------------------------------------------------
 void AFPMHUD::DrawWorldMapOverlay(APlayerController *PC,
                                   AFPMPlayerCharacter *Char) {
-  if (!Canvas) return;
+  if (!Canvas || !GEngine)
+    return;
 
   // --- Promote staging buffer to GPU texture once ready ---
   if (bMapStagingReady.load(std::memory_order_acquire) && bWorldMapPending) {
     bWorldMapPending = false;
-    bWorldMapReady   = true;
+    bWorldMapReady = true;
 
     // Create or re-create the texture
-    if (!WorldMapTexture
-     || WorldMapTexture->GetSizeX() != GMapRes
-     || WorldMapTexture->GetSizeY() != GMapRes) {
-      WorldMapTexture = UTexture2D::CreateTransient(GMapRes, GMapRes, PF_B8G8R8A8);
+    if (!WorldMapTexture || WorldMapTexture->GetSizeX() != GMapRes ||
+        WorldMapTexture->GetSizeY() != GMapRes) {
+      WorldMapTexture =
+          UTexture2D::CreateTransient(GMapRes, GMapRes, PF_B8G8R8A8);
       WorldMapTexture->Filter = TF_Bilinear;
-      WorldMapTexture->SRGB   = 0;
+      WorldMapTexture->SRGB = 0;
     }
 
-    if (FTexture2DMipMap* Mip = &WorldMapTexture->GetPlatformData()->Mips[0]) {
-      void* Data = Mip->BulkData.Lock(LOCK_READ_WRITE);
+    FTexturePlatformData *PlatformData = WorldMapTexture->GetPlatformData();
+    if (PlatformData && PlatformData->Mips.Num() > 0) {
+      FTexture2DMipMap *Mip = &PlatformData->Mips[0];
+      void *Data = Mip->BulkData.Lock(LOCK_READ_WRITE);
       // Convert FColor (RGBA) to PF_B8G8R8A8 (BGRA) layout
-      TArray<FColor>& Pixels = StagingMapPixels;
-      uint8* Dst = static_cast<uint8*>(Data);
+      TArray<FColor> &Pixels = StagingMapPixels;
+      uint8 *Dst = static_cast<uint8 *>(Data);
       for (int32 I = 0; I < GMapRes * GMapRes; ++I) {
-        Dst[I*4+0] = Pixels[I].B;
-        Dst[I*4+1] = Pixels[I].G;
-        Dst[I*4+2] = Pixels[I].R;
-        Dst[I*4+3] = 255;
+        Dst[I * 4 + 0] = Pixels[I].B;
+        Dst[I * 4 + 1] = Pixels[I].G;
+        Dst[I * 4 + 2] = Pixels[I].R;
+        Dst[I * 4 + 3] = 255;
       }
       Mip->BulkData.Unlock();
+      WorldMapTexture->UpdateResource();
+    } else {
+      bWorldMapPending = true;
+      bWorldMapReady = false;
     }
-    WorldMapTexture->UpdateResource();
   }
 
   // --- Dim the world behind the map ---
@@ -703,51 +728,183 @@ void AFPMHUD::DrawWorldMapOverlay(APlayerController *PC,
 
   // --- Map panel dimensions ---
   const float MapSize = FMath::Min(Canvas->SizeX, Canvas->SizeY) * 0.85f;
-  const float MapX    = (Canvas->SizeX - MapSize) * 0.5f;
-  const float MapY    = (Canvas->SizeY - MapSize) * 0.5f;
+  const float MapX = (Canvas->SizeX - MapSize) * 0.5f;
+  const float MapY = (Canvas->SizeY - MapSize) * 0.5f;
 
   // Border
-  DrawRect({0.25f, 0.35f, 0.55f, 0.90f}, MapX - 3, MapY - 3,
-           MapSize + 6, MapSize + 6);
+  DrawRect({0.25f, 0.35f, 0.55f, 0.90f}, MapX - 3, MapY - 3, MapSize + 6,
+           MapSize + 6);
   DrawRect({0.08f, 0.10f, 0.14f, 0.95f}, MapX, MapY, MapSize, MapSize);
 
   // Texture
   if (bWorldMapReady && WorldMapTexture) {
-    FCanvasTileItem Tile(
-        FVector2D(MapX, MapY),
-        WorldMapTexture->GetResource(),
-        FVector2D(MapSize, MapSize),
-        FLinearColor::White);
+    FCanvasTileItem Tile(FVector2D(MapX, MapY), WorldMapTexture->GetResource(),
+                         FVector2D(MapSize, MapSize), FLinearColor::White);
     Tile.BlendMode = SE_BLEND_Opaque;
     Canvas->DrawItem(Tile);
   } else {
-    // Still generating — draw spinner text
-    UFont* Font = GEngine->GetMediumFont();
-    const FString Msg = bWorldMapPending
-        ? TEXT("Generating planet map...")
-        : TEXT("Press M to open World Map");
-    float TW, TH;
-    GetTextSize(Msg, TW, TH, Font, 1.2f);
-    DrawText(Msg, {0.6f, 0.78f, 1.0f}, MapX + (MapSize-TW)*0.5f,
-             MapY + (MapSize-TH)*0.5f, Font, 1.2f);
+    // Still generating � draw spinner text
+    UFont *Font = GEngine->GetMediumFont();
+    if (Font) {
+      const FString Msg = bWorldMapPending ? TEXT("Generating planet map...")
+                                           : TEXT("Press M to open World Map");
+      float TW, TH;
+      GetTextSize(Msg, TW, TH, Font, 1.2f);
+      DrawText(Msg, {0.6f, 0.78f, 1.0f}, MapX + (MapSize - TW) * 0.5f,
+               MapY + (MapSize - TH) * 0.5f, Font, 1.2f);
+    }
+  }
+
+  // --- Legend & keybind hint ---
+  UFont *LegendFont = GEngine->GetSmallFont();
+  if (LegendFont) {
+    const float HintY = MapY + MapSize + 10.f;
+    DrawText(TEXT("[M] Close map     Red dot = You"), {0.55f, 0.65f, 0.80f}, MapX,
+             HintY, LegendFont, 1.0f);
   }
 
   // --- Player dot ---
   if (Char) {
     const float CircumCm = FPMChunkConstants::PlanetCircumferenceCm;
-    const FVector Pos     = Char->GetActorLocation();
-    const float NormX     = FMath::Fmod(Pos.X / CircumCm + 1.5f, 1.f);
-    const float NormY     = FMath::Fmod(Pos.Y / CircumCm + 1.5f, 1.f);
-    const float DotX      = MapX + NormX * MapSize;
-    const float DotY      = MapY + NormY * MapSize;
-    DrawRect({1.f, 0.2f, 0.2f, 1.f},  DotX - 5, DotY - 5, 10, 10);
-    DrawRect({1.f, 1.f, 1.f, 1.f},    DotX - 2, DotY - 2,  4,  4);
+    const FVector Pos = Char->GetActorLocation();
+    const float NormX = FMath::Fmod(Pos.X / CircumCm + 1.5f, 1.f);
+    const float NormY = FMath::Fmod(Pos.Y / CircumCm + 1.5f, 1.f);
+    const float DotX = MapX + NormX * MapSize;
+    const float DotY = MapY + NormY * MapSize;
+    DrawRect({1.f, 0.2f, 0.2f, 1.f}, DotX - 5, DotY - 5, 10, 10);
+    DrawRect({1.f, 1.f, 1.f, 1.f}, DotX - 2, DotY - 2, 4, 4);
   }
 
-  // --- Legend & keybind hint ---
-  UFont* Font = GEngine->GetSmallFont();
-  const float HintY = MapY + MapSize + 10.f;
-  DrawText(TEXT("[M] Close map     Red dot = You"),
-           {0.55f, 0.65f, 0.80f},
-           MapX, HintY, Font, 1.0f);
 }
+
+// ===================================================================
+//  DrawTerraformToolbar
+//  Bottom-center 6-slot toolbar for terraforming tools.
+//  Shows dig/fill tools with radius, active tool highlighted.
+// ===================================================================
+void AFPMHUD::DrawTerraformToolbar(APlayerController *PC,
+                                   AFPMPlayerCharacter *Char) {
+  if (!Canvas || !Char || !GEngine)
+    return;
+
+  using ETool = AFPMPlayerCharacter::ETerraformTool;
+  const ETool Active = Char->GetActiveTerraformTool();
+
+  UFont *Font = GEngine->GetSmallFont();
+  if (!Font)
+    return;
+
+  // Tool definitions
+  struct FToolSlot {
+    ETool Tool;
+    const TCHAR *Label;
+    const TCHAR *Desc;
+    int32 Key;
+    bool bIsDig;
+  };
+  const FToolSlot Slots[] = {
+      {ETool::DigSmall, TEXT("Dig S"), TEXT("1m"), 1, true},
+      {ETool::DigMedium, TEXT("Dig M"), TEXT("2.5m"), 2, true},
+      {ETool::DigLarge, TEXT("Dig L"), TEXT("5m"), 3, true},
+      {ETool::FillSmall, TEXT("Fill S"), TEXT("1m"), 4, false},
+      {ETool::FillMedium, TEXT("Fill M"), TEXT("2.5m"), 5, false},
+      {ETool::FillLarge, TEXT("Fill L"), TEXT("5m"), 6, false},
+  };
+  constexpr int32 SlotCount = 6;
+  constexpr float SlotW = 72.f;
+  constexpr float SlotH = 48.f;
+  constexpr float Gap = 4.f;
+  constexpr float Pad = 6.f;
+
+  const float TotalW = SlotCount * SlotW + (SlotCount - 1) * Gap + Pad * 2.f;
+  const float BarX = (Canvas->SizeX - TotalW) * 0.5f;
+  const float BarY = Canvas->SizeY - SlotH - Pad * 2.f - 16.f;
+  const float BarH = SlotH + Pad * 2.f;
+
+  // Bar background
+  DrawRect({0.08f, 0.10f, 0.14f, 0.90f}, BarX - 1.f, BarY - 1.f, TotalW + 2.f,
+           BarH + 2.f);
+  DrawRect({0.03f, 0.04f, 0.07f, 0.85f}, BarX, BarY, TotalW, BarH);
+
+  for (int32 I = 0; I < SlotCount; ++I) {
+    const FToolSlot &S = Slots[I];
+    const bool bActive = (Active == S.Tool);
+    const float SX = BarX + Pad + I * (SlotW + Gap);
+    const float SY = BarY + Pad;
+
+    // Slot colors
+    const FLinearColor DigAccent(0.29f, 0.85f, 0.95f); // Cyan
+    const FLinearColor FillAccent(1.0f, 0.65f, 0.20f); // Orange
+    const FLinearColor Accent = S.bIsDig ? DigAccent : FillAccent;
+
+    // Background
+    if (bActive) {
+      // Glowing border
+      DrawRect(FLinearColor(Accent.R * 0.7f, Accent.G * 0.7f, Accent.B * 0.7f,
+                            0.90f),
+               SX - 2.f, SY - 2.f, SlotW + 4.f, SlotH + 4.f);
+      DrawRect(FLinearColor(Accent.R * 0.15f, Accent.G * 0.15f,
+                            Accent.B * 0.15f, 0.95f),
+               SX, SY, SlotW, SlotH);
+    } else {
+      DrawRect({0.12f, 0.14f, 0.18f, 0.88f}, SX, SY, SlotW, SlotH);
+    }
+
+    // Key number (top-left)
+    const FString KeyStr = FString::Printf(TEXT("[%d]"), S.Key);
+    const FLinearColor KeyCol =
+        bActive ? Accent : FLinearColor(0.5f, 0.55f, 0.6f);
+    DrawText(KeyStr, KeyCol, SX + 3.f, SY + 2.f, Font, 0.85f);
+
+    // Tool label (center)
+    const FLinearColor LabelCol = bActive ? FLinearColor(1.f, 1.f, 1.f)
+                                          : FLinearColor(0.65f, 0.70f, 0.75f);
+    float TW, TH;
+    GetTextSize(S.Label, TW, TH, Font, 0.9f);
+    DrawText(S.Label, LabelCol, SX + (SlotW - TW) * 0.5f, SY + 14.f, Font,
+             0.9f);
+
+    // Radius (bottom-center)
+    const FLinearColor DescCol =
+        bActive ? FLinearColor(Accent.R * 0.8f + 0.2f, Accent.G * 0.8f + 0.2f,
+                               Accent.B * 0.8f + 0.2f)
+                : FLinearColor(0.4f, 0.45f, 0.5f);
+    GetTextSize(S.Desc, TW, TH, Font, 0.8f);
+    DrawText(S.Desc, DescCol, SX + (SlotW - TW) * 0.5f, SY + 30.f, Font, 0.8f);
+  }
+
+  // --- Crosshair reticle when a terraform tool is active ---
+  if (Active != ETool::None) {
+    const float CX = Canvas->SizeX * 0.5f;
+    const float CY = Canvas->SizeY * 0.5f;
+    const float RS = 12.f; // reticle size
+
+    // Determine reticle color from tool type
+    const bool bDigTool = (static_cast<uint8>(Active) <= 3);
+    const FLinearColor ReticleCol =
+        bDigTool ? FLinearColor(0.29f, 0.85f, 0.95f, 0.90f)
+                 : FLinearColor(1.0f, 0.65f, 0.20f, 0.90f);
+
+    // Draw crosshair lines (hollow center)
+    DrawRect(ReticleCol, CX - RS, CY - 1.f, RS - 4.f, 2.f);  // left
+    DrawRect(ReticleCol, CX + 5.f, CY - 1.f, RS - 4.f, 2.f); // right
+    DrawRect(ReticleCol, CX - 1.f, CY - RS, 2.f, RS - 4.f);  // top
+    DrawRect(ReticleCol, CX - 1.f, CY + 5.f, 2.f, RS - 4.f); // bottom
+
+    // Active tool label above crosshair
+    const TCHAR *ModeLabel = bDigTool ? TEXT("DIG") : TEXT("FILL");
+    float LW, LH;
+    GetTextSize(ModeLabel, LW, LH, Font, 1.0f);
+    DrawText(ModeLabel, ReticleCol, CX - LW * 0.5f, CY - RS - LH - 4.f, Font,
+             1.0f);
+
+    // "[LMB] to apply" hint below crosshair
+    const FString Hint = TEXT("[LMB] Apply");
+    GetTextSize(Hint, LW, LH, Font, 0.85f);
+    DrawText(Hint, {0.6f, 0.65f, 0.7f, 0.8f}, CX - LW * 0.5f, CY + RS + 4.f,
+             Font, 0.85f);
+  }
+}
+
+
+

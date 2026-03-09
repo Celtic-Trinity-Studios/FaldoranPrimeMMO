@@ -29,8 +29,7 @@ int32 FFPMChunkCoord::WrappedHexDistance(const FFPMChunkCoord &A,
   const int32 DR = FMath::Abs(A.R - B.R);
   // For Q, use the equatorial wrap as a conservative estimate.
   // Full per-band accuracy would require knowing which band we're in.
-  const int32 DQ =
-      FMath::Abs(FPMChunkConstants::WrappedChunkDelta(A.Q, B.Q));
+  const int32 DQ = FMath::Abs(FPMChunkConstants::WrappedChunkDelta(A.Q, B.Q));
   return FMath::Max(DQ, DR);
 }
 
@@ -72,22 +71,23 @@ FFPMChunkCoord FPMChunkGenerator::GeoToChunkCoord(const FFPMGeoCoord &Geo) {
   // LatBand: 0 at south pole (-PI/2), LatitudeBandCount-1 at north pole
   const double LatNorm = (Geo.Latitude + PI * 0.5) / PI; // 0 to 1
   const int32 LatBand = FMath::Clamp(
-      static_cast<int32>(LatNorm * FPMChunkConstants::LatitudeBandCount),
-      0, FPMChunkConstants::LatitudeBandCount - 1);
+      static_cast<int32>(LatNorm * FPMChunkConstants::LatitudeBandCount), 0,
+      FPMChunkConstants::LatitudeBandCount - 1);
 
   // LonCell: number of cells at this latitude
   const int32 LonCells = FPMChunkConstants::LonCellsAtBand(LatBand);
   const double LonNorm = (Geo.Longitude + PI) / (2.0 * PI); // 0 to 1
   int32 LonCell = static_cast<int32>(LonNorm * LonCells);
-  if (LonCell >= LonCells) LonCell = 0; // wrap
+  if (LonCell >= LonCells)
+    LonCell = 0; // wrap
 
   return FFPMChunkCoord(LonCell, LatBand);
 }
 
 FFPMGeoCoord FPMChunkGenerator::ChunkCoordToGeo(const FFPMChunkCoord &Coord) {
   // Center latitude of this band
-  const double Lat = -PI * 0.5 +
-      (static_cast<double>(Coord.R) + 0.5) * FPMChunkConstants::ChunkAngularSize;
+  const double Lat = -PI * 0.5 + (static_cast<double>(Coord.R) + 0.5) *
+                                     FPMChunkConstants::ChunkAngularSize;
 
   // Center longitude of this cell
   const int32 LonCells = FPMChunkConstants::LonCellsAtBand(Coord.R);
@@ -104,15 +104,17 @@ FVector FPMChunkGenerator::GeoToLocal(const FFPMGeoCoord &Reference,
   const double DLon = Target.Longitude - Reference.Longitude;
   // Wrap DLon to [-PI, PI]
   double WDLon = DLon;
-  while (WDLon > PI) WDLon -= 2.0 * PI;
-  while (WDLon <= -PI) WDLon += 2.0 * PI;
+  while (WDLon > PI)
+    WDLon -= 2.0 * PI;
+  while (WDLon <= -PI)
+    WDLon += 2.0 * PI;
 
   const double DLat = Target.Latitude - Reference.Latitude;
   const double R = FPMChunkConstants::PlanetRadiusCm;
   const double CosRefLat = FMath::Cos(Reference.Latitude);
 
   const float X = static_cast<float>(WDLon * R * CosRefLat); // East
-  const float Y = static_cast<float>(DLat * R);               // North
+  const float Y = static_cast<float>(DLat * R);              // North
   const float Z = static_cast<float>(Target.Altitude - Reference.Altitude);
 
   return FVector(X, Y, Z);
@@ -122,15 +124,14 @@ FFPMGeoCoord FPMChunkGenerator::LocalToGeo(const FFPMGeoCoord &Reference,
                                            const FVector &LocalOffset) {
   const double R = FPMChunkConstants::PlanetRadiusCm;
   const double CosRefLat = FMath::Cos(Reference.Latitude);
-  const double SafeCosLat = FMath::Max(CosRefLat, 0.001); // avoid div/0 at poles
+  const double SafeCosLat =
+      FMath::Max(CosRefLat, 0.001); // avoid div/0 at poles
 
   FFPMGeoCoord Result;
-  Result.Latitude = Reference.Latitude +
-      static_cast<double>(LocalOffset.Y) / R;
+  Result.Latitude = Reference.Latitude + static_cast<double>(LocalOffset.Y) / R;
   Result.Longitude = Reference.Longitude +
-      static_cast<double>(LocalOffset.X) / (R * SafeCosLat);
-  Result.Altitude = Reference.Altitude +
-      static_cast<double>(LocalOffset.Z);
+                     static_cast<double>(LocalOffset.X) / (R * SafeCosLat);
+  Result.Altitude = Reference.Altitude + static_cast<double>(LocalOffset.Z);
   Result.Normalize();
   return Result;
 }
@@ -328,15 +329,15 @@ static const FBiomeCenter GBiomeCenters[] = {
     // HOT row (Temp ~0.80)
     {EFPMBiome::Desert, 0.80f, 0.20f, 0.22f},
     {EFPMBiome::Savanna, 0.80f, 0.50f, 0.22f},
-    {EFPMBiome::Jungle, 0.80f, 0.80f, 0.22f},
+    {EFPMBiome::Jungle, 0.80f, 0.65f, 0.25f},
     // WARM row (Temp ~0.50)
     {EFPMBiome::Plains, 0.50f, 0.20f, 0.22f},
-    {EFPMBiome::Meadows, 0.50f, 0.50f, 0.22f},
-    {EFPMBiome::Forest, 0.50f, 0.80f, 0.22f},
+    {EFPMBiome::Meadows, 0.50f, 0.45f, 0.22f},
+    {EFPMBiome::Forest, 0.50f, 0.65f, 0.25f},
     // COLD row (Temp ~0.20)
     {EFPMBiome::Tundra, 0.20f, 0.20f, 0.22f},
-    {EFPMBiome::Taiga, 0.20f, 0.50f, 0.22f},
-    {EFPMBiome::BorealForest, 0.20f, 0.80f, 0.22f},
+    {EFPMBiome::Taiga, 0.20f, 0.45f, 0.22f},
+    {EFPMBiome::BorealForest, 0.20f, 0.65f, 0.25f},
 };
 static constexpr int32 NumClimateBiomes = 9;
 
@@ -422,9 +423,9 @@ EFPMBiome FPMChunkGenerator::AssignBiomeWeighted(float Temp, float Moist,
   if (Height > MountainLine)
     return EFPMBiome::Mountain;
 
-  // --- Swamp: low elevation + very wet + inland ---
+  // --- Swamp: low elevation + wet + inland ---
   const float SwampW = (1.0f - Smoothstep(0.56f, 0.58f, Height)) *
-                       Smoothstep(0.60f, 0.75f, Moist) *
+                       Smoothstep(0.50f, 0.65f, Moist) *
                        (IslandMaskValue > 0.25f ? 1.0f : 0.0f);
   if (SwampW > 0.5f)
     return EFPMBiome::Swamp;
@@ -503,7 +504,7 @@ FColor FPMChunkGenerator::BlendedBiomeColor(float Temp, float Moist,
 
   // Swamp
   const float SwampW = (1.0f - Smoothstep(0.56f, 0.58f, Height)) *
-                       Smoothstep(0.60f, 0.75f, Moist) *
+                       Smoothstep(0.50f, 0.65f, Moist) *
                        (IslandMaskValue > 0.25f ? 1.0f : 0.0f);
   if (SwampW > 0.8f)
     return BiomeColor(EFPMBiome::Swamp);

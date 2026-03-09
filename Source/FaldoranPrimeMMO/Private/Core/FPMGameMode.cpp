@@ -3,6 +3,8 @@
 #include "Core/FPMGameMode.h"
 #include "Database/FPMDatabaseSubsystem.h"
 #include "Engine/GameInstance.h"
+#include "Gameplay/FPMInventoryComponent.h"
+#include "Player/FPMPlayerCharacter.h"
 #include "Player/FPMPlayerController.h"
 #include "UI/FPMHUD.h"
 #include "World/FPMWorldChunkManager.h"
@@ -69,14 +71,9 @@ void AFPMGameMode::Logout(AController *Exiting) {
   if (AFPMPlayerController *PC = Cast<AFPMPlayerController>(Exiting)) {
     // Only save if this controller had an authenticated character in-world
     if (PC->IsAuthenticated() && PC->GetActiveCharacterId().IsValid()) {
-      FVector PawnLoc = FVector::ZeroVector;
-      bool bHasPawn = false;
-      if (APawn *P = PC->GetPawn()) {
-        PawnLoc = P->GetActorLocation();
-        bHasPawn = true;
-      }
-
-      if (bHasPawn) {
+      APawn *OwningPawn = PC->GetPawn();
+      if (OwningPawn) {
+        const FVector PawnLoc = OwningPawn->GetActorLocation();
         UGameInstance *GI = GetGameInstance();
         UFPMDatabaseSubsystem *DB =
             GI ? GI->GetSubsystem<UFPMDatabaseSubsystem>() : nullptr;
@@ -100,6 +97,19 @@ void AFPMGameMode::Logout(AController *Exiting) {
                    TEXT("FPM Logout: Saved position (%.0f, %.0f, %.0f) "
                         "for character %s"),
                    PawnLoc.X, PawnLoc.Y, PawnLoc.Z, *CId);
+
+            // Save inventory alongside position so both are always in sync.
+            if (AFPMPlayerCharacter *FPMChar =
+                    Cast<AFPMPlayerCharacter>(OwningPawn)) {
+              if (UFPMInventoryComponent *Inv =
+                      FPMChar->GetInventoryComponent()) {
+                if (!Inv->SaveToDB(DB, PC->GetActiveCharacterId())) {
+                  UE_LOG(LogFPMGameMode, Warning,
+                         TEXT("FPM Logout: Inventory save had failures for %s."),
+                         *CId);
+                }
+              }
+            }
           } else {
             UE_LOG(LogFPMGameMode, Warning,
                    TEXT("FPM Logout: DB save failed for %s — %s"), *CId,
