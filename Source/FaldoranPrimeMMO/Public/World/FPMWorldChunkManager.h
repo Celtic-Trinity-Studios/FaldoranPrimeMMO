@@ -132,6 +132,9 @@ public:
   UFUNCTION(BlueprintCallable, Category = "FPM|World")
   void EnsureChunkLoadedAtWorldPos(FVector WorldPos);
 
+  UFUNCTION(BlueprintCallable, Category = "FPM|World")
+  void PrepareSpawnAreaAtWorldPos(FVector WorldPos);
+
   /**
    * Build (or rebuild) a coarse safety-floor collision mesh centred on
    * WorldPos.  The mesh is a Grid x Grid heightfield sampled from
@@ -208,9 +211,9 @@ protected:
   /** Cached overlays for loaded chunks */
   TMap<FFPMChunkCoord, FFPMChunkOverlay> LoadedOverlays;
 
-  /** 3D voxel density modifications per chunk (COARSE � legacy).
+  /** 3D voxel density modifications per chunk (COARSE ï¿½ legacy).
    *  Key: chunk coord ? inner map keyed by quantized voxel position.
-   *  Values are density deltas � negative = dig (push toward air),
+   *  Values are density deltas ï¿½ negative = dig (push toward air),
    *  positive = fill (push toward solid).
    *  Applied AFTER procedural density + cave noise. */
   TMap<FFPMChunkCoord, TMap<FIntVector, float>> VoxelOverlays;
@@ -237,11 +240,50 @@ protected:
   FIntVector LastTerraformBubbleCenter = FIntVector(INT32_MIN, INT32_MIN, INT32_MIN);
   bool bTerraformBubbleInitialized = false;
 
+  /** Queue of fine terraform tiles waiting to be generated progressively. */
+  TArray<FIntVector> PendingTilesToGenerate;
+
+  /** Queue of coarse chunks waiting for clip-regeneration (spread across frames). */
+  TArray<FFPMChunkCoord> PendingChunkClips;
+
+  // --- Async terraform tile generation ---
+
+  /** Result of an async terraform tile generation task. */
+  struct FPendingTerraformTile {
+    FIntVector TileCoord;
+    bool bForceBaseSurface;
+    TFuture<FFPMVoxelMeshData> Future;
+  };
+
+  /** Active async terraform tile generation tasks. */
+  TArray<TSharedPtr<FPendingTerraformTile>> PendingTerraformGenerations;
+
+  /** Tile coords currently dispatched to worker threads (prevents duplicates). */
+  TSet<FIntVector> InFlightTerraformTiles;
+
+  /** Maximum terraform tiles to finalize (spawn actor + CreateMeshSection) per tick. */
+  static constexpr int32 MaxTerraformFinalizationsPerTick = 4;
+
+  /** Maximum concurrent async terraform tile generation tasks. */
+  static constexpr int32 MaxConcurrentTerraformGenerations = 4;
+
+  /** Process a batch of pending terraform tiles (called from Tick).
+   *  Dispatches MC generation to the thread pool instead of running synchronously. */
+  void ProcessPendingTerraformTiles();
+
+  /** Poll completed async terraform tile tasks and finalize on game thread. */
+  void FinalizePendingTerraformTiles();
+
+  /** Finalize a single terraform tile: spawn/update actor with generated mesh data.
+   *  Game-thread only (UObject access). */
+  void FinalizeTerraformTile(const FIntVector& TileCoord, FFPMVoxelMeshData&& MeshData);
+
 
   /** Refresh fine-tile replacement bubble around player (2 tiles XYZ). */
   void UpdateTerraformPlayerBubble(const FVector &PlayerPos);
 
-  /** Regenerate (or create) the mesh for a single terraform tile. */
+  /** Regenerate (or create) the mesh for a single terraform tile (SYNCHRONOUS).
+   *  Still used for immediate re-mesh after TerraformAtPoint. */
   void RegenerateTerraformTile(const FIntVector &TileCoord,
                                bool bForceBaseSurface = false);
 

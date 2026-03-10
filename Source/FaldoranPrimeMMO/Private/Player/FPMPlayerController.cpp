@@ -1,4 +1,4 @@
-﻿// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
+// Copyright Celtic Trinity Studios, 2026. All Rights Reserved.
 
 #include "Player/FPMPlayerController.h"
 #include "Account/FPMAccountSubsystem.h"
@@ -94,7 +94,7 @@ void AFPMPlayerController::OnPossess(APawn *InPawn) {
 
   // Pass world seed to PlanetTraversal component for terrain altitude lookups.
   // The component lives on the character (created in its constructor) so it
-  // exists on both client and server — we just need to supply the seed here.
+  // exists on both client and server â€” we just need to supply the seed here.
   if (InPawn) {
     if (UFPMPlanetTraversal *Traversal =
             InPawn->FindComponentByClass<UFPMPlanetTraversal>()) {
@@ -110,7 +110,7 @@ void AFPMPlayerController::OnUnPossess() {
   // Save position NOW while the pawn is still guaranteed to be valid.
   // This fires: on explicit logout, on PIE stop, on disconnect, and when the
   // server demotes the controller for any reason.
-  // GameMode::Logout() also saves as a belt-and-suspenders backup—
+  // GameMode::Logout() also saves as a belt-and-suspenders backupâ€”
   // double-writing identical values to the DB is harmless.
   if (HasAuthority() && bIsAuthenticated && ActiveCharacterId.IsValid()) {
     if (APawn *P = GetPawn()) {
@@ -130,12 +130,12 @@ void AFPMPlayerController::OnUnPossess() {
              FString::SanitizeFloat(Loc.Z), CId});
         if (R.bSuccess) {
           UE_LOG(LogFPMPlayerController, Log,
-                 TEXT("FPM Server: OnUnPossess — saved position "
+                 TEXT("FPM Server: OnUnPossess â€” saved position "
                       "(%.0f, %.0f, %.0f) for %s"),
                  Loc.X, Loc.Y, Loc.Z, *CId);
         } else {
           UE_LOG(LogFPMPlayerController, Warning,
-                 TEXT("FPM Server: OnUnPossess — DB save failed for %s: %s"),
+                 TEXT("FPM Server: OnUnPossess â€” DB save failed for %s: %s"),
                  *CId, *R.ErrorMessage);
         }
       }
@@ -223,7 +223,7 @@ void AFPMPlayerController::ShowEscMenu() {
   if (!GetPawn())
     return;
   if (EscMenuWidget)
-    return; // already open — toggle will close it
+    return; // already open â€” toggle will close it
   if (!EscMenuWidgetClass)
     return;
 
@@ -303,7 +303,7 @@ void AFPMPlayerController::RequestSaveAndLogout() {
 
 void AFPMPlayerController::ExecuteLogout() {
   UE_LOG(LogFPMPlayerController, Log,
-         TEXT("FPM Client: Executing logout — returning to login."));
+         TEXT("FPM Client: Executing logout â€” returning to login."));
 
   HideEscMenu();
 
@@ -382,7 +382,7 @@ void AFPMPlayerController::ServerRequestLogin_Implementation(
     AuthenticatedAccountId = Result.AccountId;
     bIsAuthenticated = true;
     FailedLoginAttempts = 0; // Reset on success
-    UE_LOG(LogFPMPlayerController, Log, TEXT("FPM Server: Authenticated — %s"),
+    UE_LOG(LogFPMPlayerController, Log, TEXT("FPM Server: Authenticated â€” %s"),
            *AuthenticatedAccountId.ToString());
   } else {
     ++FailedLoginAttempts;
@@ -527,7 +527,7 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
   FFPMDatabaseQueryResult DBR = DB->ExecuteQuery(SQL, {CId, AId});
   if (!DBR.bSuccess || DBR.Rows.Num() == 0) {
     UE_LOG(LogFPMPlayerController, Warning,
-           TEXT("FPM Server: Character ownership failed — char=%s, acc=%s"),
+           TEXT("FPM Server: Character ownership failed â€” char=%s, acc=%s"),
            *CId, *AId);
     ClientEnterWorldFailed(TEXT("Character not found or not owned."));
     return;
@@ -582,7 +582,7 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
   bool bHasSavedPos = false;
 
   // NOTE: FPMDatabaseSubsystem stores PostgreSQL NULLs as the literal
-  // string "NULL" (uppercase) — see FPMDatabaseSubsystem.cpp line ~286.
+  // string "NULL" (uppercase) â€” see FPMDatabaseSubsystem.cpp line ~286.
   auto IsNullOrEmpty = [](const FString &S) {
     return S.IsEmpty() || S.Equals(TEXT("NULL"), ESearchCase::IgnoreCase);
   };
@@ -606,7 +606,7 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
       bHasSavedPos = true;
     } else {
       UE_LOG(LogFPMPlayerController, Log,
-             TEXT("FPM: spawn_x/y are both ~0 — treating as unset."));
+             TEXT("FPM: spawn_x/y are both ~0 â€” treating as unset."));
     }
   }
 
@@ -622,14 +622,14 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     ActualWorldSeed = WCM->WorldSeed;
   }
 
-  // Ensure NexusManager exists (singleton — safe to call every time)
+  // Ensure NexusManager exists (singleton â€” safe to call every time)
   AFPMNexusManager *NexusMgr = AFPMNexusManager::GetOrCreate(World);
 
   // -----------------------------------------------------------------------
   //  SPAWN LOCATION RESOLUTION
   //
   //  Priority:
-  //    1. Saved position (returning character) — validated: must be on land
+  //    1. Saved position (returning character) â€” validated: must be on land
   //    2. Nexus spawn point (new character, or invalid saved position)
   //    3. Absolute fallback: world origin (should never hit this)
   // -----------------------------------------------------------------------
@@ -650,24 +650,24 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
       const float RestoreZ = FMath::Max(SavedZ, SurfaceZ);
       SpawnLoc = FVector(SavedX, SavedY, RestoreZ);
       UE_LOG(LogFPMPlayerController, Log,
-             TEXT("FPM: Returning character '%s' — restoring to saved pos "
+             TEXT("FPM: Returning character '%s' â€” restoring to saved pos "
                   "(%.0f, %.0f, %.0f) [savedZ=%.0f, surfaceZ=%.0f]"),
              *Name, SavedX, SavedY, RestoreZ, SavedZ, SurfaceZ);
     } else {
       UE_LOG(LogFPMPlayerController, Warning,
              TEXT("FPM: Saved position (%.0f, %.0f) surfaceZ=%.0f is over "
-                  "water/invalid — redirecting to Nexus."),
+                  "water/invalid â€” redirecting to Nexus."),
              SavedX, SavedY, SurfaceZ);
       bHasSavedPos = false; // fall through to Nexus
     }
   }
 
   if (!bHasSavedPos) {
-    // Brand-new character or invalid saved pos → always start at the Nexus
+    // Brand-new character or invalid saved pos â†’ always start at the Nexus
     if (NexusMgr) {
       SpawnLoc = NexusMgr->GetNewCharacterSpawnPos(ActualWorldSeed);
       UE_LOG(LogFPMPlayerController, Log,
-             TEXT("FPM: New/reset character '%s' — spawning at Nexus "
+             TEXT("FPM: New/reset character '%s' â€” spawning at Nexus "
                   "(%.0f, %.0f, %.0f)"),
              *Name, SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z);
     } else {
@@ -676,7 +676,7 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
           FPMVoxelGenerator::TerrainSurfaceZ(0.f, 0.f, ActualWorldSeed);
       SpawnLoc = FVector(0.f, 0.f, TerrainZ);
       UE_LOG(LogFPMPlayerController, Warning,
-             TEXT("FPM: NexusManager unavailable — falling back to origin "
+             TEXT("FPM: NexusManager unavailable â€” falling back to origin "
                   "(0,0,%.0f)"),
              SpawnLoc.Z);
     }
@@ -685,7 +685,7 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
   // Force-load chunks at spawn position BEFORE spawning the player
   // This prevents falling through the world while chunks async-load
   if (AFPMWorldChunkManager *WCM = AFPMWorldChunkManager::GetOrCreate(World)) {
-    WCM->EnsureChunkLoadedAtWorldPos(SpawnLoc);
+    WCM->PrepareSpawnAreaAtWorldPos(SpawnLoc);
   }
 
   // Compute a safe vertical offset based on the character capsule (from the
@@ -719,7 +719,7 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
   }
 
   // Disable gravity and set Flying mode temporarily.
-  // Terrain collision cooking is async — the mesh is created but collision
+  // Terrain collision cooking is async â€” the mesh is created but collision
   // isn't ready for ~0.5s. Without this, the character falls through terrain.
   if (UCharacterMovementComponent *MoveComp = Char->GetCharacterMovement()) {
     MoveComp->SetMovementMode(MOVE_Flying);
@@ -866,8 +866,7 @@ void AFPMPlayerController::ClientEnterWorldSuccess_Implementation(
       UE_LOG(LogFPMPlayerController, Log,
              TEXT("FPM Client: Force-loading spawn chunk at %.0f, %.0f, %.0f"),
              InSpawnLocation.X, InSpawnLocation.Y, InSpawnLocation.Z);
-      WCM->ForceChunkUpdate();
-      WCM->EnsureChunkLoadedAtWorldPos(InSpawnLocation);
+      WCM->PrepareSpawnAreaAtWorldPos(InSpawnLocation);
     }
   }
 
@@ -895,7 +894,7 @@ void AFPMPlayerController::ClientEnterWorldSuccess_Implementation(
       // CRITICAL: Must match server's trace distance (5km) and timeout
       // (20 polls = 5s). The client has independently async-cooking
       // collision, so we can NOT rely on the server's replicated movement
-      // mode — we must wait for OUR OWN collision to be ready.
+      // mode â€” we must wait for OUR OWN collision to be ready.
       TWeakObjectPtr<ACharacter> WeakChar = Char;
       TWeakObjectPtr<UWorld> WeakWorld = World;
       TSharedPtr<int32> ClientPollCount = MakeShared<int32>(0);
@@ -960,7 +959,7 @@ void AFPMPlayerController::ClientEnterWorldSuccess_Implementation(
 void AFPMPlayerController::ClientEnterWorldFailed_Implementation(
     const FString &ErrorMessage) {
   UE_LOG(LogFPMPlayerController, Warning,
-         TEXT("FPM Client: Enter world failed — %s"), *ErrorMessage);
+         TEXT("FPM Client: Enter world failed â€” %s"), *ErrorMessage);
   if (CharacterSelectWidget)
     CharacterSelectWidget->SetStatusMessage(ErrorMessage, true);
 }
@@ -972,7 +971,7 @@ void AFPMPlayerController::ClientEnterWorldFailed_Implementation(
 void AFPMPlayerController::ServerSaveAndLogout_Implementation() {
   if (!bIsAuthenticated || !ActiveCharacterId.IsValid()) {
     UE_LOG(LogFPMPlayerController, Warning,
-           TEXT("FPM Server: SaveAndLogout ignored — not authenticated or "
+           TEXT("FPM Server: SaveAndLogout ignored â€” not authenticated or "
                 "no active character."));
     // Still tell client to disconnect so it doesn't hang
     ClientSaveComplete(false);
@@ -1014,22 +1013,22 @@ void AFPMPlayerController::ServerSaveAndLogout_Implementation() {
              PawnLoc.X, PawnLoc.Y, PawnLoc.Z, *CId);
     } else {
       UE_LOG(LogFPMPlayerController, Warning,
-             TEXT("FPM Server: DB save failed for character %s — %s"), *CId,
+             TEXT("FPM Server: DB save failed for character %s â€” %s"), *CId,
              *R.ErrorMessage);
     }
   } else {
     UE_LOG(LogFPMPlayerController, Warning,
-           TEXT("FPM Server: DB unavailable — position not saved for %s"),
+           TEXT("FPM Server: DB unavailable â€” position not saved for %s"),
            *CId);
   }
 
-  // Notify client (regardless of success — allow logout to proceed)
+  // Notify client (regardless of success â€” allow logout to proceed)
   ClientSaveComplete(bSaved);
 }
 
 void AFPMPlayerController::ClientSaveComplete_Implementation(bool bSuccess) {
   UE_LOG(LogFPMPlayerController, Log,
-         TEXT("FPM Client: Save complete — success=%d"), bSuccess ? 1 : 0);
+         TEXT("FPM Client: Save complete â€” success=%d"), bSuccess ? 1 : 0);
 
   if (EscMenuWidget) {
     if (bSuccess) {
@@ -1043,7 +1042,7 @@ void AFPMPlayerController::ClientSaveComplete_Implementation(bool bSuccess) {
 
   // Give the player a moment to read the message, then disconnect.
   // The ESC widget countdown (2.5s) is already running as a safety net.
-  // This timer fires at 1.2s — whichever fires first wins (widget sets
+  // This timer fires at 1.2s â€” whichever fires first wins (widget sets
   // bLogoutPending on first call, subsequent ones are ignored).
   UWorld *World = GetWorld();
   if (World) {
@@ -1154,7 +1153,7 @@ void AFPMPlayerController::Debug_SpawnTestItems() {
                                      TEXT("Spawning test items..."));
   }
   UE_LOG(LogFPMPlayerController, Log,
-         TEXT("FPM Debug: Debug_SpawnTestItems — sending Server RPC."));
+         TEXT("FPM Debug: Debug_SpawnTestItems â€” sending Server RPC."));
   Server_Debug_SpawnTestItems();
 
   // Delay opening inventory to allow the Server RPC to process and
@@ -1177,12 +1176,12 @@ void AFPMPlayerController::Debug_SpawnTestItems() {
 
 void AFPMPlayerController::Server_Debug_SpawnTestItems_Implementation() {
   UE_LOG(LogFPMPlayerController, Log,
-         TEXT("FPM Debug: Server_Debug_SpawnTestItems — executing on server."));
+         TEXT("FPM Debug: Server_Debug_SpawnTestItems â€” executing on server."));
 
   AFPMPlayerCharacter *Char = Cast<AFPMPlayerCharacter>(GetPawn());
   if (!Char) {
     UE_LOG(LogFPMPlayerController, Warning,
-           TEXT("FPM Debug: No pawn — spawn test items failed."));
+           TEXT("FPM Debug: No pawn â€” spawn test items failed."));
     return;
   }
 
@@ -1196,21 +1195,21 @@ void AFPMPlayerController::Server_Debug_SpawnTestItems_Implementation() {
   // --- Spawn a variety of test items ---
   // Each call: AddItem(ItemID, Count, SizeX, SizeY)
 
-  // 1×1 stackable items
+  // 1Ã—1 stackable items
   Inv->AddItem(FName("Item_HealthPotion"), 5, 1, 1);
   Inv->AddItem(FName("Item_ManaPotion"), 3, 1, 1);
   Inv->AddItem(FName("Item_Gold_Coin"), 50, 1, 1);
 
-  // 1×2 items (tall)
+  // 1Ã—2 items (tall)
   Inv->AddItem(FName("Item_Dagger"), 1, 1, 2);
 
-  // 1×3 items (tall weapon)
+  // 1Ã—3 items (tall weapon)
   Inv->AddItem(FName("Item_Iron_Sword"), 1, 1, 3);
 
-  // 2×2 items (square)
+  // 2Ã—2 items (square)
   Inv->AddItem(FName("Item_Dragon_Scale"), 1, 2, 2);
 
-  // 2×1 items (wide)
+  // 2Ã—1 items (wide)
   Inv->AddItem(FName("Item_Scroll"), 1, 2, 1);
 
   UE_LOG(LogFPMPlayerController, Log,

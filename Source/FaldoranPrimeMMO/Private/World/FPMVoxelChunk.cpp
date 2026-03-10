@@ -365,14 +365,15 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
 
   // Climate grids: Temperature and Moisture sampled at each XY column
   // These will be diffusion-smoothed before biome assignment.
-  TArray<float> TempGrid, MoistGrid, HeightGrid, MaskGrid;
+  TArray<float> TempGrid, MoistGrid, HeightGrid, MaskGrid, SurfaceZGrid;
   const int32 ClimateSize = GridX * GridY;
   TempGrid.SetNumUninitialized(ClimateSize);
   MoistGrid.SetNumUninitialized(ClimateSize);
   HeightGrid.SetNumUninitialized(ClimateSize);
   MaskGrid.SetNumUninitialized(ClimateSize);
+  SurfaceZGrid.SetNumUninitialized(ClimateSize);
 
-  // Cave shell parameters � only evaluate 3D cave noise within this range
+  // Cave shell parameters ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only evaluate 3D cave noise within this range
   // below the terrain surface. Loaded from INI via FPMNoise::CaveDensity.
   constexpr float CaveShellDepth = 500000.0f; // 5km below surface
   constexpr float CaveCarveThreshold = 0.15f; // How strong cave noise must be
@@ -392,6 +393,7 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
       MoistGrid[CIdx] = FPMNoise::Moisture(WorldX, WorldY, WorldSeed);
       HeightGrid[CIdx] = FPMNoise::TerrainHeight(WorldX, WorldY, WorldSeed);
       MaskGrid[CIdx] = FPMNoise::IslandMask(WorldX, WorldY, WorldSeed);
+      SurfaceZGrid[CIdx] = SurfaceZ;  // Cache for vertex strata tinting
 
       // Precompute cave shell Z limits for this column
       const float CaveTopZ = SurfaceZ; // Caves can't be above surface
@@ -508,7 +510,7 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
           const FVector &V1 = EdgeVerts[MCTriTable[CubeIndex][T + 1]];
           const FVector &V2 = EdgeVerts[MCTriTable[CubeIndex][T + 2]];
 
-          // Face normal (initial � will be smoothed in post-pass)
+          // Face normal (initial ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â will be smoothed in post-pass)
           const FVector Edge1 = V1 - V0;
           const FVector Edge2 = V2 - V0;
           FVector FaceNormal =
@@ -582,7 +584,8 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
                                                             VHeight, VMask);
             }
             // Depth-based strata tint: plains topsoil near surface, rock deeper.
-            const float SurfaceAtVertex = TerrainSurfaceZ(WorldVX, WorldVY, WorldSeed);
+            // Use cached SurfaceZGrid instead of recomputing noise per vertex.
+            const float SurfaceAtVertex = BilerpGrid(SurfaceZGrid, VP.X, VP.Y);
             const float DepthBelowSurface = FMath::Max(0.0f, SurfaceAtVertex - VP.Z);
             const float RockBlend =
                 FMath::Clamp((DepthBelowSurface - 2500.0f) / 9000.0f, 0.0f, 1.0f);
@@ -613,8 +616,8 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
 }
 
 // ===================================================================
-//  GenerateTerraformTile � Fine-resolution terraform mesh
-//  33�33�33 grid at 200cm = 64m tile. Uses same MC algorithm.
+//  GenerateTerraformTile ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Fine-resolution terraform mesh
+//  33ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â33ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â33 grid at 200cm = 64m tile. Uses same MC algorithm.
 // ===================================================================
 void FPMVoxelGenerator::GenerateTerraformTile(
     const FVector &TileOrigin, int32 WorldSeed,
@@ -624,7 +627,14 @@ void FPMVoxelGenerator::GenerateTerraformTile(
   OutMesh.Reset();
 
   const float VS = TerraformVoxelSizeCm; // Fine terraform cell size (cm)
-  const int32 GN = TerraformGridN;       // Tile grid corners
+  // Add 1-voxel overlap on each side so neighboring tiles' MC meshes
+  // physically overlap, eliminating visible seams at tile boundaries.
+  constexpr int32 OverlapVoxels = 1;
+  const int32 GN = TerraformGridN + OverlapVoxels * 2; // 33 + 2 = 35
+  const float OverlapOffset = OverlapVoxels * VS;       // 50cm
+  // Expanded origin: shift back by overlap so the grid covers [-1, TileVoxels+1]
+  const FVector ExpandedOrigin = TileOrigin - FVector(OverlapOffset, OverlapOffset, OverlapOffset);
+
   // Build a local active-cube mask so terraform tiles only generate
   // geometry near edited voxels (prevents full-tile visual overlays).
   const FIntVector TileBaseKey(FMath::FloorToInt(TileOrigin.X / VS),
@@ -633,7 +643,7 @@ void FPMVoxelGenerator::GenerateTerraformTile(
   TSet<FIntVector> ActiveCubes;
   ActiveCubes.Reserve(FineDeltas.Num() * 27);
   for (const TPair<FIntVector, float> &KV : FineDeltas) {
-    const FIntVector Local = KV.Key - TileBaseKey;
+    const FIntVector Local = KV.Key - TileBaseKey + FIntVector(OverlapVoxels, OverlapVoxels, OverlapVoxels);
     for (int32 DZ = -1; DZ <= 1; ++DZ) {
       for (int32 DY = -1; DY <= 1; ++DY) {
         for (int32 DX = -1; DX <= 1; ++DX) {
@@ -652,12 +662,12 @@ void FPMVoxelGenerator::GenerateTerraformTile(
     // No edits in this tile: seed active cubes around the procedural surface
     // so we can render fine replacement terrain in the player bubble.
     for (int32 Y = 0; Y < GN - 1; ++Y) {
-      const float WorldY = TileOrigin.Y + (Y + 0.5f) * VS;
+      const float WorldY = ExpandedOrigin.Y + (Y + 0.5f) * VS;
       for (int32 X = 0; X < GN - 1; ++X) {
-        const float WorldX = TileOrigin.X + (X + 0.5f) * VS;
+        const float WorldX = ExpandedOrigin.X + (X + 0.5f) * VS;
         const float SurfaceZ = TerrainSurfaceZ(WorldX, WorldY, WorldSeed);
         const int32 SurfaceCubeZ =
-            FMath::FloorToInt((SurfaceZ - TileOrigin.Z) / VS);
+            FMath::FloorToInt((SurfaceZ - ExpandedOrigin.Z) / VS);
 
         for (int32 DZ = -2; DZ <= 1; ++DZ) {
           const int32 CZ = SurfaceCubeZ + DZ;
@@ -696,11 +706,11 @@ void FPMVoxelGenerator::GenerateTerraformTile(
   Density.SetNumZeroed(TerraformTotalCorners);
 
   for (int32 Z = MinDZ; Z <= MaxDZ; ++Z) {
-    const float WorldZ = TileOrigin.Z + Z * VS;
+    const float WorldZ = ExpandedOrigin.Z + Z * VS;
     for (int32 Y = MinDY; Y <= MaxDY; ++Y) {
-      const float WorldY = TileOrigin.Y + Y * VS;
+      const float WorldY = ExpandedOrigin.Y + Y * VS;
       for (int32 X = MinDX; X <= MaxDX; ++X) {
-        const float WorldX = TileOrigin.X + X * VS;
+        const float WorldX = ExpandedOrigin.X + X * VS;
         const int32 Idx = Z * GN * GN + Y * GN + X;
 
         // Coarse terrain density: surface Z - voxel Z
@@ -720,6 +730,36 @@ void FPMVoxelGenerator::GenerateTerraformTile(
     }
   }
 
+  // Soften edited density fields to avoid hard voxel-cut silhouettes.
+  // We only smooth tiles with actual terraform deltas; untouched base-surface
+  // tiles should preserve the original terrain profile.
+  if (FineDeltas.Num() > 0) {
+    TArray<float> Smoothed = Density;
+    constexpr int32 SmoothPasses = 4;
+    constexpr float SmoothStrength = 0.55f;
+
+    for (int32 Pass = 0; Pass < SmoothPasses; ++Pass) {
+      for (int32 Z = FMath::Max(MinDZ + 1, 1); Z <= FMath::Min(MaxDZ - 1, GN - 2);
+           ++Z) {
+        for (int32 Y = FMath::Max(MinDY + 1, 1); Y <= FMath::Min(MaxDY - 1, GN - 2);
+             ++Y) {
+          for (int32 X = FMath::Max(MinDX + 1, 1);
+               X <= FMath::Min(MaxDX - 1, GN - 2); ++X) {
+            const int32 Idx = Z * GN * GN + Y * GN + X;
+            const float Center = Density[Idx];
+            const float NeighborAvg =
+                (Density[Idx - 1] + Density[Idx + 1] + Density[Idx - GN] +
+                 Density[Idx + GN] + Density[Idx - GN * GN] +
+                 Density[Idx + GN * GN]) /
+                6.0f;
+            Smoothed[Idx] = FMath::Lerp(Center, NeighborAvg, SmoothStrength);
+          }
+        }
+      }
+
+      Density = Smoothed;
+    }
+  }
   // --- 1b. Early out if tile is fully air or fully solid ---
   // This is the key perf optimization: most tiles in a 3x3x3 grid
   // are entirely underground (solid) or above ground (air).
@@ -881,7 +921,7 @@ void FPMVoxelGenerator::GenerateTerraformTile(
     }
   }
 
-  // NOTE: No SmoothNormals() call needed here � we compute per-vertex
+  // NOTE: No SmoothNormals() call needed here ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â we compute per-vertex
   // gradient normals directly from the density field, which are already smooth.
 
   UE_LOG(LogTemp, Log,

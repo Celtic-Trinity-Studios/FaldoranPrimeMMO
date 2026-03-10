@@ -29,11 +29,11 @@ AFPMChunkActor::AFPMChunkActor() {
   // Per-triangle collision (not convex hull).
   TerrainMesh->bUseComplexAsSimpleCollision = true;
 
-  // Synchronous collision cooking — collision is available immediately
-  // when CreateMeshSection is called. This prevents the character from
-  // falling through terrain while async collision cooks in the background.
-  // The per-chunk stall (~1-2ms) is negligible vs mesh generation cost.
-  TerrainMesh->bUseAsyncCooking = false;
+  // Asynchronous collision cooking — physics mesh is baked in the background
+  // instead of stalling the game thread for 1-3ms per chunk. The safety floor
+  // mesh (BuildSafetyFloorAt) prevents fall-through during the brief cook
+  // delay (~1-2 frames). This saves 3-12ms/frame during chunk loading bursts.
+  TerrainMesh->bUseAsyncCooking = true;
 
   TerrainMesh->SetCastShadow(true);
   TerrainMesh->SetCollisionProfileName(TEXT("BlockAll"));

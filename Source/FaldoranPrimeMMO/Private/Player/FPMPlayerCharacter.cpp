@@ -56,17 +56,17 @@ struct FFallbackSpeciesData {
 //                                               MeshSc  CapsHH CapsR  Walk  Run   Boom   Jump
 static const FFallbackSpeciesData FallbackData[] = {
   // Reference: walk = 1.3 m/s (3 mph), run = 2.6 m/s (6 mph, 2x walk)
-  // Jump base 300 cm/s gives ~46cm height (UE default gravity 980 cm/s�)
-  // h = v�/(2g)
-  /* Human    � reference                    */ {0.50f,  45.0f, 17.0f, 130.f, 260.f, 200.f, 1.00f},
-  /* HalfElf  � slightly taller stride       */ {0.525f, 47.0f, 17.0f, 133.f, 266.f, 210.f, 1.00f},
-  /* Elf      � tall, elegant stride         */ {0.54f,  48.5f, 16.0f, 137.f, 274.f, 215.f, 1.02f},
-  /* Dwarf    � short legs, slower           */ {0.375f, 34.0f, 19.0f, 120.f, 240.f, 160.f, 0.90f},
-  /* Halfling � quick scurry, light jump     */ {0.275f, 25.0f, 14.0f, 115.f, 230.f, 140.f, 1.15f},
-  /* HalfOrc  � heavy, slightly slower walk  */ {0.575f, 51.5f, 20.0f, 127.f, 254.f, 230.f, 0.95f},
-  /* Gnome    � tiny, scurrying pace         */ {0.275f, 25.0f, 13.0f, 118.f, 236.f, 135.f, 1.12f},
-  /* Kethari  � cat-race, agile stride       */ {0.475f, 43.0f, 16.0f, 135.f, 270.f, 190.f, 1.05f},
-  /* Rauken   � dog-race, steady             */ {0.525f, 47.0f, 18.0f, 130.f, 260.f, 210.f, 1.00f},
+  // Jump base 300 cm/s gives ~46cm height (UE default gravity 980 cm/s)
+  // h = v²/(2g)
+  /* Human    — reference                    */ {1.00f,  90.0f, 34.0f, 260.f, 520.f, 400.f, 1.00f},
+  /* HalfElf  — slightly taller stride       */ {1.05f,  94.0f, 34.0f, 266.f, 532.f, 420.f, 1.00f},
+  /* Elf      — tall, elegant stride         */ {1.08f,  97.0f, 32.0f, 274.f, 548.f, 430.f, 1.02f},
+  /* Dwarf    — short legs, slower           */ {0.75f,  68.0f, 38.0f, 240.f, 480.f, 320.f, 0.90f},
+  /* Halfling — quick scurry, light jump     */ {0.55f,  50.0f, 28.0f, 230.f, 460.f, 280.f, 1.15f},
+  /* HalfOrc  — heavy, slightly slower walk  */ {1.15f, 103.0f, 40.0f, 254.f, 508.f, 460.f, 0.95f},
+  /* Gnome    — tiny, scurrying pace         */ {0.55f,  50.0f, 26.0f, 236.f, 472.f, 270.f, 1.12f},
+  /* Kethari  — cat-race, agile stride       */ {0.95f,  86.0f, 32.0f, 270.f, 540.f, 380.f, 1.05f},
+  /* Rauken   — dog-race, steady             */ {1.05f,  94.0f, 36.0f, 260.f, 520.f, 420.f, 1.00f},
 };
 // clang-format on
 static constexpr int32 FallbackDataCount =
@@ -83,7 +83,7 @@ AFPMPlayerCharacter::AFPMPlayerCharacter() {
   // Configure the inherited skeletal mesh
   if (GetMesh()) {
     GetMesh()->SetRelativeLocation(
-        FVector(0.0f, 0.0f, -45.0f)); // half of original 90
+        FVector(0.0f, 0.0f, -90.0f)); // match Human capsule half-height
     GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
 
     // Force animation to always tick (needed for server + remote clients)
@@ -461,12 +461,12 @@ void AFPMPlayerCharacter::ApplySpeciesScaling() {
   // Resolve species values � prefer UFPMSpeciesRegistry if assigned,
   // fall back to the hardcoded FallbackData table.
   // ----------------------------------------------------------------
-  float MeshScale = 0.50f;
-  float CapsHH = 45.0f;
-  float CapsR = 17.0f;
-  float WalkSpeed = 150.0f; // cm/s
-  float RunSpeed = 500.0f;  // cm/s
-  float Boom = 200.0f;
+  float MeshScale = 1.0f;
+  float CapsHH = 90.0f;
+  float CapsR = 34.0f;
+  float WalkSpeed = 260.0f; // cm/s (Human reference)
+  float RunSpeed = 520.0f;  // cm/s (Human reference)
+  float Boom = 400.0f;
   float JumpMult = 1.0f;
   TMap<FName, float> MorphDefaults; // species default morph overrides
 
@@ -836,9 +836,9 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
       if (bLMBIsDown && !bLMBWasDown) {
         // Determine radius and strength from the active tool.
         // Radii are in centimeters (UE world units).
-        constexpr float SmallRadiusCm = 100.0f;   // 1m radius
-        constexpr float MediumRadiusCm = 250.0f;  // 2.5m radius
-        constexpr float LargeRadiusCm = 500.0f;   // 5m radius
+        constexpr float SmallRadiusCm = 100.0f;  // 1m radius
+        constexpr float MediumRadiusCm = 250.0f; // 2.5m radius
+        constexpr float LargeRadiusCm = 500.0f;  // 5m radius
         float Radius = SmallRadiusCm;
         float Strength = 1.0f;
 
@@ -878,7 +878,8 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
         Strength *= TerraformScale;
 
         UE_LOG(LogTemp, Warning,
-               TEXT("FPM: Terraform click! Tool=%d Radius=%.0f Strength=%.2f Scale=%.2f"),
+               TEXT("FPM: Terraform click! Tool=%d Radius=%.0f Strength=%.2f "
+                    "Scale=%.2f"),
                static_cast<int32>(ActiveTerraformTool), Radius, Strength,
                TerraformScale);
 
@@ -901,9 +902,3 @@ void AFPMPlayerCharacter::HandleMovementInput(float DeltaTime) {
     AddControllerPitchInput(-MouseY);
   }
 }
-
-
-
-
-
-
