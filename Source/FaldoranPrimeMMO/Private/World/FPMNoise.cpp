@@ -374,6 +374,19 @@ float FPMNoise::TerrainHeight(float WorldX, float WorldY, int32 Seed) {
       + (HillsMed - 0.5f) * 0.015f * LocalHillAmp    // secondary (±300m)
       + (HillsMicro - 0.5f) * 0.005f * LocalHillAmp; // micro detail (±100m)
 
+  // Force a broad, gentle starter meadow around world origin.
+  // This guarantees a stable first spawn / fallback area at (0,0).
+  const float DistFromOriginCm = FMath::Sqrt(WorldX * WorldX + WorldY * WorldY);
+  constexpr float StarterMeadowInnerRadiusCm = 1200000.0f; // 12 km
+  constexpr float StarterMeadowOuterRadiusCm = 2600000.0f; // 26 km
+  constexpr float StarterMeadowHeight = 0.585f;
+  if (DistFromOriginCm < StarterMeadowOuterRadiusCm) {
+    const float T = 1.0f - FMath::SmoothStep(StarterMeadowInnerRadiusCm,
+                                             StarterMeadowOuterRadiusCm,
+                                             DistFromOriginCm);
+    H = FMath::Lerp(H, StarterMeadowHeight, T);
+  }
+
   // Planet mode: no island-edge ocean blend.
   // Low continental noise naturally produces sub-sea-level terrain = oceans.
   return FMath::Clamp(H, 0.0f, 1.0f);

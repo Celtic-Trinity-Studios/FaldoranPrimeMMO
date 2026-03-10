@@ -154,6 +154,11 @@ public:
                           float HalfExtentCm = 1000000.f, // 10 km half
                           int32 GridSteps = 20, float SinkCm = 500.f);
 
+  /** Disable and clear the temporary safety floor once real terrain collision
+   *  is ready. */
+  UFUNCTION(BlueprintCallable, Category = "FPM|World")
+  void ClearSafetyFloor();
+
   // --- Terraforming ---
 
   /**
@@ -218,6 +223,11 @@ protected:
    *  Applied AFTER procedural density + cave noise. */
   TMap<FFPMChunkCoord, TMap<FIntVector, float>> VoxelOverlays;
 
+  /** Fine-resolution voxel deltas bucketed by owning chunk.
+   *  This is the transition path away from transient bubble/tile ownership.
+   *  Keys are world-quantized at TerraformVoxelSizeCm. */
+  TMap<FFPMChunkCoord, TMap<FIntVector, float>> ChunkTerraformOverlays;
+
   // --- Fine-grained terraform overlay (200cm resolution) ---
 
   /** Convert a world position to a terraform tile coordinate.
@@ -266,6 +276,14 @@ protected:
 
   /** Maximum concurrent async terraform tile generation tasks. */
   static constexpr int32 MaxConcurrentTerraformGenerations = 4;
+
+  /** Gather fine terraform deltas from chunk-owned storage for TileCoord and
+   *  its immediate neighbors so marching cubes sees a seam-safe field. */
+  void GatherChunkTerraformDeltasForTileNeighborhood(
+      const FIntVector &TileCoord, TMap<FIntVector, float> &OutDeltas) const;
+
+  /** Whether the exact tile has any local chunk-owned fine deltas. */
+  bool HasChunkTerraformDeltasForTile(const FIntVector &TileCoord) const;
 
   /** Process a batch of pending terraform tiles (called from Tick).
    *  Dispatches MC generation to the thread pool instead of running synchronously. */
@@ -462,3 +480,7 @@ private:
   void GetLifetimeReplicatedProps(
       TArray<FLifetimeProperty> &OutLifetimeProps) const override;
 };
+
+
+
+

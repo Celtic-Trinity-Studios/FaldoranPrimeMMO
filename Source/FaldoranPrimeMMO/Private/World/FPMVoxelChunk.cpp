@@ -373,7 +373,7 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
   MaskGrid.SetNumUninitialized(ClimateSize);
   SurfaceZGrid.SetNumUninitialized(ClimateSize);
 
-  // Cave shell parameters ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â only evaluate 3D cave noise within this range
+  // Cave shell parameters only evaluate 3D cave noise within this range
   // below the terrain surface. Loaded from INI via FPMNoise::CaveDensity.
   constexpr float CaveShellDepth = 500000.0f; // 5km below surface
   constexpr float CaveCarveThreshold = 0.15f; // How strong cave noise must be
@@ -510,7 +510,7 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
           const FVector &V1 = EdgeVerts[MCTriTable[CubeIndex][T + 1]];
           const FVector &V2 = EdgeVerts[MCTriTable[CubeIndex][T + 2]];
 
-          // Face normal (initial ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â will be smoothed in post-pass)
+          // Face normal will be smoothed in post-pass)
           const FVector Edge1 = V1 - V0;
           const FVector Edge2 = V2 - V0;
           FVector FaceNormal =
@@ -616,8 +616,7 @@ void FPMVoxelGenerator::GenerateAndMesh(const FFPMChunkCoord &Coord,
 }
 
 // ===================================================================
-//  GenerateTerraformTile ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Fine-resolution terraform mesh
-//  33ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â33ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â33 grid at 200cm = 64m tile. Uses same MC algorithm.
+//  GenerateTerraformTile grid at 200cm = 64m tile. Uses same MC algorithm.
 // ===================================================================
 void FPMVoxelGenerator::GenerateTerraformTile(
     const FVector &TileOrigin, int32 WorldSeed,
@@ -703,7 +702,8 @@ void FPMVoxelGenerator::GenerateTerraformTile(
 
   // --- 1. Build density field ---
   TArray<float> Density;
-  Density.SetNumZeroed(TerraformTotalCorners);
+  const int32 TotalGridCorners = GN * GN * GN;
+  Density.SetNumZeroed(TotalGridCorners);
 
   for (int32 Z = MinDZ; Z <= MaxDZ; ++Z) {
     const float WorldZ = ExpandedOrigin.Z + Z * VS;
@@ -765,7 +765,7 @@ void FPMVoxelGenerator::GenerateTerraformTile(
   // are entirely underground (solid) or above ground (air).
   bool bHasPositive = false;
   bool bHasNegative = false;
-  for (int32 Idx = 0; Idx < TerraformTotalCorners; ++Idx) {
+  for (int32 Idx = 0; Idx < TotalGridCorners; ++Idx) {
     if (Density[Idx] > 0.f) bHasPositive = true;
     else bHasNegative = true;
     if (bHasPositive && bHasNegative) break;
@@ -805,10 +805,11 @@ void FPMVoxelGenerator::GenerateTerraformTile(
         if (MCEdgeTable[CubeIdx] == 0)
           continue;
 
-        // Corner positions in world space
-        const float BX = TileOrigin.X + X * VS;
-        const float BY = TileOrigin.Y + Y * VS;
-        const float BZ = TileOrigin.Z + Z * VS;
+        // Corner positions must match the expanded density grid coordinates.
+        // Using TileOrigin here produces a shifted replacement slab.
+        const float BX = ExpandedOrigin.X + X * VS;
+        const float BY = ExpandedOrigin.Y + Y * VS;
+        const float BZ = ExpandedOrigin.Z + Z * VS;
         FVector C[8] = {
             {BX, BY, BZ},
             {BX + VS, BY, BZ},
@@ -883,22 +884,41 @@ void FPMVoxelGenerator::GenerateTerraformTile(
             N0 = N1 = N2 = FN;
           }
 
-          // Depth-based soil -> rock transition (Enshrouded-style)
+          // Depth-based material blending. Use smooth transitions instead of
+          // hard depth cutoffs so tunnel walls do not show jagged layer bands.
           const float SurfZ0 = TerrainSurfaceZ(V0.X, V0.Y, WorldSeed);
           const float DepthBelow = SurfZ0 - V0.Z; // positive = underground
           const float NormH = FMath::Clamp(V0.Z / 50000.f, 0.f, 1.f);
-          FColor VColor;
-          if (DepthBelow < 100.f) {
-            // Surface / grass layer (< 1m deep)
-            const EFPMBiome Biome = BiomeAtWorldXY(V0.X, V0.Y, WorldSeed, NormH);
-            VColor = BiomeToVertexColor(Biome);
-          } else if (DepthBelow < 400.f) {
-            // Soil layer (1-4m deep) - brown dirt
-            VColor = FColor(139, 90, 43, 255);
-          } else {
-            // Rock layer (> 4m deep) - grey stone
-            VColor = FColor(128, 128, 128, 255);
+          const EFPMBiome Biome = BiomeAtWorldXY(V0.X, V0.Y, WorldSeed, NormH);
+
+          const FLinearColor SurfaceColor =
+              FLinearColor::FromSRGBColor(BiomeToVertexColor(Biome));
+          const FLinearColor SoilColor =
+              FLinearColor::FromSRGBColor(FColor(139, 90, 43, 255));
+          const FLinearColor RockColor =
+              FLinearColor::FromSRGBColor(FColor(128, 128, 128, 255));
+
+          constexpr float SurfaceBlendStart = 75.0f;
+          constexpr float SurfaceBlendEnd = 175.0f;
+          constexpr float RockBlendStart = 325.0f;
+          constexpr float RockBlendEnd = 525.0f;
+
+          FLinearColor FinalColor = SoilColor;
+          if (DepthBelow <= SurfaceBlendStart) {
+            FinalColor = SurfaceColor;
+          } else if (DepthBelow < SurfaceBlendEnd) {
+            const float Alpha = FMath::SmoothStep(SurfaceBlendStart,
+                                                  SurfaceBlendEnd, DepthBelow);
+            FinalColor = FMath::Lerp(SurfaceColor, SoilColor, Alpha);
+          } else if (DepthBelow >= RockBlendEnd) {
+            FinalColor = RockColor;
+          } else if (DepthBelow > RockBlendStart) {
+            const float Alpha = FMath::SmoothStep(RockBlendStart,
+                                                  RockBlendEnd, DepthBelow);
+            FinalColor = FMath::Lerp(SoilColor, RockColor, Alpha);
           }
+
+          const FColor VColor = FinalColor.ToFColor(true);
 
           const int32 BaseIdx = OutMesh.Vertices.Num();
           OutMesh.Vertices.Add(V0);
@@ -921,7 +941,7 @@ void FPMVoxelGenerator::GenerateTerraformTile(
     }
   }
 
-  // NOTE: No SmoothNormals() call needed here ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â we compute per-vertex
+  // NOTE: No SmoothNormals() call needed here  we compute per-vertex
   // gradient normals directly from the density field, which are already smooth.
 
   UE_LOG(LogTemp, Log,

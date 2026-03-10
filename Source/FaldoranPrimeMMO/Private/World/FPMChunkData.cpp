@@ -292,6 +292,13 @@ EFPMBiome FPMChunkGenerator::AssignBiomeFromNoise(float NormX, float NormY,
   const float Temp = FPMNoise::Temperature(WX, WY, Seed);
   const float Moist = FPMNoise::Moisture(WX, WY, Seed);
 
+  // Reserve the world origin as a deliberate starter meadow zone.
+  const float DistFromOriginCm = FMath::Sqrt(WX * WX + WY * WY);
+  constexpr float StarterMeadowRadiusCm = 1800000.0f; // 18 km
+  if (DistFromOriginCm <= StarterMeadowRadiusCm) {
+    return EFPMBiome::Meadows;
+  }
+
   // Ocean: terrain below sea level
   constexpr float SeaLevel = FPMChunkConstants::SeaLevelNormalized;
   if (H < SeaLevel - 0.02f)

@@ -53,6 +53,7 @@ private:
   struct FBiomeLocation {
     FVector2D WorldXY;
     bool bFound = false;
+    float Score = -FLT_MAX;
   };
 
   /** Live map read by DrawHUD every frame (game thread only). */

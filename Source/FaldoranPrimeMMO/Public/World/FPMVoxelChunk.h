@@ -44,20 +44,20 @@ constexpr float WorldZTop = WorldZBase + ChunkVoxelsZ * VoxelSizeCm;
 
 // --- Fine-resolution terraform overlay ---
 
-/** Voxel size for terraform overlay tiles (50cm per cell, matches Enshrouded). */
-constexpr float TerraformVoxelSizeCm = 50.0f;
+/** Voxel size for terraform overlay tiles (25cm per cell for smoother cuts). */
+constexpr float TerraformVoxelSizeCm = 25.0f;
 
-/** Number of voxels per terraform tile axis (32 = 16m tile at 50cm voxels). */
-constexpr int32 TerraformTileVoxels = 32;
+/** Number of voxels per terraform tile axis (64 = 16m tile at 25cm voxels). */
+constexpr int32 TerraformTileVoxels = 64;
 
 /** World size of a terraform tile in cm. */
 constexpr float TerraformTileWorldSize =
     TerraformTileVoxels * TerraformVoxelSizeCm; // 1600 cm = 16m
 
 /** Grid corners for terraform tile MC (voxels + 1). */
-constexpr int32 TerraformGridN = TerraformTileVoxels + 1; // 33
+constexpr int32 TerraformGridN = TerraformTileVoxels + 1; // 65
 constexpr int32 TerraformTotalCorners =
-    TerraformGridN * TerraformGridN * TerraformGridN; // 35937
+    TerraformGridN * TerraformGridN * TerraformGridN; // 274625
 
 } // namespace FPMVoxelConstants
 
@@ -117,7 +117,7 @@ public:
 
   /**
    * Generate a fine-resolution terraform tile.
-   * Creates a 32�32�32 density field at 200cm resolution (64m tile)
+   * Creates a 32Ã—32Ã—32 density field at 200cm resolution (64m tile)
    * centered on TileOrigin, applying both coarse terrain and fine deltas.
    *
    * @param TileOrigin  World-space origin (min corner) of the tile

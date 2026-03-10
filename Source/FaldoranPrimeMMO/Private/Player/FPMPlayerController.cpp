@@ -601,12 +601,22 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
     SavedX = FCString::Atof(**VX);
     SavedY = FCString::Atof(**VY);
     SavedZ = FCString::Atof(**VZ);
-    // (0,0,0) exactly is almost certainly an unset value, not a real position
-    if (!FMath::IsNearlyZero(SavedX) || !FMath::IsNearlyZero(SavedY)) {
-      bHasSavedPos = true;
+
+    // Accept origin as a real spawn, but reject stale wrap-edge coordinates
+    // produced by earlier bad spawn/save logic.
+    const float EdgeGuardCm = FPMChunkConstants::ChunkWorldSize * 2.0f;
+    const bool bNearWrappedWorldEdge =
+        SavedX >= (FPMChunkConstants::PlanetCircumferenceCm - EdgeGuardCm) ||
+        SavedY >= (FPMChunkConstants::PlanetCircumferenceCm - EdgeGuardCm) ||
+        SavedX <= -EdgeGuardCm || SavedY <= -EdgeGuardCm;
+
+    if (bNearWrappedWorldEdge) {
+      UE_LOG(LogFPMPlayerController, Warning,
+             TEXT("FPM: Rejecting stale wrapped saved pos (%.0f, %.0f, %.0f); "
+                  "falling back to Nexus."),
+             SavedX, SavedY, SavedZ);
     } else {
-      UE_LOG(LogFPMPlayerController, Log,
-             TEXT("FPM: spawn_x/y are both ~0 â€” treating as unset."));
+      bHasSavedPos = true;
     }
   }
 
@@ -778,6 +788,10 @@ void AFPMPlayerController::ServerRequestEnterWorld_Implementation(
                         "(collision %s)"),
                    *PollCount, bHit ? TEXT("confirmed") : TEXT("timeout"));
           }
+          if (AFPMWorldChunkManager *WCM =
+                  AFPMWorldChunkManager::GetOrCreate(WeakWorld.Get())) {
+            WCM->ClearSafetyFloor();
+          }
           // Stop this specific timer
           WeakWorld->GetTimerManager().ClearTimer(*GravityTimerPtr);
         }
@@ -936,6 +950,10 @@ void AFPMPlayerController::ClientEnterWorldSuccess_Implementation(
                           "(collision %s)"),
                      *ClientPollCount,
                      bHit ? TEXT("confirmed") : TEXT("timeout"));
+              if (AFPMWorldChunkManager *WCM =
+                      AFPMWorldChunkManager::GetOrCreate(WeakWorld.Get())) {
+                WCM->ClearSafetyFloor();
+              }
               WeakWorld->GetTimerManager().ClearTimer(*ClientGravityTimerPtr);
             } else {
               // Force Flying mode in case server replication overwrote it
@@ -1215,3 +1233,4 @@ void AFPMPlayerController::Server_Debug_SpawnTestItems_Implementation() {
   UE_LOG(LogFPMPlayerController, Log,
          TEXT("FPM Debug: Spawned 7 test items into the backpack."));
 }
+

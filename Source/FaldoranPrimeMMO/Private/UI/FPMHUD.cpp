@@ -5,6 +5,8 @@
 #include "Engine/Font.h"
 #include "Engine/Texture2D.h"
 #include "EngineUtils.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Player/FPMPlayerCharacter.h"
@@ -43,6 +45,37 @@ static const FBiomeMeta GBiomeMeta[] = {
     {EFPMBiome::Ocean, TEXT("Ocean"), {0.12f, 0.31f, 0.47f}},
 };
 static constexpr int32 GBiomeCount = UE_ARRAY_COUNT(GBiomeMeta);
+
+static float ScoreBiomeCandidate(EFPMBiome Biome, float SurfZ, float NormH) {
+  switch (Biome) {
+  case EFPMBiome::Mountain:
+    return NormH;
+  case EFPMBiome::Alpine:
+    return NormH - FMath::Abs(NormH - 0.72f);
+  case EFPMBiome::Snow:
+    return NormH;
+  case EFPMBiome::Beach:
+  case EFPMBiome::Coast:
+  case EFPMBiome::River:
+    return -FMath::Abs(SurfZ);
+  case EFPMBiome::Ocean:
+    return -SurfZ;
+  case EFPMBiome::Meadows:
+    return -FMath::Abs(NormH - 0.58f);
+  case EFPMBiome::Plains:
+    return -FMath::Abs(NormH - 0.60f);
+  case EFPMBiome::Forest:
+  case EFPMBiome::Taiga:
+  case EFPMBiome::BorealForest:
+  case EFPMBiome::Swamp:
+  case EFPMBiome::Jungle:
+  case EFPMBiome::Savanna:
+  case EFPMBiome::Desert:
+  case EFPMBiome::Tundra:
+  default:
+    return -FMath::Abs(NormH - 0.62f);
+  }
+}
 
 // ===================================================================
 //  Helpers
@@ -129,12 +162,16 @@ void AFPMHUD::RefreshBiomeCache(int32 WorldSeed) {
         EFPMBiome B = FPMVoxelGenerator::BiomeAtWorldXY(X, Y, WorldSeed, NormH);
 
         FBiomeLocation *Loc = Results.Find(static_cast<uint8>(B));
-        if (Loc && !Loc->bFound) {
-          Loc->WorldXY = FVector2D(X, Y);
-          Loc->bFound = true;
-          ++Found;
-          if (Found >= GBiomeCount)
-            break;
+        if (Loc) {
+          const float Score = ScoreBiomeCandidate(B, SurfZ, NormH);
+          if (!Loc->bFound || Score > Loc->Score) {
+            if (!Loc->bFound) {
+              ++Found;
+            }
+            Loc->WorldXY = FVector2D(X, Y);
+            Loc->bFound = true;
+            Loc->Score = Score;
+          }
         }
       }
     }
@@ -169,16 +206,11 @@ void AFPMHUD::TeleportToBiome(uint8 BiomeKey) {
   const float SurfaceZ = FPMVoxelGenerator::TerrainSurfaceZ(
       Loc->WorldXY.X, Loc->WorldXY.Y, CachedWorldSeed);
 
-  // Build a small safety floor (2km radius, 10-step grid = 100 samples) so
-  // the player lands on something even before full chunks generate.
-  // Do NOT call EnsureChunkLoadedAtWorldPos here � it blocks the game thread
-  // for 2+ seconds and corrupts CMC state, making the teleport fail.
+  // Warm destination terrain the same way we do for spawn so teleporting to a
+  // biome does not drop the player onto an ungenerated area.
   for (TActorIterator<AFPMWorldChunkManager> It(GetWorld()); It; ++It) {
     const FVector DestXY(Loc->WorldXY.X, Loc->WorldXY.Y, SurfaceZ);
-    It->BuildSafetyFloorAt(DestXY,
-                           /*HalfExtentCm=*/200000.f, // 2 km half-extent
-                           /*GridSteps=*/10, // 10�10 = 100 samples, <5 ms
-                           /*SinkCm=*/500.f);
+    It->PrepareSpawnAreaAtWorldPos(DestXY);
     break;
   }
 
@@ -187,13 +219,72 @@ void AFPMHUD::TeleportToBiome(uint8 BiomeKey) {
     Move->StopMovementImmediately();
   }
 
-  // Teleport 15m above surface � gives chunks time to generate collision
-  // TeleportTo (not SetActorLocation) properly notifies the CMC so it
-  // doesn't snap back to the previous position on the next physics tick.
+  // Match spawn handling: float briefly while destination collision finishes
+  // cooking, then drop back to walking and clear the temporary safety floor.
+  if (ACharacter *Char = Cast<ACharacter>(Pawn)) {
+    if (UCharacterMovementComponent *MoveComp = Char->GetCharacterMovement()) {
+      MoveComp->SetMovementMode(MOVE_Flying);
+      MoveComp->GravityScale = 0.0f;
+      MoveComp->Velocity = FVector::ZeroVector;
+    }
+  }
+
+  // Teleport 15m above surface � gives chunks time to generate collision.
   const FVector Dest(Loc->WorldXY.X, Loc->WorldXY.Y, SurfaceZ + 1500.0f);
   const FRotator Rot = Pawn->GetActorRotation();
   const bool bOK =
       Pawn->TeleportTo(Dest, Rot, /*bIsATest=*/false, /*bNoCheck=*/true);
+
+  if (bOK) {
+    TWeakObjectPtr<APawn> WeakPawn = Pawn;
+    TWeakObjectPtr<UWorld> WeakWorld = GetWorld();
+    TSharedPtr<int32> PollCount = MakeShared<int32>(0);
+    TSharedPtr<FTimerHandle> GravityTimerPtr = MakeShared<FTimerHandle>();
+
+    GetWorld()->GetTimerManager().SetTimer(
+        *GravityTimerPtr,
+        [WeakPawn, WeakWorld, PollCount, GravityTimerPtr]() {
+          if (!WeakPawn.IsValid() || !WeakWorld.IsValid()) {
+            if (WeakWorld.IsValid()) {
+              WeakWorld->GetTimerManager().ClearTimer(*GravityTimerPtr);
+            }
+            return;
+          }
+
+          ACharacter *Char = Cast<ACharacter>(WeakPawn.Get());
+          if (!Char) {
+            WeakWorld->GetTimerManager().ClearTimer(*GravityTimerPtr);
+            return;
+          }
+
+          UCharacterMovementComponent *MoveComp = Char->GetCharacterMovement();
+          if (!MoveComp) {
+            WeakWorld->GetTimerManager().ClearTimer(*GravityTimerPtr);
+            return;
+          }
+
+          ++(*PollCount);
+
+          FHitResult Hit;
+          const FVector Start = Char->GetActorLocation();
+          const FVector End = Start - FVector(0.0f, 0.0f, 500000.0f);
+          FCollisionQueryParams QParams;
+          QParams.AddIgnoredActor(Char);
+          const bool bHit = WeakWorld->LineTraceSingleByChannel(
+              Hit, Start, End, ECC_WorldStatic, QParams);
+
+          if (bHit || *PollCount >= 20) {
+            MoveComp->SetMovementMode(MOVE_Walking);
+            MoveComp->GravityScale = 1.0f;
+            if (AFPMWorldChunkManager *WCM =
+                    AFPMWorldChunkManager::GetOrCreate(WeakWorld.Get())) {
+              WCM->ClearSafetyFloor();
+            }
+            WeakWorld->GetTimerManager().ClearTimer(*GravityTimerPtr);
+          }
+        },
+        0.25f, true);
+  }
 
   const EFPMBiome BiomeEnum = static_cast<EFPMBiome>(BiomeKey);
   UE_LOG(LogTemp, Log,
@@ -905,6 +996,9 @@ void AFPMHUD::DrawTerraformToolbar(APlayerController *PC,
              Font, 0.85f);
   }
 }
+
+
+
 
 
 

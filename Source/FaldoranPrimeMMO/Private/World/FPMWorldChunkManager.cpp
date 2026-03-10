@@ -11,6 +11,7 @@
 #include "ProceduralMeshComponent.h"
 #include "UObject/ConstructorHelpers.h"
 #include "World/FPMNoise.h"
+#include "World/FPMPlanetTraversal.h"
 #include "World/FPMVoxelChunk.h"
 #include "World/FPMWaterMeshBuilder.h"
 #include "World/FPMWaterSimulation.h"
@@ -62,6 +63,13 @@ static int32 GetMaxConcurrentGenerations() {
 /** Timer for periodic gap-recovery scans. */
 static float GGapRecoveryTimer = 0.0f;
 static constexpr float GGapRecoveryInterval = 2.0f;
+
+static bool IsTileWithinNeighborhood(const FIntVector &TileCoord,
+                                     const FIntVector &CenterTile) {
+  return FMath::Abs(TileCoord.X - CenterTile.X) <= 1 &&
+         FMath::Abs(TileCoord.Y - CenterTile.Y) <= 1 &&
+         FMath::Abs(TileCoord.Z - CenterTile.Z) <= 1;
+}
 
 // ===================================================================
 //  Console Commands
@@ -368,31 +376,39 @@ void AFPMWorldChunkManager::Tick(float DeltaTime) {
     return;
   }
 
-  // --- TOROIDAL WRAP: keep player inside [0, PlanetCircumference) ---
+  // --- TOROIDAL WRAP ---
+  // Only apply wrap during explicit high-speed planet traversal.
+  // Ground movement near origin must be allowed to go slightly negative
+  // without snapping to the far side of the world.
   {
     APawn *Pawn = PC->GetPawn();
     if (Pawn) {
-      FVector Pos = Pawn->GetActorLocation();
-      const float Circ = FPMChunkConstants::PlanetCircumferenceCm;
-      bool bNeedsWrap = false;
-      if (Pos.X < 0.0f || Pos.X >= Circ) {
-        Pos.X = FPMChunkConstants::WrapWorldCoord(Pos.X);
-        bNeedsWrap = true;
-      }
-      if (Pos.Y < 0.0f || Pos.Y >= Circ) {
-        Pos.Y = FPMChunkConstants::WrapWorldCoord(Pos.Y);
-        bNeedsWrap = true;
-      }
-      if (bNeedsWrap) {
-        Pawn->SetActorLocation(Pos, false, nullptr,
-                               ETeleportType::TeleportPhysics);
+      if (const UFPMPlanetTraversal *Traversal =
+              Pawn->FindComponentByClass<UFPMPlanetTraversal>()) {
+        if (Traversal->IsRiftRunnerActive()) {
+          FVector Pos = Pawn->GetActorLocation();
+          const float Circ = FPMChunkConstants::PlanetCircumferenceCm;
+          bool bNeedsWrap = false;
+          if (Pos.X < 0.0f || Pos.X >= Circ) {
+            Pos.X = FPMChunkConstants::WrapWorldCoord(Pos.X);
+            bNeedsWrap = true;
+          }
+          if (Pos.Y < 0.0f || Pos.Y >= Circ) {
+            Pos.Y = FPMChunkConstants::WrapWorldCoord(Pos.Y);
+            bNeedsWrap = true;
+          }
+          if (bNeedsWrap) {
+            Pawn->SetActorLocation(Pos, false, nullptr,
+                                   ETeleportType::TeleportPhysics);
+          }
+        }
       }
     }
   }
 
   // Process pending terraform tiles EVERY frame (not throttled) so the
   // bubble fills quickly. The bubble update itself is throttled below.
-  // Skip on dedicated server ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â terraform data is stored but visual meshes
+  // Skip on dedicated server -- terraform data is stored but visual meshes
   // are not needed (server has no renderer). Same pattern as foliage skip.
   if (!GetWorld() || GetWorld()->GetNetMode() != NM_DedicatedServer) {
     ProcessPendingTerraformTiles();
@@ -971,23 +987,25 @@ void AFPMWorldChunkManager::TerraformAtPoint(FVector WorldPos, float Radius,
                                              float Strength) {
   using namespace FPMVoxelConstants;
 
-  const float VS = TerraformVoxelSizeCm; // 50cm fine voxels
+  const float FineVS = TerraformVoxelSizeCm;
+  const float CoarseVS = VoxelSizeCm;
 
-  // Write deltas to fine overlay (50cm resolution)
-  const int32 MinIX = FMath::FloorToInt((WorldPos.X - Radius) / VS);
-  const int32 MaxIX = FMath::FloorToInt((WorldPos.X + Radius) / VS);
-  const int32 MinIY = FMath::FloorToInt((WorldPos.Y - Radius) / VS);
-  const int32 MaxIY = FMath::FloorToInt((WorldPos.Y + Radius) / VS);
-  const int32 MinIZ = FMath::FloorToInt((WorldPos.Z - Radius) / VS);
-  const int32 MaxIZ = FMath::FloorToInt((WorldPos.Z + Radius) / VS);
+  const int32 MinIX = FMath::FloorToInt((WorldPos.X - Radius) / FineVS);
+  const int32 MaxIX = FMath::FloorToInt((WorldPos.X + Radius) / FineVS);
+  const int32 MinIY = FMath::FloorToInt((WorldPos.Y - Radius) / FineVS);
+  const int32 MaxIY = FMath::FloorToInt((WorldPos.Y + Radius) / FineVS);
+  const int32 MinIZ = FMath::FloorToInt((WorldPos.Z - Radius) / FineVS);
+  const int32 MaxIZ = FMath::FloorToInt((WorldPos.Z + Radius) / FineVS);
 
   TSet<FIntVector> AffectedTiles;
+  TSet<FFPMChunkCoord> AffectedChunks;
   int32 ModifiedVoxels = 0;
 
   for (int32 IZ = MinIZ; IZ <= MaxIZ; ++IZ) {
     for (int32 IY = MinIY; IY <= MaxIY; ++IY) {
       for (int32 IX = MinIX; IX <= MaxIX; ++IX) {
-        const FVector VC((IX + 0.5f) * VS, (IY + 0.5f) * VS, (IZ + 0.5f) * VS);
+        const FVector VC((IX + 0.5f) * FineVS, (IY + 0.5f) * FineVS,
+                         (IZ + 0.5f) * FineVS);
         const float Dist = FVector::Dist(WorldPos, VC);
         if (Dist > Radius)
           continue;
@@ -995,37 +1013,37 @@ void AFPMWorldChunkManager::TerraformAtPoint(FVector WorldPos, float Radius,
         const float T = Dist / Radius;
         const float Falloff =
             1.0f - (T * T * T * (T * (T * 6.0f - 15.0f) + 10.0f));
-        const float Delta = -Strength * Falloff * VS;
+        const float Delta = -Strength * Falloff * FineVS;
 
         const FIntVector FineKey(IX, IY, IZ);
         const FIntVector TileCoord = WorldToTileCoord(VC);
-        FineTerraformOverlays.FindOrAdd(TileCoord).FindOrAdd(FineKey) += Delta;
+        const FFPMChunkCoord ChunkCoord =
+            FPMChunkGenerator::WorldToChunkCoord(VC);
+        ChunkTerraformOverlays.FindOrAdd(ChunkCoord).FindOrAdd(FineKey) += Delta;
+
+        const FIntVector CoarseKey(FMath::FloorToInt(VC.X / CoarseVS),
+                                   FMath::FloorToInt(VC.Y / CoarseVS),
+                                   FMath::FloorToInt(VC.Z / CoarseVS));
+        VoxelOverlays.FindOrAdd(ChunkCoord).FindOrAdd(CoarseKey) +=
+            Delta * (FineVS / CoarseVS);
         ++ModifiedVoxels;
         AffectedTiles.Add(TileCoord);
+        AffectedChunks.Add(ChunkCoord);
       }
     }
   }
 
-  // NO coarse terrain modification. The fine tile renders ON TOP of
-  // the coarse terrain with a slight Z offset (applied in
-  // RegenerateTerraformTile). For FILL: fine tile adds geometry above the
-  // coarse terrain surface. For DIG: fine tile creates a cavity - coarse
-  // terrain behind it is hidden
-  //          by the fine tile's opaque surface surrounding the cavity.
+  FineTerraformOverlays.Reset();
 
-  // Regenerate ONLY the directly affected tiles synchronously for
-  // immediate visual feedback (dig/fill appears this frame).
   for (const FIntVector &TC : AffectedTiles) {
     RegenerateTerraformTile(TC, true);
   }
 
-  // Queue neighboring tiles for ASYNC regeneration so Marching Cubes
-  // agrees on shared borders. These will appear within 1-2 frames.
   for (const FIntVector &TC : AffectedTiles) {
     for (int32 DZ = -1; DZ <= 1; ++DZ) {
       for (int32 DY = -1; DY <= 1; ++DY) {
         for (int32 DX = -1; DX <= 1; ++DX) {
-          if (DX == 0 && DY == 0 && DZ == 0) continue; // skip self (already done)
+          if (DX == 0 && DY == 0 && DZ == 0) continue;
           const FIntVector Neighbor(TC.X + DX, TC.Y + DY, TC.Z + DZ);
           if (!InFlightTerraformTiles.Contains(Neighbor)) {
             PendingTilesToGenerate.AddUnique(Neighbor);
@@ -1035,27 +1053,63 @@ void AFPMWorldChunkManager::TerraformAtPoint(FVector WorldPos, float Radius,
     }
   }
 
-  // Queue coarse chunk clip-regen for async processing (1 per frame).
-  // This avoids the massive stall from regenerating multiple coarse chunks
-  // in a single frame.
-  {
-    using namespace FPMVoxelConstants;
-    for (const FIntVector &TC : AffectedTiles) {
-      const FVector TileCenter((TC.X + 0.5f) * TerraformTileWorldSize,
-                               (TC.Y + 0.5f) * TerraformTileWorldSize,
-                               (TC.Z + 0.5f) * TerraformTileWorldSize);
-      const FFPMChunkCoord CC = FPMChunkGenerator::WorldToChunkCoord(TileCenter);
-      if (LoadedChunks.Contains(CC)) {
-        PendingChunkClips.AddUnique(CC);
-      }
+  // Refresh the local bubble before coarse chunks are regenerated so clip
+  // removal sees the current edited tiles instead of stale bubble state.
+  UpdateTerraformPlayerBubble(WorldPos);
+
+  int32 RegeneratedChunks = 0;
+  for (const FFPMChunkCoord &Coord : AffectedChunks) {
+    PendingChunkClips.AddUnique(Coord);
+    if (LoadedChunks.Contains(Coord)) {
+      RegenerateChunk(Coord);
+      ++RegeneratedChunks;
     }
   }
+
   if (GEngine) {
     GEngine->AddOnScreenDebugMessage(
         -1, 4.0f, FColor::Cyan,
-        FString::Printf(TEXT("Terraform: %d voxels, %d tiles (R=%.0f)"),
-                        ModifiedVoxels, AffectedTiles.Num(), Radius));
+        FString::Printf(TEXT("Terraform: %d voxels, %d tiles, %d chunks (R=%.0f)"),
+                        ModifiedVoxels, AffectedTiles.Num(), RegeneratedChunks,
+                        Radius));
   }
+}
+
+void AFPMWorldChunkManager::GatherChunkTerraformDeltasForTileNeighborhood(
+    const FIntVector &TileCoord, TMap<FIntVector, float> &OutDeltas) const {
+  using namespace FPMVoxelConstants;
+
+  for (const TPair<FFPMChunkCoord, TMap<FIntVector, float>> &ChunkEntry :
+       ChunkTerraformOverlays) {
+    for (const TPair<FIntVector, float> &VoxelEntry : ChunkEntry.Value) {
+      const FVector VoxelCenter((VoxelEntry.Key.X + 0.5f) * TerraformVoxelSizeCm,
+                                (VoxelEntry.Key.Y + 0.5f) * TerraformVoxelSizeCm,
+                                (VoxelEntry.Key.Z + 0.5f) * TerraformVoxelSizeCm);
+      const FIntVector VoxelTileCoord = WorldToTileCoord(VoxelCenter);
+      if (IsTileWithinNeighborhood(VoxelTileCoord, TileCoord)) {
+        OutDeltas.FindOrAdd(VoxelEntry.Key) += VoxelEntry.Value;
+      }
+    }
+  }
+}
+
+bool AFPMWorldChunkManager::HasChunkTerraformDeltasForTile(
+    const FIntVector &TileCoord) const {
+  using namespace FPMVoxelConstants;
+
+  for (const TPair<FFPMChunkCoord, TMap<FIntVector, float>> &ChunkEntry :
+       ChunkTerraformOverlays) {
+    for (const TPair<FIntVector, float> &VoxelEntry : ChunkEntry.Value) {
+      const FVector VoxelCenter((VoxelEntry.Key.X + 0.5f) * TerraformVoxelSizeCm,
+                                (VoxelEntry.Key.Y + 0.5f) * TerraformVoxelSizeCm,
+                                (VoxelEntry.Key.Z + 0.5f) * TerraformVoxelSizeCm);
+      if (WorldToTileCoord(VoxelCenter) == TileCoord) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 void AFPMWorldChunkManager::ProcessPendingTerraformTiles() {
@@ -1079,26 +1133,10 @@ void AFPMWorldChunkManager::ProcessPendingTerraformTiles() {
     }
 
     InFlightTerraformTiles.Add(TC);
-
-    // Gather combined deltas on game thread (reads FineTerraformOverlays which
-    // is only written from the game thread between frames - safe to read here).
     TMap<FIntVector, float> CombinedDeltas;
-    for (int32 DZ = -1; DZ <= 1; ++DZ) {
-      for (int32 DY = -1; DY <= 1; ++DY) {
-        for (int32 DX = -1; DX <= 1; ++DX) {
-          const FIntVector NeighborTC(TC.X + DX, TC.Y + DY, TC.Z + DZ);
-          const TMap<FIntVector, float> *NeighborDeltas =
-              FineTerraformOverlays.Find(NeighborTC);
-          if (NeighborDeltas) {
-            for (const TPair<FIntVector, float> &Pair : *NeighborDeltas) {
-              CombinedDeltas.FindOrAdd(Pair.Key) += Pair.Value;
-            }
-          }
-        }
-      }
-    }
+    GatherChunkTerraformDeltasForTileNeighborhood(TC, CombinedDeltas);
 
-    const bool bForce = true; // bubble tiles always force base surface
+    const bool bForce = false; // edit-driven neighbor regen only
     if (CombinedDeltas.Num() == 0 && !bForce) {
       InFlightTerraformTiles.Remove(TC);
       continue;
@@ -1130,28 +1168,7 @@ void AFPMWorldChunkManager::ProcessPendingTerraformTiles() {
     PendingTerraformGenerations.Add(Pending);
   }
 
-  // --- 3. Queue coarse chunk clip-regen when all tiles + async tasks are done ---
-  const bool bAllDone = PendingTilesToGenerate.Num() == 0 &&
-                        PendingTerraformGenerations.Num() == 0;
-  if (bAllDone && ActiveTerraformBubbleTiles.Num() > 0) {
-    // Only queue clip-regen once per bubble update (avoid re-queueing every frame)
-    static FIntVector SLastClipCenter(INT32_MIN, INT32_MIN, INT32_MIN);
-    if (SLastClipCenter != LastTerraformBubbleCenter) {
-      SLastClipCenter = LastTerraformBubbleCenter;
-      for (const FIntVector &TC : ActiveTerraformBubbleTiles) {
-        const FVector TileCenter((TC.X + 0.5f) * TerraformTileWorldSize,
-                                 (TC.Y + 0.5f) * TerraformTileWorldSize,
-                                 (TC.Z + 0.5f) * TerraformTileWorldSize);
-        const FFPMChunkCoord CC =
-            FPMChunkGenerator::WorldToChunkCoord(TileCenter);
-        if (LoadedChunks.Contains(CC)) {
-          PendingChunkClips.AddUnique(CC);
-        }
-      }
-    }
-  }
-
-  // Process at most 1 chunk clip-regen per frame to avoid lag spikes.
+    // Process at most 1 chunk clip-regen per frame to avoid lag spikes.
   if (PendingChunkClips.Num() > 0) {
     const FFPMChunkCoord CC = PendingChunkClips.Pop();
     if (LoadedChunks.Contains(CC)) {
@@ -1245,73 +1262,37 @@ void AFPMWorldChunkManager::FinalizeTerraformTile(
 }
 void AFPMWorldChunkManager::UpdateTerraformPlayerBubble(
     const FVector &PlayerPos) {
-  // Dedicated server: terraform voxel deltas are stored server-side for
-  // authority, but the visual replacement meshes are not needed (no renderer).
-  // Clients generate their own bubble. Same pattern as foliage skip.
-  if (GetWorld() && GetWorld()->GetNetMode() == NM_DedicatedServer) {
+  const FIntVector CenterTile = WorldToTileCoord(PlayerPos);
+  if (bTerraformBubbleInitialized && CenterTile == LastTerraformBubbleCenter) {
     return;
   }
 
-  using namespace FPMVoxelConstants;
-
-  constexpr int32 BubbleRadiusXY = 8; // 128m radius
-  constexpr int32 BubbleRadiusZ =
-      1; // ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±1 Z layer
-  const FIntVector CenterTC = WorldToTileCoord(PlayerPos);
-
-  // Bubble update is expensive. Only rebuild when crossing into a new tile.
-  if (bTerraformBubbleInitialized && CenterTC == LastTerraformBubbleCenter) {
-    return;
-  }
-  const bool bFirstInit = !bTerraformBubbleInitialized;
-  bTerraformBubbleInitialized = true;
-  LastTerraformBubbleCenter = CenterTC;
-
+  constexpr int32 BubbleRadiusTiles = 2;
   TSet<FIntVector> DesiredTiles;
-  TSet<FFPMChunkCoord> AffectedChunks;
 
-  // Build tiles in concentric rings: FARTHEST ring added first to
-  // PendingTilesToGenerate, NEAREST ring added last. Since Pop() takes
-  // from the end, nearest tiles are processed first. No sort needed.
-  // Ring R covers Manhattan distance R from center.
-  for (int32 Ring = BubbleRadiusXY; Ring >= 0; --Ring) {
-    for (int32 DY = -Ring; DY <= Ring; ++DY) {
-      for (int32 DX = -Ring; DX <= Ring; ++DX) {
-        // Only process tiles on this ring's perimeter (skip interior,
-        // which belongs to a smaller ring that will be added later)
-        const int32 ManhattanXY = FMath::Max(FMath::Abs(DX), FMath::Abs(DY));
-        if (ManhattanXY != Ring)
-          continue;
+  for (const TPair<FFPMChunkCoord, TMap<FIntVector, float>> &ChunkEntry :
+       ChunkTerraformOverlays) {
+    for (const TPair<FIntVector, float> &VoxelEntry : ChunkEntry.Value) {
+      const FVector VoxelCenter(
+          (VoxelEntry.Key.X + 0.5f) * FPMVoxelConstants::TerraformVoxelSizeCm,
+          (VoxelEntry.Key.Y + 0.5f) * FPMVoxelConstants::TerraformVoxelSizeCm,
+          (VoxelEntry.Key.Z + 0.5f) * FPMVoxelConstants::TerraformVoxelSizeCm);
+      const FIntVector TileCoord = WorldToTileCoord(VoxelCenter);
+      if (FMath::Abs(TileCoord.X - CenterTile.X) > BubbleRadiusTiles ||
+          FMath::Abs(TileCoord.Y - CenterTile.Y) > BubbleRadiusTiles ||
+          FMath::Abs(TileCoord.Z - CenterTile.Z) > BubbleRadiusTiles) {
+        continue;
+      }
 
-        // Sample terrain height to determine which Z layers matter
-        const float ColWorldX =
-            (CenterTC.X + DX + 0.5f) * TerraformTileWorldSize;
-        const float ColWorldY =
-            (CenterTC.Y + DY + 0.5f) * TerraformTileWorldSize;
-        const float SurfaceZ =
-            FPMVoxelGenerator::TerrainSurfaceZ(ColWorldX, ColWorldY, WorldSeed);
-        const int32 SurfaceTileZ =
-            FMath::FloorToInt(SurfaceZ / TerraformTileWorldSize);
-
-        for (int32 DZ = -BubbleRadiusZ; DZ <= BubbleRadiusZ; ++DZ) {
-          const FIntVector TC(CenterTC.X + DX, CenterTC.Y + DY,
-                              CenterTC.Z + DZ);
-          DesiredTiles.Add(TC);
-
-          if (!ActiveTerraformBubbleTiles.Contains(TC)) {
-            const FVector TileCenter((TC.X + 0.5f) * TerraformTileWorldSize,
-                                     (TC.Y + 0.5f) * TerraformTileWorldSize,
-                                     (TC.Z + 0.5f) * TerraformTileWorldSize);
-            AffectedChunks.Add(
-                FPMChunkGenerator::WorldToChunkCoord(TileCenter));
-          }
-
-          // Only queue tiles near the terrain surface
-          const bool bNearSurface = FMath::Abs(TC.Z - SurfaceTileZ) <= 1;
-          if (bNearSurface) {
-            AActor *const *FoundActor = TerraformTileActors.Find(TC);
-            if (!FoundActor || !IsValid(*FoundActor)) {
-              PendingTilesToGenerate.AddUnique(TC);
+      for (int32 DZ = -1; DZ <= 1; ++DZ) {
+        for (int32 DY = -1; DY <= 1; ++DY) {
+          for (int32 DX = -1; DX <= 1; ++DX) {
+            const FIntVector NeighborTile(TileCoord.X + DX, TileCoord.Y + DY,
+                                          TileCoord.Z + DZ);
+            if (FMath::Abs(NeighborTile.X - CenterTile.X) <= BubbleRadiusTiles + 1 &&
+                FMath::Abs(NeighborTile.Y - CenterTile.Y) <= BubbleRadiusTiles + 1 &&
+                FMath::Abs(NeighborTile.Z - CenterTile.Z) <= BubbleRadiusTiles + 1) {
+              DesiredTiles.Add(NeighborTile);
             }
           }
         }
@@ -1319,63 +1300,52 @@ void AFPMWorldChunkManager::UpdateTerraformPlayerBubble(
     }
   }
 
-  // Remove non-edited tiles that are outside the active player bubble.
-  TArray<FIntVector> ExistingTileKeys;
-  TerraformTileActors.GetKeys(ExistingTileKeys);
-  for (const FIntVector &TC : ExistingTileKeys) {
-    const TMap<FIntVector, float> *TileDeltas = FineTerraformOverlays.Find(TC);
-    const bool bHasDeltas = TileDeltas && TileDeltas->Num() > 0;
-    if (!DesiredTiles.Contains(TC) && !bHasDeltas) {
-      if (AActor **ActorPtr = TerraformTileActors.Find(TC)) {
-        if (*ActorPtr) {
-          (*ActorPtr)->Destroy();
-        }
-      }
-      TerraformTileActors.Remove(TC);
+  TSet<FIntVector> TilesToRemove;
+  for (const FIntVector &TileCoord : ActiveTerraformBubbleTiles) {
+    if (!DesiredTiles.Contains(TileCoord)) {
+      TilesToRemove.Add(TileCoord);
+    }
+  }
 
-      const FVector TileCenter((TC.X + 0.5f) * TerraformTileWorldSize,
-                               (TC.Y + 0.5f) * TerraformTileWorldSize,
-                               (TC.Z + 0.5f) * TerraformTileWorldSize);
-      AffectedChunks.Add(FPMChunkGenerator::WorldToChunkCoord(TileCenter));
+  TSet<FIntVector> TilesToAdd;
+  for (const FIntVector &TileCoord : DesiredTiles) {
+    if (!ActiveTerraformBubbleTiles.Contains(TileCoord)) {
+      TilesToAdd.Add(TileCoord);
+    }
+  }
+
+  for (const FIntVector &TileCoord : TilesToRemove) {
+    if (AActor **TileActor = TerraformTileActors.Find(TileCoord)) {
+      if (IsValid(*TileActor)) {
+        (*TileActor)->Destroy();
+      }
+      TerraformTileActors.Remove(TileCoord);
+    }
+    InFlightTerraformTiles.Remove(TileCoord);
+    PendingTilesToGenerate.Remove(TileCoord);
+  }
+
+  for (const FIntVector &TileCoord : TilesToAdd) {
+    RegenerateTerraformTile(TileCoord, false);
+    if (!TerraformTileActors.Contains(TileCoord) &&
+        !InFlightTerraformTiles.Contains(TileCoord)) {
+      PendingTilesToGenerate.AddUnique(TileCoord);
+    }
+
+    const FVector TileCenter(
+        (TileCoord.X + 0.5f) * FPMVoxelConstants::TerraformTileWorldSize,
+        (TileCoord.Y + 0.5f) * FPMVoxelConstants::TerraformTileWorldSize,
+        (TileCoord.Z + 0.5f) * FPMVoxelConstants::TerraformTileWorldSize);
+    const FFPMChunkCoord ChunkCoord =
+        FPMChunkGenerator::WorldToChunkCoord(TileCenter);
+    if (LoadedChunks.Contains(ChunkCoord)) {
+      PendingChunkClips.AddUnique(ChunkCoord);
     }
   }
 
   ActiveTerraformBubbleTiles = MoveTemp(DesiredTiles);
-
-  // On first initialization, generate nearby tiles SYNCHRONOUSLY and
-  // immediately re-clip the local coarse chunks so the correct terrain is
-  // visible under the player before the rest of the bubble streams in.
-  if (bFirstInit) {
-    TArray<FIntVector> SyncTiles;
-    TSet<FFPMChunkCoord> SyncChunks;
-    for (int32 I = PendingTilesToGenerate.Num() - 1; I >= 0; --I) {
-      const FIntVector &TC = PendingTilesToGenerate[I];
-      const int32 Dist = FMath::Max(FMath::Abs(TC.X - CenterTC.X),
-                                    FMath::Abs(TC.Y - CenterTC.Y));
-      if (Dist <= 3) {
-        SyncTiles.Add(TC);
-        PendingTilesToGenerate.RemoveAt(I);
-      }
-    }
-    for (const FIntVector &TC : SyncTiles) {
-      RegenerateTerraformTile(TC, true);
-
-      const FVector TileCenter((TC.X + 0.5f) * TerraformTileWorldSize,
-                               (TC.Y + 0.5f) * TerraformTileWorldSize,
-                               (TC.Z + 0.5f) * TerraformTileWorldSize);
-      SyncChunks.Add(FPMChunkGenerator::WorldToChunkCoord(TileCenter));
-    }
-
-    for (const FFPMChunkCoord &CC : SyncChunks) {
-      if (LoadedChunks.Contains(CC)) {
-        RegenerateChunk(CC);
-      }
-    }
-
-    UE_LOG(LogTemp, Log,
-           TEXT("FPM: Sync-generated %d spawn tiles and re-clipped %d chunks"),
-           SyncTiles.Num(), SyncChunks.Num());
-  }
+  LastTerraformBubbleCenter = CenterTile;
+  bTerraformBubbleInitialized = true;
 }
 void AFPMWorldChunkManager::RegenerateTerraformTile(const FIntVector &TileCoord,
                                                     bool bForceBaseSurface) {
@@ -1385,31 +1355,18 @@ void AFPMWorldChunkManager::RegenerateTerraformTile(const FIntVector &TileCoord,
                            TileCoord.Y * TerraformTileWorldSize,
                            TileCoord.Z * TerraformTileWorldSize);
 
+  const bool bHasLocalDeltas = HasChunkTerraformDeltasForTile(TileCoord);
+  const bool bShouldForceBaseSurface = bForceBaseSurface && !bHasLocalDeltas;
+
   TMap<FIntVector, float> CombinedDeltas;
-  for (int32 DZ = -1; DZ <= 1; ++DZ) {
-    for (int32 DY = -1; DY <= 1; ++DY) {
-      for (int32 DX = -1; DX <= 1; ++DX) {
-        const FIntVector NeighborTC(TileCoord.X + DX, TileCoord.Y + DY,
-                                    TileCoord.Z + DZ);
-        const TMap<FIntVector, float> *NeighborDeltas =
-            FineTerraformOverlays.Find(NeighborTC);
-        if (!NeighborDeltas) {
-          continue;
-        }
+  GatherChunkTerraformDeltasForTileNeighborhood(TileCoord, CombinedDeltas);
 
-        for (const TPair<FIntVector, float> &Pair : *NeighborDeltas) {
-          CombinedDeltas.FindOrAdd(Pair.Key) += Pair.Value;
-        }
-      }
-    }
-  }
-
-  if (CombinedDeltas.Num() == 0 && !bForceBaseSurface)
+  if (CombinedDeltas.Num() == 0 && !bShouldForceBaseSurface)
     return;
 
   FFPMVoxelMeshData MeshData;
   FPMVoxelGenerator::GenerateTerraformTile(
-      TileOrigin, WorldSeed, CombinedDeltas, MeshData, bForceBaseSurface);
+      TileOrigin, WorldSeed, CombinedDeltas, MeshData, bShouldForceBaseSurface);
 
   AActor *&TileActor = TerraformTileActors.FindOrAdd(TileCoord);
 
@@ -1434,7 +1391,6 @@ void AFPMWorldChunkManager::RegenerateTerraformTile(const FIntVector &TileCoord,
       return;
 
     // Terraform tiles are client-side only
-    // ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â
     // disable network replication to prevent FNetGUIDCache warnings about
     // unsupported ProceduralMeshComponent.
     TileActor->SetReplicates(false);
@@ -1481,69 +1437,52 @@ void AFPMWorldChunkManager::RegenerateTerraformTile(const FIntVector &TileCoord,
 //  in the coarse mesh that the fine tiles fill.
 //
 //  IMPORTANT: We build the clip region from ActiveTerraformBubbleTiles
-//  directly using the XY footprint
-//  ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â
-//  we do NOT require tile actors to exist. Many tiles in the Z column are fully
-//  air or fully solid and produce no geometry, so their actors get removed. But
-//  the coarse mesh still needs to be clipped in that XY area because the tiles
-//  that DO intersect the terrain surface will fill the hole.
-// ===================================================================
 void AFPMWorldChunkManager::ClipMeshForTerraformTiles(
     FFPMVoxelMeshData &MeshData, const FFPMChunkCoord &ChunkCoord) {
   using namespace FPMVoxelConstants;
 
-  if (ActiveTerraformBubbleTiles.Num() == 0 || MeshData.Triangles.Num() == 0)
+  if (ActiveTerraformBubbleTiles.Num() == 0 || MeshData.Triangles.Num() == 0) {
     return;
-
-  const float TS = TerraformTileWorldSize;
-
-  // Chunk origin: mesh vertices are in local space relative to this.
-  const FVector ChunkOrigin = FPMChunkGenerator::ChunkToWorldOrigin(ChunkCoord);
-
-  // Build a 2D XY bounding box from ALL active bubble tiles
-  // ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â
-  // no actor check. We use extreme Z values so that the Z dimension never
-  // rejects a triangle; the fine tiles handle the full surface replacement in
-  // the XY footprint.
-  float MinX = MAX_flt, MinY = MAX_flt;
-  float MaxX = -MAX_flt, MaxY = -MAX_flt;
-
-  for (const FIntVector &TC : ActiveTerraformBubbleTiles) {
-    const float TileMinX = TC.X * TS - ChunkOrigin.X;
-    const float TileMinY = TC.Y * TS - ChunkOrigin.Y;
-    const float TileMaxX = TileMinX + TS;
-    const float TileMaxY = TileMinY + TS;
-
-    MinX = FMath::Min(MinX, TileMinX);
-    MinY = FMath::Min(MinY, TileMinY);
-    MaxX = FMath::Max(MaxX, TileMaxX);
-    MaxY = FMath::Max(MaxY, TileMaxY);
   }
 
-  // Check if any tiles overlap this chunk's XY region at all.
-  // (If the entire bubble is in a different chunk, skip clipping.)
-  if (MinX >= MaxX || MinY >= MaxY)
+  const FVector ChunkOrigin = FPMChunkGenerator::ChunkToWorldOrigin(ChunkCoord);
+  const float ChunkSize = FPMChunkConstants::ChunkWorldSize;
+  constexpr float ClipPad = 200.0f;
+
+  struct FClipRect {
+    float MinX;
+    float MinY;
+    float MaxX;
+    float MaxY;
+  };
+
+  TArray<FClipRect> ClipRects;
+
+  for (const FIntVector &TileCoord : ActiveTerraformBubbleTiles) {
+    if (!HasChunkTerraformDeltasForTile(TileCoord)) {
+      continue;
+    }
+
+    const FVector TileOrigin(TileCoord.X * TerraformTileWorldSize,
+                             TileCoord.Y * TerraformTileWorldSize,
+                             TileCoord.Z * TerraformTileWorldSize);
+    const float LocalMinX = TileOrigin.X - ChunkOrigin.X - ClipPad;
+    const float LocalMinY = TileOrigin.Y - ChunkOrigin.Y - ClipPad;
+    const float LocalMaxX = LocalMinX + TerraformTileWorldSize + ClipPad * 2.0f;
+    const float LocalMaxY = LocalMinY + TerraformTileWorldSize + ClipPad * 2.0f;
+
+    if (LocalMaxX < 0.0f || LocalMaxY < 0.0f ||
+        LocalMinX > ChunkSize || LocalMinY > ChunkSize) {
+      continue;
+    }
+
+    ClipRects.Add({LocalMinX, LocalMinY, LocalMaxX, LocalMaxY});
+  }
+
+  if (ClipRects.Num() == 0) {
     return;
+  }
 
-  // Shrink the clip box by a margin so the fine tile geometry extends
-  // slightly beyond the clipped boundary, creating a seamless skirt overlap.
-  constexpr float ClipMargin = 4000.f; // Match coarse voxel size (40m)
-  MinX += ClipMargin;
-  MinY += ClipMargin;
-  MaxX -= ClipMargin;
-  MaxY -= ClipMargin;
-
-  if (MinX >= MaxX || MinY >= MaxY)
-    return;
-
-  UE_LOG(LogTemp, VeryVerbose,
-         TEXT("FPM ClipMesh: Bubble XY bounds (%.0f, %.0f) to (%.0f, %.0f), "
-              "mesh has %d tris"),
-         MinX, MinY, MaxX, MaxY, MeshData.Triangles.Num() / 3);
-
-  // Clip any coarse triangle whose centroid XY falls inside the clip region.
-  // Using centroid (average of 3 vertices) avoids both over-clipping (any
-  // vertex test) and under-clipping (all vertices test) at the seam boundary.
   FFPMVoxelMeshData Filtered;
   const int32 NumTris = MeshData.Triangles.Num() / 3;
   int32 ClippedCount = 0;
@@ -1556,25 +1495,22 @@ void AFPMWorldChunkManager::ClipMeshForTerraformTiles(
     const FVector &V0 = MeshData.Vertices[I0];
     const FVector &V1 = MeshData.Vertices[I1];
     const FVector &V2 = MeshData.Vertices[I2];
-
-    // Clip using CENTROID test: remove triangle if its center falls inside
-    // the clip region. This produces a much cleaner seam than the old
-    // "all 3 vertices" test, which left jagged sawtooth artifacts at the
-    // boundary due to partially-inside coarse triangles.
     const FVector Centroid = (V0 + V1 + V2) / 3.0f;
-    const bool bCentroidInXY =
-        Centroid.X >= MinX && Centroid.X <= MaxX &&
-        Centroid.Y >= MinY && Centroid.Y <= MaxY;
 
-    if (bCentroidInXY) {
-      // All vertices inside clip region
-      // ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢
-      // remove this triangle
+    bool bCentroidInClipRect = false;
+    for (const FClipRect &Rect : ClipRects) {
+      if (Centroid.X >= Rect.MinX && Centroid.X <= Rect.MaxX &&
+          Centroid.Y >= Rect.MinY && Centroid.Y <= Rect.MaxY) {
+        bCentroidInClipRect = true;
+        break;
+      }
+    }
+
+    if (bCentroidInClipRect) {
       ++ClippedCount;
       continue;
     }
 
-    // Keep the triangle
     const int32 Base = Filtered.Vertices.Num();
     for (int32 V : {I0, I1, I2}) {
       Filtered.Vertices.Add(MeshData.Vertices[V]);
@@ -1591,12 +1527,13 @@ void AFPMWorldChunkManager::ClipMeshForTerraformTiles(
   }
 
   UE_LOG(LogTemp, Verbose,
-         TEXT("FPM ClipMesh: Clipped %d / %d coarse triangles for chunk "
-              "(%d,%d)"),
-         ClippedCount, NumTris, ChunkCoord.Q, ChunkCoord.R);
+         TEXT("FPM ClipMesh: Clipped %d / %d coarse triangles for chunk (%d,%d) across %d edited bubble tiles"),
+         ClippedCount, NumTris, ChunkCoord.Q, ChunkCoord.R, ClipRects.Num());
 
   MeshData = MoveTemp(Filtered);
 }
+
+
 
 void AFPMWorldChunkManager::RegenerateChunk(const FFPMChunkCoord &Coord) {
   // 1. Destroy the existing chunk actor
@@ -1644,6 +1581,17 @@ void AFPMWorldChunkManager::ResetAllTerraforming() {
   VoxelOverlays.GetKeys(AffectedCoords);
 
   VoxelOverlays.Empty();
+  ChunkTerraformOverlays.Empty();
+
+  for (TPair<FIntVector, AActor *> &Entry : TerraformTileActors) {
+    if (IsValid(Entry.Value)) {
+      Entry.Value->Destroy();
+    }
+  }
+  TerraformTileActors.Empty();
+  PendingTilesToGenerate.Empty();
+  PendingChunkClips.Empty();
+  InFlightTerraformTiles.Empty();
 
   // Re-mesh affected chunks that are still loaded
   int32 RegenCount = 0;
@@ -1871,6 +1819,15 @@ void AFPMWorldChunkManager::BuildSafetyFloorAt(FVector WorldPos,
               "%.0fkm half-extent, %.0fcm below terrain"),
          WorldPos.X, WorldPos.Y, GridSteps, GridSteps, HalfExtentCm / 100000.f,
          SinkCm);
+}
+
+void AFPMWorldChunkManager::ClearSafetyFloor() {
+  if (!SafetyFloorMesh || !IsValid(SafetyFloorMesh)) {
+    return;
+  }
+
+  SafetyFloorMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  SafetyFloorMesh->ClearAllMeshSections();
 }
 
 FVector AFPMWorldChunkManager::GetPlayerPosition() const {
@@ -2443,3 +2400,10 @@ void AFPMWorldChunkManager::CleanupChunkWater(const FFPMChunkCoord &Coord) {
   // The water PMC is attached to the ChunkActor and will be destroyed
   // when the actor is destroyed  no manual cleanup needed.
 }
+
+
+
+
+
+
+
